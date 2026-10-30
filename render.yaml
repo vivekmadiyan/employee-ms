@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: employeems-api
+    env: node
+    region: oregon
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        value: https://your-frontend-url.example
+      - key: ALLOWED_ORIGINS
+        value: https://your-frontend-url.example
+      - key: PGSSL
+        value: false
+      - key: TRUST_PROXY
+        value: true
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_SECURE
+        value: false
+      - key: SMTP_USER
+        value: yourgmail@gmail.com
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        value: EmployeeMS <yourgmail@gmail.com>
