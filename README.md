@@ -19,6 +19,7 @@ Install PostgreSQL locally or create a PostgreSQL database named `employee_manag
 cd server
 cp .env.example .env
 # edit DATABASE_URL and JWT_SECRET
+# set SEED_ADMIN_PASSWORD to a unique password with at least 16 characters
 npm install
 npm run seed
 npm run dev
@@ -69,11 +70,9 @@ Do not expose PostgreSQL port `5432` publicly. Configure HTTPS at the edge, rest
 The API validates environment variables and request bodies, scopes all tenant data by company, uses parameterized PostgreSQL queries, bcrypt password hashes, short-lived signed JWTs, strict CORS, Helmet headers, request size limits, rate limits for sensitive public flows, and request IDs for operational debugging. These controls address common authentication, object authorization, resource-consumption, and misconfiguration risks highlighted by the [OWASP API Security Top 10](https://owasp.org/www-project-api-security/).
 
 ## Seed accounts
-- Admin: `admin@example.com` / `123`
-- Employee: `e@e.com` / `123`
-- Employee: `employee2@example.com` / `123`
-
-Change seed passwords before real deployment.
+- Admin: `admin@example.com`; set `SEED_ADMIN_PASSWORD` in `server/.env` before running the seed.
+- Sample employee accounts receive independent random passwords and are not intended for login.
+- The seed script refuses to run when `NODE_ENV=production`.
 
 ## Main API
 - `POST /api/auth/login`

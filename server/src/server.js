@@ -37,7 +37,7 @@ const password = z.string().min(10, 'Password must be at least 10 characters').m
 const schemas = {
   login: z.object({ email, password: z.string().min(1).max(128) }),
   register: z.object({ companyName: z.string().trim().min(2).max(120), industry: z.string().trim().min(2).max(80).default('General'), size: z.enum(['1-10', '11-50', '51-200', '201-500', '500+']).default('1-10'), firstName: z.string().trim().min(2).max(80), email, password }),
-  employee: z.object({ firstName: z.string().trim().min(2).max(80), email, password: password.default('Welcome@123'), department: z.string().trim().min(2).max(80).default('General') }),
+  employee: z.object({ firstName: z.string().trim().min(2).max(80), email, password, department: z.string().trim().min(2).max(80).default('General') }),
   invitation: z.object({ firstName: z.string().trim().min(2).max(80), email, department: z.string().trim().min(2).max(80).default('General') }),
   task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Task date must be YYYY-MM-DD'), category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };

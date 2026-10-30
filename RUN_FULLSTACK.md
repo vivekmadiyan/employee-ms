@@ -11,6 +11,7 @@ npm install
 cp .env.example .env
 # Windows PowerShell: copy .env.example .env
 # Set DATABASE_URL and JWT_SECRET in .env
+# Set SEED_ADMIN_PASSWORD to a unique password with at least 16 characters before seeding
 npm run seed
 npm run dev
 ```
@@ -28,17 +29,8 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-## Demo accounts
-Admin:
-- `admin@example.com` / `123`
-- `admin@me.com` / `123`
-
-Employee:
-- `e@e.com` / `123`
-- `employee2@example.com` / `123`
-- `employee3@example.com` / `123`
-- `employee4@example.com` / `123`
-- `employee5@example.com` / `123`
+## Seed account
+Use `admin@example.com` with the unique `SEED_ADMIN_PASSWORD` configured in `server/.env`. Sample employee accounts receive independent random passwords and are not intended for login.
 
 ## What is now server-backed
 - JWT login

@@ -63,10 +63,6 @@ const Login = ({ onBack }) => {
           </button>
         </form>
 
-        <div className="muted-note">
-          <strong>Seed admin:</strong> admin@example.com / 123<br />
-          <strong>Seed employee:</strong> e@e.com / 123
-        </div>
       </div>
     </div>
   );

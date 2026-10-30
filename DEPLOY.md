@@ -53,14 +53,7 @@ For Gmail, create an App Password in Google Account settings.
 
 Do not leave `CLIENT_URL=http://localhost:5173` in production. The invitation email links must point to a public URL or your emails will look suspicious.
 
-## 5) Seed account
-
-After deployment, you can log in with:
-
-- Email: `admin@example.com`
-- Password: `123`
-
-## 6) Production server check
+## 5) Production server check
 
 Test your deployed backend health endpoint:
 
