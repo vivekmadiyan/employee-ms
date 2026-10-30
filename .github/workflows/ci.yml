@@ -22,3 +22,4 @@ jobs:
         with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
       - run: npm ci
       - run: node --check src/server.js
+      - run: npm test

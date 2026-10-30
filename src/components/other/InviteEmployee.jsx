@@ -41,16 +41,20 @@ export default function InviteEmployee() {
                 ? 'Your email provider accepted the invitation.'
                 : result.emailStatus === 'not_configured'
                   ? 'Invitation created, but email is not configured on the backend.'
-                  : result.emailStatus === 'failed'
-                    ? 'Invitation created, but the email provider rejected the message.'
-                    : result.emailSent
-                      ? 'Your email provider accepted the invitation.'
-                      : 'Invitation created, but email was not sent.'}
+                  : result.emailStatus === 'provider_rejected'
+                    ? 'Invitation created, but Brevo rejected the message. Check the backend logs and sender verification.'
+                    : result.emailStatus === 'network_error'
+                      ? 'Invitation created, but the backend could not reach Brevo. Check the Render service logs and try again.'
+                    : result.emailStatus === 'failed'
+                      ? 'Invitation created, but email delivery failed.'
+                      : result.emailSent
+                        ? 'Your email provider accepted the invitation.'
+                        : 'Invitation created, but email was not sent.'}
             </b>
             <p className="mt-1">
               {result.emailSent
                 ? 'The recipient may still need to check spam or promotions.'
-                : 'Set valid SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM values in Render, or share this secure link directly. It expires in 7 days.'}
+                : 'Set BREVO_API_KEY and a verified BREVO_SENDER_EMAIL in Render, or share this secure link directly. It expires in 7 days.'}
             </p>
             {result.inviteUrl && (
               <div className="mt-2 flex flex-col gap-2 sm:flex-row">

@@ -21,16 +21,19 @@ The app consists of a Vite frontend, an Express API, and PostgreSQL. Deploy each
 
 ## Invitation email
 
-SMTP is optional. If it is not configured or the provider rejects the message, the invitation is still created and the admin is shown a link to copy and share. Set these values in Render to enable email:
+The Render free web service blocks outbound SMTP ports, so invitations are sent through Brevo's HTTPS transactional email API instead.
 
-- `SMTP_HOST=smtp.gmail.com`
-- `SMTP_PORT=587`
-- `SMTP_SECURE=false`
-- `SMTP_USER`: the sender's Gmail address
-- `SMTP_PASS`: a newly generated Google App Password (not the Gmail account password)
-- `SMTP_FROM`: `EmployeeMS <same-sender@gmail.com>`
+1. Create a Brevo account, generate an API key, and register/verify a sender email address in Brevo.
+2. In Render's `employeems-api` Environment settings, set:
+   - `BREVO_API_KEY`: the API key (keep it secret)
+   - `BREVO_SENDER_EMAIL`: the exact sender address verified in Brevo
+   - `BREVO_SENDER_NAME`: `EmployeeMS` (already the Blueprint default)
+3. Save the settings and wait for the backend to redeploy.
+4. Create a new invitation. The app reports whether the provider accepted it; acceptance is not a guarantee of inbox placement.
 
-Use the sender identity authorized by your email provider. SMTP acceptance does not guarantee inbox placement; configure provider/domain authentication and monitor spam placement. Never put SMTP credentials in Git, Vercel frontend variables, or this document.
+If email is not configured or Brevo rejects the message, the invitation remains valid and the admin can copy and share its 7-day invite link. Never put provider credentials in Git, Vercel frontend variables, or this document.
+
+Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transactional-email
 
 ## Production checks
 

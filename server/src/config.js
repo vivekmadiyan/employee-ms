@@ -11,12 +11,9 @@ const schema = z.object({
   ALLOWED_ORIGINS: z.string().optional(),
   PGSSL: booleanFromEnv,
   TRUST_PROXY: booleanFromEnv,
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
-  SMTP_SECURE: booleanFromEnv,
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().optional()
+  BREVO_API_KEY: z.string().optional(),
+  BREVO_SENDER_EMAIL: z.string().email().optional(),
+  BREVO_SENDER_NAME: z.string().trim().min(1).default('EmployeeMS')
 });
 
 const parsed = schema.safeParse(process.env);

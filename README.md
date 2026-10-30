@@ -63,7 +63,7 @@ Do not expose PostgreSQL port `5432` publicly. Configure HTTPS at the edge, rest
 - Use unique production secrets; never reuse the example values or commit `.env` files.
 - Back up PostgreSQL daily and rehearse a restore before launch.
 - Monitor `/api/health` for readiness and `/api/health/live` for process liveness.
-- Configure a real SMTP provider before enabling invitation email delivery.
+- Configure a verified Brevo sender and API key before enabling invitation email delivery.
 - Run `npm run check` and `npm --prefix server audit --omit=dev` in CI for every release.
 - Use a separate production database and a least-privilege database role.
 
@@ -98,7 +98,7 @@ This version is designed so multiple companies can use the same application whil
 1. Open the landing page.
 2. Select **Create company workspace**.
 3. Enter company details and create the first admin account.
-4. From the admin dashboard, invite employees and share the invitation link if SMTP is unavailable.
+4. From the admin dashboard, invite employees and share the invitation link if email delivery is unavailable.
 5. Create and assign tasks to employees in that workspace.
 
 ### Important production next steps
@@ -110,17 +110,14 @@ This version is designed so multiple companies can use the same application whil
 
 ## Employee invitations
 
-Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company, expire after 7 days, and can be delivered through SMTP. If SMTP is not configured, the admin receives a secure invitation link that can be copied and shared.
+Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company, expire after 7 days, and can be delivered through Brevo's transactional email API. If email is not configured, the admin receives a secure invitation link that can be copied and shared.
 
-### SMTP configuration
+### Email configuration
 
-Set these optional values in `server/.env`:
+Set these optional values in `server/.env` or the backend hosting environment:
 
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_SECURE`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_FROM`
+- `BREVO_API_KEY`
+- `BREVO_SENDER_EMAIL`
+- `BREVO_SENDER_NAME`
 
-The invitation link is generated from `CLIENT_URL` and never grants access to another company.
+The invitation link is generated from `CLIENT_URL` and never grants access to another company. Render's free service blocks SMTP ports, so email is sent over HTTPS through Brevo.
