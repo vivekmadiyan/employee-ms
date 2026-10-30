@@ -42,7 +42,7 @@ export async function sendInvitationEmail({
     }
 
     const error = new Error(`Brevo rejected the email request with HTTP ${response.status}`);
-    error.code = 'provider_rejected';
+    error.code = response.status === 401 ? 'provider_auth_failed' : 'provider_rejected';
     error.status = response.status;
     if (typeof providerError?.code === 'string') {
       error.providerCode = providerError.code.slice(0, 100);

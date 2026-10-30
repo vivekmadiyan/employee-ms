@@ -46,13 +46,29 @@ describe('sendInvitationEmail', () => {
     });
   });
 
+  it('classifies Brevo 401 responses as invalid API credentials', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json({
+        code: 'unauthorized',
+        message: 'Invalid API key'
+      }, { status: 401 })
+    );
+
+    await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
+      code: 'provider_auth_failed',
+      status: 401,
+      providerCode: 'unauthorized',
+      providerMessage: 'Invalid API key'
+    });
+  });
+
   it('does not expose malformed provider response bodies', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       new Response('private provider response', { status: 401 })
     );
 
     await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
-      code: 'provider_rejected',
+      code: 'provider_auth_failed',
       status: 401
     });
   });
