@@ -1,14 +1,21 @@
-import React, { useContext } from 'react';
-import { AuthContext } from '../../context/AuthProvider'; // Make sure path is correct
+import React, { useContext, useState } from 'react';
+import { AuthContext } from '../../context/AuthProvider';
 
-const NewTask = ({ data, employeeId }) => {
-  // 1. Get the update function from our context
+const NewTask = ({ data }) => {
   const { updateTaskStatus } = useContext(AuthContext);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  // 2. Create a handler function for the button click
-  const handleAccept = () => {
-    // 3. Call the master function with the correct IDs and the new status: 'active'
-    updateTaskStatus(employeeId, data.id, 'active');
+  const handleAccept = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await updateTaskStatus(data.id, 'active');
+    } catch (requestError) {
+      setError(requestError.message || 'Could not accept this task. Please try again.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -23,12 +30,13 @@ const NewTask = ({ data, employeeId }) => {
         <h3 className="text-lg font-semibold text-neutral-500">{data.taskTitle}</h3>
         <p className="mt-2 text-sm leading-relaxed text-neutral-400">{data.taskDescription}</p>
       </div>
-      {/* 4. Add the onClick handler to the button */}
-      <button 
+      {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}
+      <button
         onClick={handleAccept}
-        className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-hover"
+        disabled={busy}
+        className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Accept Task
+        {busy ? 'Accepting…' : 'Accept Task'}
       </button>
     </div>
   );

@@ -3,14 +3,30 @@ import { AuthContext } from '../../context/AuthProvider'; // Make sure this path
 
 const AllTask = () => {
   // CORRECTED: Destructure the context value as an object {}
-  const { userData } = useContext(AuthContext);
+  const { userData, dataError, refresh } = useContext(AuthContext);
 
   // If userData hasn't loaded yet from the provider, show a loading message
-  if (!userData || userData.length === 0) {
+  if (userData === null) {
     return (
-        <div className="overflow-hidden rounded-xl border border-neutral-300 bg-white p-6 text-center text-neutral-400 shadow-sm">
-            Loading employee data or no data available...
+        <div className="overflow-hidden rounded-xl border border-neutral-300 bg-white p-6 text-center shadow-sm">
+            {dataError ? (
+              <>
+                <p role="alert" className="text-sm text-danger">{dataError}</p>
+                <button type="button" onClick={() => refresh().catch(error => console.error('Retrying employee load failed:', error))} className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white">
+                  Retry
+                </button>
+              </>
+            ) : <p role="status" className="text-neutral-400">Loading employee data…</p>}
         </div>
+    );
+  }
+
+  if (userData.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-neutral-300 bg-white p-8 text-center shadow-sm">
+        <h2 className="text-lg font-bold text-neutral-700">Your team is ready to grow</h2>
+        <p className="mt-2 text-sm text-neutral-500">Invite an employee above to start assigning and tracking work.</p>
+      </div>
     );
   }
 

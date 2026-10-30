@@ -20,10 +20,12 @@ const AuthProvider = ({ children }) => {
   });
 
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
 
   const refresh = async (user = currentUser) => {
     if (!user) {
       setUserData(null);
+      setDataError('');
       return;
     }
 
@@ -47,7 +49,9 @@ const AuthProvider = ({ children }) => {
           },
         ]);
       }
+      setDataError('');
     } catch (error) {
+      setDataError(error.message || 'Could not load workspace data.');
       console.error('Failed to refresh user data:', error);
       throw error;
     }
@@ -60,12 +64,7 @@ const AuthProvider = ({ children }) => {
     }
 
     refresh()
-      .catch(() => {
-        localStorage.removeItem('ems_token');
-        localStorage.removeItem('ems_user');
-        setCurrentUser(null);
-        setUserData(null);
-      })
+      .catch(error => console.error('Failed to restore workspace data:', error))
       .finally(() => setLoading(false));
   // This bootstraps once from persisted session state.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,15 +74,30 @@ const AuthProvider = ({ children }) => {
     const expireSession = () => {
       setCurrentUser(null);
       setUserData(null);
+      setDataError('');
       setLoading(false);
     };
     window.addEventListener('ems:session-expired', expireSession);
     return () => window.removeEventListener('ems:session-expired', expireSession);
   }, []);
 
-  const updateTaskStatus = async (employeeId, taskId, status) => {
-    await updateTaskStatusApi(taskId, status);
-    await refresh(currentUser);
+  const updateTaskStatus = async (taskId, status) => {
+    const updatedTask = await updateTaskStatusApi(taskId, status);
+    setUserData(current => current?.map(employee => {
+      if (employee.id !== updatedTask.assignedTo) return employee;
+      const tasks = employee.tasks.map(task => task.id === updatedTask.id ? updatedTask : task);
+      return {
+        ...employee,
+        tasks,
+        taskCounts: {
+          newTask: tasks.filter(task => task.newTask).length,
+          active: tasks.filter(task => task.active).length,
+          completed: tasks.filter(task => task.completed).length,
+          failed: tasks.filter(task => task.failed).length
+        }
+      };
+    }) ?? current);
+    return updatedTask;
   };
 
   const setSession = (user, token) => {
@@ -92,6 +106,7 @@ const AuthProvider = ({ children }) => {
 
     setCurrentUser(user);
     setUserData(null);
+    setDataError('');
     setLoading(true);
 
     refresh(user)
@@ -108,6 +123,7 @@ const AuthProvider = ({ children }) => {
     localStorage.removeItem('ems_user');
     setCurrentUser(null);
     setUserData(null);
+    setDataError('');
   };
 
   return (
@@ -116,6 +132,7 @@ const AuthProvider = ({ children }) => {
         userData,
         setUserData,
         currentUser,
+        dataError,
         setSession,
         logout,
         updateTaskStatus,

@@ -1,6 +1,10 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:5000/api' : '');
 
 export const api = async (path, options = {}) => {
+  if (!API_URL) {
+    throw new Error('The API is not configured. Set VITE_API_URL for this deployment.');
+  }
+
   const token = localStorage.getItem('ems_token');
   const response = await fetch(`${API_URL}${path}`, {
     ...options,

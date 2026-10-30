@@ -3,7 +3,7 @@ import { AuthContext } from '../../context/AuthProvider';
 import { createTaskApi } from '../../api';
 
 const CreateTask = () => {
-  const { userData, refresh } = useContext(AuthContext);
+  const { userData, dataError, refresh } = useContext(AuthContext);
   const [busy, setBusy] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
@@ -19,16 +19,37 @@ const CreateTask = () => {
     if (!title || !description || !taskDate || !taskCategory || !assignTo) { setError('Please complete all fields.'); setBusy(false); return; }
     try {
       await createTaskApi({ taskTitle:title, taskDescription:description, taskDate, category:taskCategory, assignedTo:assignTo, priority });
-      await refresh();
       setTaskTitle(''); setCategory(''); setAssignTo(''); setTaskDate(''); setTaskDescription(''); setPriority('medium');
+      try {
+        await refresh();
+      } catch (refreshError) {
+        console.error('Task was created but employee data failed to refresh:', refreshError);
+        setError('Task created successfully, but the list could not refresh. Use Retry to reload employees.');
+      }
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
 
-  if (!userData) {
+  if (userData === null) {
     return (
-      <div className="rounded-xl border border-neutral-300 bg-white p-6 text-center text-neutral-400 shadow-sm">
-        Loading...
+      <div className="rounded-xl border border-neutral-300 bg-white p-6 text-center shadow-sm">
+        {dataError ? (
+          <>
+            <p role="alert" className="text-sm text-danger">{dataError}</p>
+            <button type="button" onClick={() => refresh().catch(error => console.error('Retrying employee load failed:', error))} className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white">
+              Retry loading employees
+            </button>
+          </>
+        ) : <p role="status" className="text-neutral-400">Loading employees…</p>}
+      </div>
+    );
+  }
+
+  if (userData.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-neutral-300 bg-white p-6 text-center shadow-sm">
+        <h2 className="text-lg font-bold text-neutral-700">Invite your first employee</h2>
+        <p className="mt-2 text-sm text-neutral-500">Once someone joins your workspace, you can assign tasks here.</p>
       </div>
     );
   }
@@ -40,6 +61,7 @@ const CreateTask = () => {
         {error && (
           <div role="alert" className="rounded-md bg-danger-light px-3 py-2 text-sm text-danger">
             {error}
+            {dataError && <button type="button" onClick={() => refresh().catch(retryError => console.error('Retrying employee load failed:', retryError))} className="ml-2 font-semibold underline">Retry</button>}
           </div>
         )}
 

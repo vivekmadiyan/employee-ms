@@ -37,7 +37,9 @@ Frontend: `http://localhost:5173`
 
 ## Production deployment
 
-The repository includes an open-source Docker deployment: React is served by Nginx, the API runs as a non-root Node process, and PostgreSQL data is stored in a named Docker volume.
+For Vercel + Render + Neon instructions, see [DEPLOY.md](./DEPLOY.md). The optional Docker deployment below is a self-hosted alternative.
+
+The repository includes a Docker deployment: React is served by Nginx, the API runs as a non-root Node process, and PostgreSQL data is stored in a named Docker volume.
 
 1. Copy `.env.production.example` to `.env` on the deployment host.
 2. Create a separate deployment secrets file containing at least:
@@ -86,7 +88,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/health`
 
 ## Security notes
-Passwords are hashed in MongoDB. JWTs are required for protected APIs, and employees can only modify tasks assigned to them. For production, use HTTPS, a strong JWT secret, secure cookie-based refresh tokens, rate limiting, request validation, and managed MongoDB credentials.
+Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected APIs, and employees can only modify tasks assigned to them. For production, use HTTPS, a strong JWT secret, secure cookie-based refresh tokens, rate limiting, request validation, and managed PostgreSQL credentials.
 
 
 ## Multi-company / SaaS-ready architecture
@@ -96,15 +98,14 @@ This version is designed so multiple companies can use the same application whil
 1. Open the landing page.
 2. Select **Create company workspace**.
 3. Enter company details and create the first admin account.
-4. From the admin dashboard, add employees.
+4. From the admin dashboard, invite employees and share the invitation link if SMTP is unavailable.
 5. Create and assign tasks to employees in that workspace.
 
 ### Important production next steps
-- Add email invitations instead of sharing temporary passwords.
 - Add password reset and MFA.
 - Add billing/subscription and company plan limits if commercialized.
-- Add audit logs, rate limiting, backups, monitoring, and HTTPS.
-- Deploy the frontend, API, and MongoDB using production environment variables.
+- Add audit logs and monitoring; configure backups and HTTPS for the chosen hosting providers.
+- Deploy the frontend, API, and PostgreSQL using production environment variables.
 
 
 ## Employee invitations

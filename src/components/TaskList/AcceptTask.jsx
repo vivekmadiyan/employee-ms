@@ -1,15 +1,21 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { AuthContext } from '../../context/AuthProvider';
 
-const AcceptTask = ({ data, employeeId }) => {
+const AcceptTask = ({ data }) => {
   const { updateTaskStatus } = useContext(AuthContext);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleCompleted = () => {
-    updateTaskStatus(employeeId, data.id, 'completed');
-  };
-
-  const handleFailed = () => {
-    updateTaskStatus(employeeId, data.id, 'failed');
+  const updateStatus = async status => {
+    setBusy(true);
+    setError('');
+    try {
+      await updateTaskStatus(data.id, status);
+    } catch (requestError) {
+      setError(requestError.message || 'Could not update this task. Please try again.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -24,12 +30,21 @@ const AcceptTask = ({ data, employeeId }) => {
         <h3 className="text-lg font-semibold text-neutral-500">{data.taskTitle}</h3>
         <p className="mt-2 text-sm leading-relaxed text-neutral-400">{data.taskDescription}</p>
       </div>
+      {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}
       <div className="flex items-center gap-3">
-        <button onClick={handleCompleted} className="w-full rounded-lg bg-emerald-100 py-2.5 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-200">
-          Completed
+        <button
+          disabled={busy}
+          onClick={() => updateStatus('completed')}
+          className="w-full rounded-lg bg-emerald-100 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? 'Saving…' : 'Completed'}
         </button>
-        <button onClick={handleFailed} className="w-full rounded-lg bg-red-100 py-2.5 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-200">
-          Failed
+        <button
+          disabled={busy}
+          onClick={() => updateStatus('failed')}
+          className="w-full rounded-lg bg-red-100 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? 'Saving…' : 'Failed'}
         </button>
       </div>
     </div>

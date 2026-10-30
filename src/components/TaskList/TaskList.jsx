@@ -26,8 +26,8 @@ const TaskList = ({ data }) => {
         {data.tasks.map((task) => {
           if (task.completed) return <CompleteTask key={task.id} data={task} />;
           if (task.failed) return <FailedTask key={task.id} data={task} />;
-          if (task.active) return <AcceptTask key={task.id} data={task} employeeId={data.id} />;
-          if (task.newTask) return <NewTask key={task.id} data={task} employeeId={data.id} />;
+          if (task.active) return <AcceptTask key={task.id} data={task} />;
+          if (task.newTask) return <NewTask key={task.id} data={task} />;
           return null;
         })}
       </div>

@@ -17,11 +17,11 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CLIENT_URL
-        value: https://your-frontend-url.example
+        value: https://employee-ms-rho-sepia.vercel.app
       - key: ALLOWED_ORIGINS
-        value: https://your-frontend-url.example
+        value: https://employee-ms-rho-sepia.vercel.app
       - key: PGSSL
-        value: false
+        value: true
       - key: TRUST_PROXY
         value: true
       - key: SMTP_HOST
@@ -31,8 +31,8 @@ services:
       - key: SMTP_SECURE
         value: false
       - key: SMTP_USER
-        value: yourgmail@gmail.com
+        sync: false
       - key: SMTP_PASS
         sync: false
       - key: SMTP_FROM
-        value: EmployeeMS <yourgmail@gmail.com>
+        sync: false

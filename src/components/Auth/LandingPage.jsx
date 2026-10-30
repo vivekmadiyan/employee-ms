@@ -2,8 +2,6 @@ import React from 'react';
 import {
   FaArrowRight,
   FaBolt,
-  FaBuilding,
-  FaChartLine,
   FaCheck,
   FaShieldHeart,
   FaUsers,
