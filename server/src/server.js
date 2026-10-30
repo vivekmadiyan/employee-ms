@@ -64,7 +64,60 @@ app.get('/api/employees', auth, adminOnly, async (req, res) => { const users = (
 app.post('/api/employees', auth, adminOnly, async (req, res, next) => { try { const values = body(schemas.employee, req.body); if (await findUser(values.email)) return res.status(409).json({ message: 'This email is already registered' }); const passwordHash = await bcrypt.hash(values.password, 12); const user = (await query(`INSERT INTO users(company_id,first_name,email,password_hash,role,department) VALUES($1,$2,$3,$4,'employee',$5) RETURNING ${userFields}`, [req.company.id, values.firstName, values.email, passwordHash, values.department])).rows[0]; res.status(201).json(safeUser(user)); } catch (error) { next(error); } });
 app.patch('/api/employees/:id/status', auth, adminOnly, async (req, res, next) => { try { const values = body(z.object({ active: z.boolean() }), req.body); const employee = (await query(`UPDATE users SET active=$1,updated_at=NOW() WHERE id=$2 AND company_id=$3 AND role='employee' RETURNING ${userFields}`, [values.active, req.params.id, req.company.id])).rows[0]; if (!employee) return res.status(404).json({ message: 'Employee not found' }); res.json(safeUser(employee)); } catch (error) { next(error); } });
 
-app.post('/api/invitations', auth, adminOnly, async (req, res, next) => { try { const values = body(schemas.invitation, req.body); if (await findUser(values.email)) return res.status(409).json({ message: 'This email already belongs to an account' }); await query('DELETE FROM invitations WHERE company_id=$1 AND email=$2 AND accepted_at IS NULL', [req.company.id, values.email]); const rawToken = crypto.randomBytes(32).toString('hex'); const invitation = (await query('INSERT INTO invitations(company_id,email,first_name,department,token_hash,expires_at,invited_by) VALUES($1,$2,$3,$4,$5,NOW() + INTERVAL \'7 days\',$6) RETURNING id,expires_at AS "expiresAt"', [req.company.id, values.email, values.firstName, values.department, hashToken(rawToken), req.user.id])).rows[0]; const inviteUrl = `${config.CLIENT_URL}/invite/${rawToken}`; let emailSent = false; let emailStatus = 'not_configured'; if (config.BREVO_API_KEY && config.BREVO_SENDER_EMAIL) { try { await sendInvitationEmail({ apiKey: config.BREVO_API_KEY, senderEmail: config.BREVO_SENDER_EMAIL, senderName: config.BREVO_SENDER_NAME, recipientEmail: values.email, recipientName: values.firstName, companyName: req.company.name, inviteUrl }); emailSent = true; emailStatus = 'sent'; } catch (error) { emailStatus = error.code || 'failed'; console.error('Invitation email failed:', { requestId: req.id, status: error.status, code: error.code || 'network_error' }); } } res.status(201).json({ id: invitation.id, email: values.email, inviteUrl, emailSent, emailStatus, expiresAt: invitation.expiresAt }); } catch (error) { next(error); } });
+app.post('/api/invitations', auth, adminOnly, async (req, res, next) => {
+  try {
+    const values = body(schemas.invitation, req.body);
+    if (await findUser(values.email)) {
+      return res.status(409).json({ message: 'This email already belongs to an account' });
+    }
+
+    await query('DELETE FROM invitations WHERE company_id=$1 AND email=$2 AND accepted_at IS NULL', [req.company.id, values.email]);
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const invitation = (await query(
+      'INSERT INTO invitations(company_id,email,first_name,department,token_hash,expires_at,invited_by) VALUES($1,$2,$3,$4,$5,NOW() + INTERVAL \'7 days\',$6) RETURNING id,expires_at AS "expiresAt"',
+      [req.company.id, values.email, values.firstName, values.department, hashToken(rawToken), req.user.id]
+    )).rows[0];
+    const inviteUrl = `${config.CLIENT_URL}/invite/${rawToken}`;
+    let emailSent = false;
+    let emailStatus = 'not_configured';
+
+    if (config.BREVO_API_KEY && config.BREVO_SENDER_EMAIL) {
+      try {
+        await sendInvitationEmail({
+          apiKey: config.BREVO_API_KEY,
+          senderEmail: config.BREVO_SENDER_EMAIL,
+          senderName: config.BREVO_SENDER_NAME,
+          recipientEmail: values.email,
+          recipientName: values.firstName,
+          companyName: req.company.name,
+          inviteUrl
+        });
+        emailSent = true;
+        emailStatus = 'sent';
+      } catch (error) {
+        emailStatus = error.code || 'failed';
+        console.error('Invitation email failed:', {
+          requestId: req.id,
+          status: error.status,
+          code: error.code || 'network_error',
+          providerCode: error.providerCode,
+          providerMessage: error.providerMessage
+        });
+      }
+    }
+
+    res.status(201).json({
+      id: invitation.id,
+      email: values.email,
+      inviteUrl,
+      emailSent,
+      emailStatus,
+      expiresAt: invitation.expiresAt
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 app.get('/api/invitations', auth, adminOnly, async (req, res) => { const { rows } = await query('SELECT id,email,first_name AS "firstName",department,expires_at AS "expiresAt",accepted_at AS "acceptedAt" FROM invitations WHERE company_id=$1 ORDER BY created_at DESC LIMIT 50', [req.company.id]); res.json(rows.map(i => ({ ...i, status: i.acceptedAt ? 'accepted' : (i.expiresAt < new Date() ? 'expired' : 'pending') }))); });
 app.get('/api/invitations/:token', async (req, res) => { const { rows } = await query('SELECT i.first_name AS "firstName",i.email,i.department,c.name,c.slug FROM invitations i JOIN companies c ON c.id=i.company_id WHERE i.token_hash=$1 AND i.accepted_at IS NULL AND i.expires_at > NOW()', [hashToken(req.params.token)]); const i = rows[0]; if (!i) return res.status(404).json({ message: 'Invitation is invalid or expired' }); res.json({ firstName: i.firstName, email: i.email, department: i.department, company: { name: i.name, slug: i.slug } }); });
 app.post('/api/invitations/:token/accept', async (req, res, next) => { let values; try { values = body(z.object({ password }).strict(), req.body); } catch (error) { return next(error); } const client = await pool.connect(); try { await client.query('BEGIN'); const invitation = (await client.query('SELECT * FROM invitations WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at > NOW() FOR UPDATE', [hashToken(req.params.token)])).rows[0]; if (!invitation) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Invitation is invalid or expired' }); } if (await findUser(invitation.email)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'An account with this email already exists' }); } const company = (await client.query('SELECT id,name,slug,industry,size,active FROM companies WHERE id=$1', [invitation.company_id])).rows[0]; if (!company?.active) { await client.query('ROLLBACK'); return res.status(403).json({ message: 'This company workspace is currently inactive' }); } const user = (await client.query(`INSERT INTO users(company_id,first_name,email,password_hash,role,department) VALUES($1,$2,$3,$4,'employee',$5) RETURNING ${userFields}`, [company.id, invitation.first_name, invitation.email, await bcrypt.hash(values.password, 12), invitation.department])).rows[0]; await client.query('UPDATE invitations SET accepted_at=NOW() WHERE id=$1', [invitation.id]); await client.query('COMMIT'); res.status(201).json({ token: sign(user), user: { ...safeUser(user), companyName: company.name }, company: companyDto(company) }); } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ message: 'Could not accept invitation' }); } finally { client.release(); } });

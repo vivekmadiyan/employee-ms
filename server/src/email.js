@@ -34,9 +34,25 @@ export async function sendInvitationEmail({
   }
 
   if (!response.ok) {
+    let providerError;
+    try {
+      providerError = await response.json();
+    } catch {
+      providerError = null;
+    }
+
     const error = new Error(`Brevo rejected the email request with HTTP ${response.status}`);
     error.code = 'provider_rejected';
     error.status = response.status;
+    if (typeof providerError?.code === 'string') {
+      error.providerCode = providerError.code.slice(0, 100);
+    }
+    if (typeof providerError?.message === 'string') {
+      error.providerMessage = providerError.message
+        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+        .replace(/[\r\n]/g, ' ')
+        .slice(0, 300);
+    }
     throw error;
   }
 }

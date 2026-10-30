@@ -30,7 +30,23 @@ describe('sendInvitationEmail', () => {
     });
   });
 
-  it('reports provider rejection without exposing the response body', async () => {
+  it('reports provider rejection with safe diagnostic details', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json({
+        code: 'sender_not_validated',
+        message: 'Sender sender@example.com is not verified'
+      }, { status: 400 })
+    );
+
+    await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
+      code: 'provider_rejected',
+      status: 400,
+      providerCode: 'sender_not_validated',
+      providerMessage: 'Sender [email] is not verified'
+    });
+  });
+
+  it('does not expose malformed provider response bodies', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       new Response('private provider response', { status: 401 })
     );
