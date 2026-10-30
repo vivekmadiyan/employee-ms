@@ -12,7 +12,7 @@ const App = () => {
   const { currentUser, logout, loading } = useContext(AuthContext);
   const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
-  if (loading) return <div className="min-h-screen grid place-items-center bg-neutral-100 text-neutral-500">Loading EmployeeMS…</div>;
+  if (loading) return <div className="app-loading" role="status"><span className="app-loading-mark">E</span><span>Loading your workspace…</span></div>;
   if (!currentUser) {
     const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
     if (inviteMatch) return <AcceptInvitation token={inviteMatch[1]} onBack={() => { window.history.replaceState({}, '', '/'); window.location.reload(); }} />;

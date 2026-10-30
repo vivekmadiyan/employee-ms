@@ -9,18 +9,29 @@ const AdminDashboard = (props) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
 
   return (
-    <div className="min-h-screen">
-      <div className="border-b border-neutral-300 bg-white">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <div className="dashboard-shell">
+      <div className="dashboard-topbar">
+        <div className="dashboard-topbar-content">
           <Header changeUser={props.changeUser} data={props.data} />
         </div>
       </div>
 
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8"><InviteEmployee /></div>
-        <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3">
+      <main className="dashboard-content">
+        <div className="dashboard-heading">
+          <div>
+            <h2>Workspace overview</h2>
+            <p>Bring your team’s work into focus.</p>
+          </div>
+          <span className="hidden rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm sm:inline-flex">
+            Admin workspace
+          </span>
+        </div>
+        <section className="dashboard-section">
+          <InviteEmployee />
+        </section>
+        <div className="dashboard-grid">
           {userData === null ? (
-            <section className="lg:col-span-3 rounded-2xl border border-neutral-200 bg-white p-8 text-center shadow-sm">
+            <section className="dashboard-card col-span-full p-8 text-center">
               {dataError ? (
                 <>
                   <h2 className="text-lg font-bold text-slate-900">We couldn’t load your team</h2>
@@ -36,16 +47,17 @@ const AdminDashboard = (props) => {
               ) : <p role="status" className="text-neutral-500">Loading your workspace…</p>}
             </section>
           ) : userData.length === 0 ? (
-            <section className="lg:col-span-3 rounded-2xl border border-dashed border-neutral-300 bg-white px-6 py-10 text-center shadow-sm sm:px-10">
-              <h2 className="text-xl font-bold text-slate-900">Your workspace is ready for its first teammate</h2>
+            <section className="dashboard-card col-span-full px-6 py-12 text-center sm:px-10">
+              <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-indigo-50 text-lg font-bold text-indigo-600">+</span>
+              <h2 className="text-xl font-bold tracking-tight text-slate-900">Your workspace is ready for its first teammate</h2>
               <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">
                 Invite an employee above. Once they accept, you can assign tasks and track progress here.
               </p>
             </section>
           ) : (
             <>
-              <div className="lg:col-span-1"><CreateTask /></div>
-              <div className="lg:col-span-2"><AllTask /></div>
+              <div><CreateTask /></div>
+              <div><AllTask /></div>
             </>
           )}
         </div>

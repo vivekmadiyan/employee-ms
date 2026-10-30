@@ -3,6 +3,7 @@ import {
   FaArrowRight,
   FaBolt,
   FaCheck,
+  FaLayerGroup,
   FaShieldHeart,
   FaUsers,
 } from 'react-icons/fa6';
@@ -20,7 +21,7 @@ const LandingPage = ({ onLogin, onRegister }) => {
     <main className="landing-page">
       <nav className="landing-nav">
         <div className="brand" aria-label="EmployeeMS home">
-          <span className="brand-mark">E</span>
+          <span className="brand-mark"><FaLayerGroup /></span>
           <span>Employee<span className="brand-accent">MS</span></span>
         </div>
 
@@ -183,7 +184,7 @@ const LandingPage = ({ onLogin, onRegister }) => {
 
       <footer>
         <div className="brand">
-          <span className="brand-mark">E</span>
+          <span className="brand-mark"><FaLayerGroup /></span>
           <span>Employee<span className="brand-accent">MS</span></span>
         </div>
         <span>Designed for modern teams</span>

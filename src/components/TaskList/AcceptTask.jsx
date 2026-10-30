@@ -19,7 +19,7 @@ const AcceptTask = ({ data }) => {
   };
 
   return (
-    <div className="flex h-full w-80 flex-shrink-0 flex-col rounded-lg border-2 border-primary bg-white p-5 shadow-lg">
+    <div className="task-card flex h-full w-80 flex-shrink-0 flex-col rounded-lg border-2 border-primary bg-white p-5 shadow-lg">
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
           {data.category}

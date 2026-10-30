@@ -1,5 +1,5 @@
 import React, { useContext, useState } from 'react';
-import { FaArrowLeft, FaEnvelope, FaLock } from 'react-icons/fa6';
+import { FaArrowLeft, FaEnvelope, FaLayerGroup, FaLock } from 'react-icons/fa6';
 import { loginApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 
@@ -31,8 +31,8 @@ const Login = ({ onBack }) => {
 
       <div className="auth-card">
         <div className="auth-header">
-          <div className="brand" style={{ justifyContent: 'center' }}>
-            <span className="brand-mark">E</span>
+          <div className="brand justify-center">
+            <span className="brand-mark"><FaLayerGroup /></span>
             <span>Employee<span className="brand-accent">MS</span></span>
           </div>
           <h2>Welcome back</h2>
@@ -44,17 +44,17 @@ const Login = ({ onBack }) => {
         <form onSubmit={submitHandler}>
           <div className="field">
             <label htmlFor="email">Email address</label>
-            <div style={{ position: 'relative' }}>
-              <FaEnvelope style={{ position: 'absolute', left: '12px', top: '14px', color: '#64748b' }} />
-              <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" style={{ paddingLeft: '38px' }} />
+            <div className="auth-input-wrap">
+                <FaEnvelope className="auth-input-icon" aria-hidden="true" />
+                <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
             </div>
           </div>
 
           <div className="field">
             <label htmlFor="password">Password</label>
-            <div style={{ position: 'relative' }}>
-              <FaLock style={{ position: 'absolute', left: '12px', top: '14px', color: '#64748b' }} />
-              <input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" style={{ paddingLeft: '38px' }} />
+            <div className="auth-input-wrap">
+                <FaLock className="auth-input-icon" aria-hidden="true" />
+                <input id="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" />
             </div>
           </div>
 

@@ -8,9 +8,9 @@ const TaskList = ({ data }) => {
     if (!data || !data.tasks || data.tasks.length === 0) {
         return (
             <div>
-              <h2 className="text-lg font-semibold text-neutral-500">Your Tasks</h2>
-              <div className='mt-4 rounded-lg border border-dashed border-neutral-300 bg-white py-12 text-center text-neutral-400'>
-                  You have no tasks right now.
+              <h2 className="task-section-heading">Your tasks</h2>
+              <div className="task-empty mt-3 py-12 text-center text-sm">
+                  Nothing on your plate right now. New assignments will show up here.
               </div>
             </div>
         )
@@ -18,10 +18,10 @@ const TaskList = ({ data }) => {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-neutral-500">Your Tasks</h2>
+      <h2 className="task-section-heading">Your tasks</h2>
       <div
         id="tasklist"
-        className="mt-4 flex w-full gap-6 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent"
+        className="task-board"
       >
         {data.tasks.map((task) => {
           if (task.completed) return <CompleteTask key={task.id} data={task} />;

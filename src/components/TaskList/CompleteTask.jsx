@@ -2,7 +2,7 @@ import React from 'react';
 
 const CompleteTask = ({ data }) => {
   return (
-    <div className="flex h-full w-80 flex-shrink-0 flex-col rounded-lg border border-neutral-300 bg-white p-5 shadow-sm opacity-60">
+    <div className="task-card flex h-full w-80 flex-shrink-0 flex-col rounded-lg border border-neutral-300 bg-white p-5 shadow-sm opacity-75">
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-neutral-200 px-3 py-1 text-xs font-medium text-neutral-500">
           {data.category}

@@ -1,12 +1,102 @@
 import React, { useContext, useState } from 'react';
+import { FaArrowLeft, FaLayerGroup } from 'react-icons/fa6';
 import { registerCompanyApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 
 const RegisterCompany = ({ onBack, onLogin }) => {
   const { setSession } = useContext(AuthContext);
-  const [form, setForm] = useState({ companyName:'', industry:'Technology', size:'1-10', firstName:'', email:'', password:'' });
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const update = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
-  const submit = async e => { e.preventDefault(); setError(''); setBusy(true); try { const data = await registerCompanyApi(form); setSession(data.user, data.token); } catch (err) { setError(err.message); } finally { setBusy(false); } };
-  return <div className="login-shell"><button className="back-home" onClick={onBack}>← Back to home</button><div className="flex min-h-[85vh] items-center justify-center py-10"><div className="w-full max-w-2xl"><div className="text-center"><div className="brand justify-center"><span className="brand-mark">E</span> Employee<span className="brand-accent">MS</span></div><h2 className="mt-6 text-3xl font-bold text-gray-900">Create your company workspace</h2><p className="mt-2 text-sm text-gray-500">Set up your company and invite your employees from the admin dashboard.</p></div><div className="mt-8 rounded-2xl bg-white p-5 shadow-lg sm:p-8"><form onSubmit={submit} className="grid grid-cols-1 gap-5 sm:grid-cols-2">{error&&<div role="alert" className="sm:col-span-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}<div className="sm:col-span-2"><label htmlFor="companyName" className="block text-sm font-medium text-gray-700">Company name</label><input id="companyName" name="companyName" value={form.companyName} onChange={update} required maxLength="120" autoComplete="organization" className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="Acme Technologies" /></div><div><label htmlFor="industry" className="block text-sm font-medium text-gray-700">Industry</label><input id="industry" name="industry" value={form.industry} onChange={update} required minLength="2" maxLength="80" className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2" /></div><div><label htmlFor="size" className="block text-sm font-medium text-gray-700">Company size</label><select id="size" name="size" value={form.size} onChange={update} className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2"><option>1-10</option><option>11-50</option><option>51-200</option><option>201-500</option><option>500+</option></select></div><div><label htmlFor="firstName" className="block text-sm font-medium text-gray-700">Admin name</label><input id="firstName" name="firstName" value={form.firstName} onChange={update} required minLength="2" maxLength="80" autoComplete="name" className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2" /></div><div><label htmlFor="registerEmail" className="block text-sm font-medium text-gray-700">Work email</label><input id="registerEmail" name="email" type="email" value={form.email} onChange={update} required maxLength="254" autoComplete="email" className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2" /></div><div className="sm:col-span-2"><label htmlFor="registerPassword" className="block text-sm font-medium text-gray-700">Password</label><input id="registerPassword" name="password" type="password" minLength="10" maxLength="128" autoComplete="new-password" value={form.password} onChange={update} required className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="At least 10 characters" /><p className="mt-1 text-xs text-gray-500">Use at least 10 characters.</p></div><div className="sm:col-span-2 flex flex-col gap-3"><button disabled={busy} className="w-full rounded-lg bg-indigo-600 py-3 text-sm font-semibold text-white disabled:opacity-60">{busy?'Creating workspace…':'Create company workspace'}</button><button type="button" onClick={onLogin} className="text-sm font-medium text-indigo-600">Already have an account? Sign in</button></div></form></div></div></div></div>;
-}; export default RegisterCompany;
+  const [form, setForm] = useState({
+    companyName: '',
+    industry: 'Technology',
+    size: '1-10',
+    firstName: '',
+    email: '',
+    password: ''
+  });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const update = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }));
+
+  const submit = async event => {
+    event.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const data = await registerCompanyApi(form);
+      setSession(data.user, data.token);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="login-shell">
+      <button className="back-home" onClick={onBack}>
+        <FaArrowLeft aria-hidden="true" /> Back to home
+      </button>
+
+      <main className="auth-register">
+        <div className="auth-header">
+          <div className="brand justify-center">
+            <span className="brand-mark"><FaLayerGroup /></span>
+            <span>Employee<span className="brand-accent">MS</span></span>
+          </div>
+          <h2>Create your company workspace</h2>
+          <p className="auth-subtitle">A clear, shared place for your team to get work done.</p>
+        </div>
+
+        <form onSubmit={submit} className="auth-form auth-register-form">
+          {error && <div role="alert" className="error-box auth-register-error">{error}</div>}
+
+          <div className="auth-company-field">
+            <label htmlFor="companyName">Company name</label>
+            <input id="companyName" name="companyName" value={form.companyName} onChange={update} required maxLength="120" autoComplete="organization" placeholder="Acme Technologies" />
+          </div>
+
+          <div className="auth-register-grid">
+            <div>
+              <label htmlFor="industry">Industry</label>
+              <input id="industry" name="industry" value={form.industry} onChange={update} required minLength="2" maxLength="80" />
+            </div>
+            <div>
+              <label htmlFor="size">Company size</label>
+              <select id="size" name="size" value={form.size} onChange={update}>
+                <option>1-10</option>
+                <option>11-50</option>
+                <option>51-200</option>
+                <option>201-500</option>
+                <option>500+</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="firstName">Your name</label>
+              <input id="firstName" name="firstName" value={form.firstName} onChange={update} required minLength="2" maxLength="80" autoComplete="name" placeholder="Alex Morgan" />
+            </div>
+            <div>
+              <label htmlFor="registerEmail">Work email</label>
+              <input id="registerEmail" name="email" type="email" value={form.email} onChange={update} required maxLength="254" autoComplete="email" placeholder="you@company.com" />
+            </div>
+          </div>
+
+          <div className="auth-company-field">
+            <label htmlFor="registerPassword">Password</label>
+            <input id="registerPassword" name="password" type="password" minLength="10" maxLength="128" autoComplete="new-password" value={form.password} onChange={update} required placeholder="At least 10 characters" />
+            <p className="mt-1.5 text-xs text-slate-500">Use at least 10 characters.</p>
+          </div>
+
+          <button type="submit" disabled={busy} className="submit-btn auth-register-submit">
+            {busy ? 'Creating workspace…' : 'Create company workspace'}
+          </button>
+          <button type="button" onClick={onLogin} className="auth-login-link">
+            Already have an account? <span>Sign in</span>
+          </button>
+        </form>
+      </main>
+    </div>
+  );
+};
+
+export default RegisterCompany;

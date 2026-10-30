@@ -32,7 +32,7 @@ const CreateTask = () => {
 
   if (userData === null) {
     return (
-      <div className="rounded-xl border border-neutral-300 bg-white p-6 text-center shadow-sm">
+      <div className="dashboard-card p-6 text-center">
         {dataError ? (
           <>
             <p role="alert" className="text-sm text-danger">{dataError}</p>
@@ -47,7 +47,7 @@ const CreateTask = () => {
 
   if (userData.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-neutral-300 bg-white p-6 text-center shadow-sm">
+      <div className="dashboard-card border-dashed p-6 text-center">
         <h2 className="text-lg font-bold text-neutral-700">Invite your first employee</h2>
         <p className="mt-2 text-sm text-neutral-500">Once someone joins your workspace, you can assign tasks here.</p>
       </div>
@@ -55,9 +55,13 @@ const CreateTask = () => {
   }
 
   return (
-    <div className="rounded-xl border border-neutral-300 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-bold text-neutral-500">Create a New Task</h2>
-      <form onSubmit={submitHandler} className="mt-6 space-y-4">
+    <div className="dashboard-card p-5 sm:p-6">
+      <div className="mb-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-600">Plan the work</p>
+        <h2 className="dashboard-card-heading mt-1">Create a task</h2>
+        <p className="mt-1 text-xs leading-5 text-slate-500">Set a clear owner, deadline, and priority.</p>
+      </div>
+      <form onSubmit={submitHandler} className="space-y-4">
         {error && (
           <div role="alert" className="rounded-md bg-danger-light px-3 py-2 text-sm text-danger">
             {error}
@@ -66,12 +70,12 @@ const CreateTask = () => {
         )}
 
         <div>
-          <label htmlFor="task-title" className="block text-sm font-medium text-neutral-500">Task Title</label>
+          <label htmlFor="task-title" className="block text-xs font-bold text-slate-600">Task title</label>
           <input id="task-title" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary" type="text" placeholder="Make a UI design" required />
         </div>
 
         <div>
-          <label htmlFor="assign-to" className="block text-sm font-medium text-neutral-500">Assign To</label>
+          <label htmlFor="assign-to" className="block text-xs font-bold text-slate-600">Assign to</label>
           <select id="assign-to" value={assignTo} onChange={(e) => setAssignTo(e.target.value)} className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary" required>
             <option value="" disabled>Select an employee</option>
             {userData.map((employee) => (
@@ -82,29 +86,29 @@ const CreateTask = () => {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label htmlFor="task-date" className="block text-sm font-medium text-neutral-500">Date</label>
+            <label htmlFor="task-date" className="block text-xs font-bold text-slate-600">Due date</label>
             <input id="task-date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary" type="date" required />
           </div>
           <div>
-            <label htmlFor="task-category" className="block text-sm font-medium text-neutral-500">Category</label>
+            <label htmlFor="task-category" className="block text-xs font-bold text-slate-600">Category</label>
             <input id="task-category" value={category} onChange={(e) => setCategory(e.target.value)} className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary" type="text" placeholder="design, dev, etc" required />
           </div>
         </div>
 
         <div>
-          <label htmlFor="task-priority" className="block text-sm font-medium text-neutral-500">Priority</label>
+          <label htmlFor="task-priority" className="block text-xs font-bold text-slate-600">Priority</label>
           <select id="task-priority" value={priority} onChange={(e) => setPriority(e.target.value)} className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary">
             <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
           </select>
         </div>
 
         <div>
-          <label htmlFor="task-description" className="block text-sm font-medium text-neutral-500">Description</label>
+          <label htmlFor="task-description" className="block text-xs font-bold text-slate-600">Description</label>
           <textarea id="task-description" value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} className="mt-1 block h-28 w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary" required />
         </div>
 
         <button type="submit" disabled={busy} className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary-focus focus:ring-offset-2 disabled:opacity-60">
-          {busy ? 'Creating…' : 'Create Task'}
+          {busy ? 'Creating…' : 'Create task'}
         </button>
       </form>
     </div>
