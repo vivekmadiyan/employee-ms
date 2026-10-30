@@ -54,7 +54,13 @@ export default function InviteEmployee() {
             <p className="mt-1">
               {result.emailSent
                 ? 'The recipient may still need to check spam or promotions.'
-                : 'Set BREVO_API_KEY and a verified BREVO_SENDER_EMAIL in Render, or share this secure link directly. It expires in 7 days.'}
+                : result.emailStatus === 'not_configured'
+                  ? 'Set BREVO_API_KEY and a verified BREVO_SENDER_EMAIL in Render, or share this secure link directly. It expires in 7 days.'
+                  : result.emailStatus === 'provider_rejected'
+                    ? 'Check your Brevo API key, verified sender, and Brevo transactional email logs, or share this secure link directly. It expires in 7 days.'
+                    : result.emailStatus === 'network_error'
+                      ? 'Check Render service connectivity and logs, then retry or share this secure link directly. It expires in 7 days.'
+                      : 'Check the Render service logs, or share this secure link directly. It expires in 7 days.'}
             </p>
             {result.inviteUrl && (
               <div className="mt-2 flex flex-col gap-2 sm:flex-row">

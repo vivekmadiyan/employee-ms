@@ -40,4 +40,12 @@ describe('sendInvitationEmail', () => {
       status: 401
     });
   });
+
+  it('classifies connection failures as network errors', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
+      code: 'network_error'
+    });
+  });
 });
