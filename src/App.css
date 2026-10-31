@@ -579,14 +579,21 @@
   min-height: 82px;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 24px;
   border-top: 1px solid #e7eaf0;
   color: #8992a2;
   font-size: 12px;
 }
 
 .landing-footer .brand {
+  flex: 0 0 auto;
   font-size: 16px;
+}
+
+.landing-footer > span {
+  margin-left: auto;
+  color: #778095;
+  text-align: right;
 }
 
 .landing-footer .brand-mark {
@@ -780,6 +787,10 @@
 .login-shell input,
 .login-shell select {
   padding: 10px 12px;
+}
+
+.login-shell .auth-input-wrap input {
+  padding-left: 40px;
 }
 
 .login-shell input::placeholder {
@@ -1332,7 +1343,12 @@
   .landing-footer {
     min-height: 72px;
     flex-wrap: wrap;
+    justify-content: space-between;
     padding-block: 14px;
+  }
+
+  .landing-footer > span {
+    margin-left: 0;
   }
 
   .login-shell {

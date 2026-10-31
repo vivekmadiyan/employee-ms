@@ -182,7 +182,7 @@ const LandingPage = ({ onLogin, onRegister }) => {
         </button>
       </section>
 
-      <footer>
+      <footer className="landing-footer">
         <div className="brand">
           <span className="brand-mark"><FaLayerGroup /></span>
           <span>Employee<span className="brand-accent">MS</span></span>
