@@ -95,6 +95,7 @@ export const subscribeNotificationsApi = (onUpdate, onError = () => {}) => {
             const eventName = event.split(/\r?\n/).find(line => line.startsWith('event:'))?.slice(6).trim();
             const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
             if (eventName === 'notifications' && data) onUpdate(JSON.parse(data));
+            if (eventName === 'workspace') window.dispatchEvent(new Event('ems:workspace-updated'));
             if (eventName === 'stream-error' && data) onError(JSON.parse(data).message);
           }
         }

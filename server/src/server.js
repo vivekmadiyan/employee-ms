@@ -389,9 +389,14 @@ app.get('/api/notifications', auth, async (req, res, next) => {
 });
 app.get('/api/notifications/stream', auth, async (req, res, next) => {
   let initialState;
+  let previousWorkspaceVersion;
   try {
     await syncDeadlineNotifications(req.user);
     initialState = await loadNotifications(req.user.id);
+    previousWorkspaceVersion = (await query(
+      'SELECT updated_at::text AS version FROM workspace_activity WHERE company_id=$1',
+      [req.user.companyId]
+    )).rows[0]?.version;
   } catch (error) {
     return next(error);
   }
@@ -418,6 +423,14 @@ app.get('/api/notifications/stream', auth, async (req, res, next) => {
       if (serialized !== previousState) {
         res.write(`event: notifications\ndata: ${serialized}\n\n`);
         previousState = serialized;
+      }
+      const workspaceVersion = (await query(
+        'SELECT updated_at::text AS version FROM workspace_activity WHERE company_id=$1',
+        [req.user.companyId]
+      )).rows[0]?.version;
+      if (workspaceVersion && workspaceVersion !== previousWorkspaceVersion) {
+        res.write('event: workspace\ndata: {}\n\n');
+        previousWorkspaceVersion = workspaceVersion;
       }
     } catch (error) {
       console.error('Notification stream poll failed:', { requestId: req.id, message: error.message });

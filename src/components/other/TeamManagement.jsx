@@ -34,7 +34,11 @@ export default function TeamManagement() {
     loadInvitations();
     const onInvitationsUpdated = () => loadInvitations();
     window.addEventListener('ems:invitations-updated', onInvitationsUpdated);
-    return () => window.removeEventListener('ems:invitations-updated', onInvitationsUpdated);
+    window.addEventListener('ems:workspace-updated', onInvitationsUpdated);
+    return () => {
+      window.removeEventListener('ems:invitations-updated', onInvitationsUpdated);
+      window.removeEventListener('ems:workspace-updated', onInvitationsUpdated);
+    };
   }, [loadInvitations]);
 
   const startEdit = employee => {

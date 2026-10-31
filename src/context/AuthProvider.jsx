@@ -1,4 +1,4 @@
-import React, { createContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useEffect, useState } from 'react';
 
 import {
   getEmployeeDashboard,
@@ -22,7 +22,7 @@ const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState('');
 
-  const refresh = async (user = currentUser) => {
+  const refresh = useCallback(async (user = currentUser) => {
     if (!user) {
       setUserData(null);
       setDataError('');
@@ -55,7 +55,7 @@ const AuthProvider = ({ children }) => {
       console.error('Failed to refresh user data:', error);
       throw error;
     }
-  };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!localStorage.getItem('ems_token') || !currentUser) {
@@ -80,6 +80,22 @@ const AuthProvider = ({ children }) => {
     window.addEventListener('ems:session-expired', expireSession);
     return () => window.removeEventListener('ems:session-expired', expireSession);
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    let timer;
+    const refreshWorkspace = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        refresh().catch(error => console.error('Failed to receive live workspace update:', error));
+      }, 100);
+    };
+    window.addEventListener('ems:workspace-updated', refreshWorkspace);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('ems:workspace-updated', refreshWorkspace);
+    };
+  }, [currentUser, refresh]);
 
   const updateTaskStatus = async (taskId, status) => {
     const updatedTask = await updateTaskStatusApi(taskId, status);

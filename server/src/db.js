@@ -24,6 +24,32 @@ export async function initialiseDatabase() {
     CREATE TABLE IF NOT EXISTS password_resets (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, token_hash TEXT NOT NULL UNIQUE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS notifications (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL, type TEXT NOT NULL CHECK (type IN ('assigned', 'status', 'comment', 'due', 'overdue')), message TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE, read_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS task_comments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS workspace_activity (company_id INTEGER PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
+    CREATE OR REPLACE FUNCTION bump_workspace_activity() RETURNS trigger AS $$
+    DECLARE
+      affected_company_id INTEGER;
+    BEGIN
+      IF TG_OP = 'DELETE' THEN
+        affected_company_id := OLD.company_id;
+      ELSE
+        affected_company_id := NEW.company_id;
+      END IF;
+      INSERT INTO workspace_activity(company_id, updated_at)
+      VALUES(affected_company_id, clock_timestamp())
+      ON CONFLICT(company_id) DO UPDATE SET updated_at=EXCLUDED.updated_at;
+      IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS users_workspace_activity ON users;
+    CREATE TRIGGER users_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON users FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
+    DROP TRIGGER IF EXISTS tasks_workspace_activity ON tasks;
+    CREATE TRIGGER tasks_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON tasks FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
+    DROP TRIGGER IF EXISTS invitations_workspace_activity ON invitations;
+    CREATE TRIGGER invitations_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON invitations FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
+    DROP TRIGGER IF EXISTS task_comments_workspace_activity ON task_comments;
+    CREATE TRIGGER task_comments_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON task_comments FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
+    INSERT INTO workspace_activity(company_id) SELECT id FROM companies ON CONFLICT(company_id) DO NOTHING;
     CREATE INDEX IF NOT EXISTS users_company_id_idx ON users(company_id);
     CREATE INDEX IF NOT EXISTS tasks_company_id_idx ON tasks(company_id);
     CREATE INDEX IF NOT EXISTS tasks_active_company_due_idx ON tasks(company_id, task_date) WHERE archived_at IS NULL;

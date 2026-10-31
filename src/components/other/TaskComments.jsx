@@ -25,6 +25,12 @@ export default function TaskComments({ taskId }) {
     if (open) refresh();
   }, [open, refresh]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    window.addEventListener('ems:workspace-updated', refresh);
+    return () => window.removeEventListener('ems:workspace-updated', refresh);
+  }, [open, refresh]);
+
   const submit = async event => {
     event.preventDefault();
     if (!content.trim()) return;

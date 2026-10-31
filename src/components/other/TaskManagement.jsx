@@ -54,6 +54,11 @@ export default function TaskManagement() {
     return () => window.clearTimeout(timer);
   }, [loadTasks, filters.q]);
 
+  useEffect(() => {
+    window.addEventListener('ems:workspace-updated', loadTasks);
+    return () => window.removeEventListener('ems:workspace-updated', loadTasks);
+  }, [loadTasks]);
+
   const startEdit = task => {
     setEditingId(task.id);
     setEditForm(toForm(task));
