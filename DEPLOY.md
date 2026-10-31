@@ -17,7 +17,8 @@ The app consists of a Vite frontend, an Express API, and PostgreSQL. Deploy each
 4. Set a unique `JWT_SECRET` of at least 32 characters. Render can generate this value.
 5. Set `CLIENT_URL` and `ALLOWED_ORIGINS` to the exact public frontend origin, without a trailing slash. The blueprint defaults to this project's Vercel URL.
 6. Keep `PGSSL=true` for a managed PostgreSQL provider.
-7. Deploy, then confirm `https://your-api.onrender.com/api/health` reports `{"status":"ok","database":true}`.
+7. Deploy; the API creates the required tables and applies the additive task-archive column migration at startup.
+8. Confirm `https://your-api.onrender.com/api/health` reports `{"status":"ok","database":true}`.
 
 ## Invitation email
 
@@ -39,5 +40,9 @@ Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transacti
 
 - The frontend bundle must use the public API URL, not `localhost`.
 - The Render service must allow the exact Vercel origin.
-- Test company signup, login, invitation link creation/acceptance, task assignment, and employee task status changes.
+- Test company signup and login, invitation delivery and acceptance, password recovery, account profile/password changes, and sign-out.
+- As an admin, test task search/filter/edit/archive/restore, comments, and notifications; verify archived tasks do not appear in active dashboards.
+- Test that an employee can comment on and update only their own tasks, and that deactivation is blocked while they have open work.
+- Check the responsive layout and keyboard access for sign-in, invitation, dashboard, account settings, and task workflows.
+- Back up the production database and complete a restore rehearsal before inviting real users.
 - Keep secrets in provider environment settings; rotate any credentials that have been exposed.

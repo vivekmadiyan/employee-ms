@@ -11,7 +11,7 @@ export default function InviteEmployee() {
   const update = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
   const submit = async e => {
     e.preventDefault(); setBusy(true); setError(''); setResult(null); setCopyMessage('');
-    try { const data = await createInvitationApi(form); setResult(data); setForm({ firstName: '', email: '', department: 'General' }); }
+    try { const data = await createInvitationApi(form); setResult(data); setForm({ firstName: '', email: '', department: 'General' }); window.dispatchEvent(new Event('ems:invitations-updated')); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };

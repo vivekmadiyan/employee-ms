@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sendInvitationEmail } from './email.js';
+import { sendInvitationEmail, sendPasswordResetEmail } from './email.js';
 
 const emailOptions = {
   apiKey: 'test-api-key',
@@ -27,6 +27,30 @@ describe('sendInvitationEmail', () => {
       to: [{ name: 'Alex', email: 'employee@example.com' }],
       subject: "You're invited to join Example Co on EmployeeMS",
       textContent: expect.stringContaining(emailOptions.inviteUrl)
+    });
+  });
+
+  describe('sendPasswordResetEmail', () => {
+    it('sends a reset link through the same HTTPS provider', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+
+      await sendPasswordResetEmail({
+        apiKey: 'test-api-key',
+        senderEmail: 'sender@example.com',
+        senderName: 'EmployeeMS',
+        recipientEmail: 'employee@example.com',
+        recipientName: 'Alex',
+        resetUrl: 'https://app.example.com/reset-password/one-time-token',
+        fetchImpl
+      });
+
+      const [url, options] = fetchImpl.mock.calls[0];
+      expect(url).toBe('https://api.brevo.com/v3/smtp/email');
+      expect(JSON.parse(options.body)).toMatchObject({
+        to: [{ email: 'employee@example.com' }],
+        subject: 'Reset your EmployeeMS password',
+        textContent: expect.stringContaining('https://app.example.com/reset-password/one-time-token')
+      });
     });
   });
 

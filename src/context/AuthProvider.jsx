@@ -100,6 +100,14 @@ const AuthProvider = ({ children }) => {
     return updatedTask;
   };
 
+  const updateCurrentUser = user => {
+    setCurrentUser(current => {
+      const updated = { ...current, ...user };
+      localStorage.setItem('ems_user', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   const setSession = (user, token) => {
     localStorage.setItem('ems_token', token);
     localStorage.setItem('ems_user', JSON.stringify(user));
@@ -136,6 +144,7 @@ const AuthProvider = ({ children }) => {
         setSession,
         logout,
         updateTaskStatus,
+        updateCurrentUser,
         refresh,
         loading,
       }}

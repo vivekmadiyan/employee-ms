@@ -3,7 +3,7 @@ import { FaArrowLeft, FaEnvelope, FaLayerGroup, FaLock } from 'react-icons/fa6';
 import { loginApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 
-const Login = ({ onBack }) => {
+const Login = ({ onBack, onForgotPassword }) => {
   const { setSession } = useContext(AuthContext);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -60,6 +60,9 @@ const Login = ({ onBack }) => {
 
           <button type="submit" className="submit-btn" disabled={busy}>
             {busy ? 'Signing in…' : 'Log in'}
+          </button>
+          <button type="button" className="mt-4 w-full text-center text-xs font-bold text-indigo-600 hover:text-indigo-800" onClick={onForgotPassword}>
+            Forgot your password?
           </button>
         </form>
 

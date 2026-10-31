@@ -4,6 +4,7 @@ import { createTaskApi } from '../../api';
 
 const CreateTask = () => {
   const { userData, dataError, refresh } = useContext(AuthContext);
+  const activeEmployees = userData?.filter(employee => employee.active) || [];
   const [busy, setBusy] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
@@ -45,11 +46,11 @@ const CreateTask = () => {
     );
   }
 
-  if (userData.length === 0) {
+  if (activeEmployees.length === 0) {
     return (
       <div className="dashboard-card border-dashed p-6 text-center">
-        <h2 className="text-lg font-bold text-neutral-700">Invite your first employee</h2>
-        <p className="mt-2 text-sm text-neutral-500">Once someone joins your workspace, you can assign tasks here.</p>
+        <h2 className="text-lg font-bold text-neutral-700">{userData.length ? 'Reactivate a teammate to assign tasks' : 'Invite your first employee'}</h2>
+        <p className="mt-2 text-sm text-neutral-500">Tasks can only be assigned to active employees.</p>
       </div>
     );
   }
@@ -78,7 +79,7 @@ const CreateTask = () => {
           <label htmlFor="assign-to" className="block text-xs font-bold text-slate-600">Assign to</label>
           <select id="assign-to" value={assignTo} onChange={(e) => setAssignTo(e.target.value)} className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary focus:ring-primary" required>
             <option value="" disabled>Select an employee</option>
-            {userData.map((employee) => (
+            {activeEmployees.map((employee) => (
               <option key={employee.id} value={employee.id}>{employee.firstName}</option>
             ))}
           </select>

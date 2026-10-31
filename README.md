@@ -79,13 +79,27 @@ The API validates environment variables and request bodies, scopes all tenant da
 ## Main API
 - `POST /api/auth/login`
 - `GET /api/auth/me`
+- `PATCH /api/auth/me`
+- `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
 - `GET /api/employees` (admin)
+- `PATCH /api/employees/:id` and `PATCH /api/employees/:id/status` (admin)
+- `GET /api/invitations`, `POST /api/invitations/:id/resend`, and `DELETE /api/invitations/:id` (admin)
 - `GET /api/tasks`
 - `POST /api/tasks` (admin)
+- `PATCH /api/tasks/:id` and `PATCH /api/tasks/:id/archive` (admin)
 - `PATCH /api/tasks/:id/status`
+- `GET` and `POST /api/tasks/:id/comments`
+- `GET /api/notifications` and notification read endpoints
 - `GET /api/dashboard/admin` (admin)
 - `GET /api/dashboard/employee`
 - `GET /api/health`
+
+## V1 workflows
+
+- Admins can search and filter tasks, edit assignment/details, archive and restore tasks, and review task discussions.
+- Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
+- Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work.
+- Users can update their profile and password or request a time-limited password-reset email.
 
 ## Security notes
 Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected APIs, and employees can only modify tasks assigned to them. For production, use HTTPS, a strong JWT secret, secure cookie-based refresh tokens, rate limiting, request validation, and managed PostgreSQL credentials.
@@ -102,9 +116,9 @@ This version is designed so multiple companies can use the same application whil
 5. Create and assign tasks to employees in that workspace.
 
 ### Important production next steps
-- Add password reset and MFA.
-- Add billing/subscription and company plan limits if commercialized.
-- Add audit logs and monitoring; configure backups and HTTPS for the chosen hosting providers.
+- Add MFA, audit logs, and company plan limits if commercialized.
+- Add billing/subscription if the product is commercialized.
+- Configure monitoring, backups, and HTTPS for the chosen hosting providers; rehearse a database restore.
 - Deploy the frontend, API, and PostgreSQL using production environment variables.
 
 

@@ -1,15 +1,6 @@
 const BREVO_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 
-export async function sendInvitationEmail({
-  apiKey,
-  senderEmail,
-  senderName,
-  recipientEmail,
-  recipientName,
-  companyName,
-  inviteUrl,
-  fetchImpl = fetch
-}) {
+async function sendBrevoEmail({ apiKey, senderEmail, senderName, recipientEmail, payload, fetchImpl }) {
   let response;
   try {
     response = await fetchImpl(BREVO_EMAIL_URL, {
@@ -21,9 +12,8 @@ export async function sendInvitationEmail({
       },
       body: JSON.stringify({
         sender: { name: senderName, email: senderEmail },
-        to: [{ name: recipientName, email: recipientEmail }],
-        subject: `You're invited to join ${companyName} on EmployeeMS`,
-        textContent: `Hi ${recipientName}, accept your invitation to join ${companyName}: ${inviteUrl}`
+        to: [{ email: recipientEmail }],
+        ...payload
       }),
       signal: AbortSignal.timeout(10_000)
     });
@@ -55,4 +45,50 @@ export async function sendInvitationEmail({
     }
     throw error;
   }
+}
+
+export async function sendInvitationEmail({
+  apiKey,
+  senderEmail,
+  senderName,
+  recipientEmail,
+  recipientName,
+  companyName,
+  inviteUrl,
+  fetchImpl = fetch
+}) {
+  return sendBrevoEmail({
+    apiKey,
+    senderEmail,
+    senderName,
+    recipientEmail,
+    fetchImpl,
+    payload: {
+      to: [{ name: recipientName, email: recipientEmail }],
+      subject: `You're invited to join ${companyName} on EmployeeMS`,
+      textContent: `Hi ${recipientName}, accept your invitation to join ${companyName}: ${inviteUrl}`
+    }
+  });
+}
+
+export async function sendPasswordResetEmail({
+  apiKey,
+  senderEmail,
+  senderName,
+  recipientEmail,
+  recipientName,
+  resetUrl,
+  fetchImpl = fetch
+}) {
+  return sendBrevoEmail({
+    apiKey,
+    senderEmail,
+    senderName,
+    recipientEmail,
+    fetchImpl,
+    payload: {
+      subject: 'Reset your EmployeeMS password',
+      textContent: `Hi ${recipientName}, use this link to reset your EmployeeMS password: ${resetUrl}\n\nThis link expires in 30 minutes. If you did not request a reset, you can ignore this email.`
+    }
+  });
 }

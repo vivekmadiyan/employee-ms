@@ -1,5 +1,6 @@
 import React, { useContext, useState } from 'react';
 import { AuthContext } from '../../context/AuthProvider';
+import TaskComments from '../other/TaskComments';
 
 const AcceptTask = ({ data }) => {
   const { updateTaskStatus } = useContext(AuthContext);
@@ -47,6 +48,7 @@ const AcceptTask = ({ data }) => {
           {busy ? 'Saving…' : 'Failed'}
         </button>
       </div>
+      <TaskComments taskId={data.id} />
     </div>
   );
 };

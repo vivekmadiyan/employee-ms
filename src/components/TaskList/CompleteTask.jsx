@@ -1,4 +1,5 @@
 import React from 'react';
+import TaskComments from '../other/TaskComments';
 
 const CompleteTask = ({ data }) => {
   return (
@@ -16,6 +17,7 @@ const CompleteTask = ({ data }) => {
       <div className="rounded-lg bg-emerald-100 py-2.5 px-4 text-center text-sm font-semibold text-emerald-700">
         Completed
       </div>
+      <TaskComments taskId={data.id} />
     </div>
   );
 };
