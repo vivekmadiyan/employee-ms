@@ -90,7 +90,6 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `PATCH /api/tasks/:id/status`
 - `GET` and `POST /api/tasks/:id/comments`
 - `GET /api/notifications` and notification read endpoints
-- `POST /api/ai/task-draft` (admin; optional Gemini integration)
 - `GET /api/dashboard/admin` (admin)
 - `GET /api/dashboard/employee`
 - `GET /api/health`
@@ -100,7 +99,6 @@ The API validates environment variables and request bodies, scopes all tenant da
 - Admins can search and filter tasks, edit assignment/details, archive and restore tasks, and review task discussions.
 - Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
 - Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream refreshes notifications, dashboards, task lists, team/invitation data, and open discussions across signed-in devices within a few seconds.
-- Admins can optionally generate editable task drafts from a short brief with Google Gemini. AI never creates or assigns a task; the admin reviews and submits it. The brief is sent to Google's unpaid service, so users are warned not to include personal, sensitive, or confidential information.
 - Users can update their profile and password or request a time-limited password-reset email.
 
 ## Security notes
@@ -137,16 +135,3 @@ Set these optional values in `server/.env` or the backend hosting environment:
 - `BREVO_SENDER_NAME`
 
 The invitation link is generated from `CLIENT_URL` and never grants access to another company. Render's free service blocks SMTP ports, so transactional email is sent over HTTPS through Brevo.
-
-## Optional AI task drafting
-
-The admin task form can use Google Gemini's free API tier to draft a title, description, category, and priority from a short user-provided brief. The draft is only put into the form; it is not saved or assigned until an admin reviews and submits it. The feature is unavailable until configured.
-
-Set these optional variables on the backend (Render), never in Vercel or frontend code:
-
-- `GEMINI_API_KEY`: create a key in [Google AI Studio](https://aistudio.google.com/apikey); keep it secret and leave billing disabled to stay on the unpaid quota.
-- `GEMINI_MODEL`: defaults to `gemini-2.5-flash-lite`.
-
-The free quota is limited and can be rate-limited; there is no guarantee of uninterrupted availability. Under Google's current unpaid-service terms, submitted prompts and generated responses may be reviewed and used to improve Google products. Do not send personal, sensitive, or confidential data. The AI form displays this notice before use. See [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [Gemini API terms](https://ai.google.dev/gemini-api/terms).
-
-Google's current terms require Paid Services when making Gemini API clients available to users in the EEA, Switzerland, or UK. Use an eligible paid service or disable AI drafting for those users.

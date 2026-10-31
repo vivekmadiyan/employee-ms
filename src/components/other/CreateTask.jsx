@@ -1,14 +1,11 @@
 import React, { useContext, useState } from 'react';
-import { FaWandMagicSparkles } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
-import { createTaskApi, createTaskDraftApi } from '../../api';
+import { createTaskApi } from '../../api';
 
 const CreateTask = () => {
   const { userData, dataError, refresh } = useContext(AuthContext);
   const activeEmployees = userData?.filter(employee => employee.active) || [];
   const [busy, setBusy] = useState(false);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [taskBrief, setTaskBrief] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
   const [taskDate, setTaskDate] = useState('');
@@ -17,24 +14,6 @@ const CreateTask = () => {
   const [priority, setPriority] = useState('medium');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);
-
-  const draftWithAi = async () => {
-    setError('');
-    setNotice(null);
-    setAiBusy(true);
-    try {
-      const draft = await createTaskDraftApi({ brief: taskBrief, category });
-      setTaskTitle(draft.title);
-      setTaskDescription(draft.description);
-      setCategory(draft.category);
-      setPriority(draft.priority);
-      setNotice({ success: true, message: 'Draft ready. Review and edit it before creating the task.' });
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setAiBusy(false);
-    }
-  };
 
   const submitHandler = async (e) => {
     e.preventDefault(); setError(''); setNotice(null); setBusy(true);
@@ -51,7 +30,7 @@ const CreateTask = () => {
             ? 'Task assigned, but assignment email is not configured. Set BREVO_API_KEY and a verified BREVO_SENDER_EMAIL in Render.'
             : `Task assigned, but the email could not be sent (${created.emailStatus || 'unknown error'}). Check the backend logs.`
       });
-      setTaskTitle(''); setTaskDescription(''); setTaskDate(''); setAssignTo(''); setCategory(''); setPriority('medium'); setTaskBrief('');
+      setTaskTitle(''); setCategory(''); setAssignTo(''); setTaskDate(''); setTaskDescription(''); setPriority('medium');
       try {
         await refresh();
       } catch (refreshError) {
@@ -101,33 +80,6 @@ const CreateTask = () => {
           </div>
         )}
         {notice && <p role="status" className={`rounded-lg px-3 py-2 text-sm ${notice.success ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>{notice.message}</p>}
-
-        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
-          <label htmlFor="task-ai-brief" className="block text-xs font-bold text-indigo-950">Describe the work for AI</label>
-          <textarea
-            id="task-ai-brief"
-            value={taskBrief}
-            onChange={event => setTaskBrief(event.target.value)}
-            maxLength="1000"
-            minLength="10"
-            rows="3"
-            placeholder="For example: Prepare a launch checklist covering accessibility, mobile layouts, and sign-off."
-            className="mt-2 block w-full rounded-lg border-indigo-200 bg-white text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-          />
-          <p className="mt-2 text-[11px] leading-5 text-indigo-900/75">
-            The brief is sent to Google Gemini’s free service, where it may be reviewed or used to improve Google products. Do not include personal, sensitive, or confidential information. AI drafts can be inaccurate; review before saving.
-            {' '}<a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer" className="font-semibold underline">Data terms</a>
-          </p>
-          <button
-            type="button"
-            onClick={draftWithAi}
-            disabled={aiBusy || taskBrief.trim().length < 10}
-            className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 shadow-sm hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <FaWandMagicSparkles aria-hidden="true" />
-            {aiBusy ? 'Drafting…' : 'Draft task with AI'}
-          </button>
-        </div>
 
         <div>
           <label htmlFor="task-title" className="block text-xs font-bold text-slate-600">Task title</label>

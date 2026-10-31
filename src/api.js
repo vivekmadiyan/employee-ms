@@ -37,7 +37,6 @@ export const getTasksApi = (filters = {}) => {
   return api(`/tasks${query ? `?${query}` : ''}`);
 };
 export const createTaskApi = (payload) => api('/tasks', {method:'POST', body:JSON.stringify(payload)});
-export const createTaskDraftApi = payload => api('/ai/task-draft', { method: 'POST', body: JSON.stringify(payload) });
 export const updateTaskApi = (id, payload) => api(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const archiveTaskApi = (id, archived = true) => api(`/tasks/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ archived }) });
 export const updateTaskStatusApi = (id, status) => api(`/tasks/${id}/status`, {method:'PATCH', body:JSON.stringify({status})});

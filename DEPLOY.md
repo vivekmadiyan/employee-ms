@@ -36,25 +36,11 @@ If email is not configured or Brevo rejects a message, the invitation/task still
 
 Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transactional-email
 
-## Optional AI task drafting
-
-The admin task form can draft editable task details using Google Gemini. It is disabled until configured:
-
-1. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey).
-2. In Render's `employeems-api` Environment settings, set `GEMINI_API_KEY` to the secret key. Keep billing disabled if you want to use only the free quota; the service applies a per-IP request limit and the provider may impose additional quotas.
-3. Optionally set `GEMINI_MODEL`; the default is `gemini-2.5-flash-lite`.
-4. Save settings and wait for the backend to redeploy.
-
-Only the brief and optional category entered by the admin are sent to Gemini. The form warns users not to include personal, sensitive, or confidential information: Google's unpaid-service terms allow submitted prompts and responses to be reviewed and used to improve Google products. Generated text is untrusted and must be reviewed; it is never saved or assigned until the admin submits the task form. See [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [Gemini API terms](https://ai.google.dev/gemini-api/terms).
-
-Google's current terms require Paid Services for Gemini API clients made available to users in the EEA, Switzerland, or UK. Use an eligible paid service or disable AI drafting for those users.
-
 ## Production checks
 
 - The frontend bundle must use the public API URL, not `localhost`.
 - The Render service must allow the exact Vercel origin.
 - Test company signup and login, invitation delivery and acceptance, password recovery, account profile/password changes, and sign-out.
-- If AI drafting is enabled, verify that `GEMINI_API_KEY` is configured only on the backend and test the free-quota/rate-limit response; do not enter sensitive or personal data in prompts.
 - As an admin, test task search/filter/edit/archive/restore, comments, and notifications; verify archived tasks do not appear in active dashboards.
 - Keep the authenticated Server-Sent Events stream available through the hosting proxy; it refreshes workspace data and notifications across signed-in devices within a few seconds and reconnects automatically after interruptions. Workspace-change tracking is installed automatically during database initialization; it needs no additional environment variables.
 - Test that an employee can comment on and update only their own tasks, and that deactivation is blocked while they have open work.

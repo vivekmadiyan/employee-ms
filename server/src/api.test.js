@@ -9,8 +9,7 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   sendInvitationEmail: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
-  sendTaskAssignedEmail: vi.fn(),
-  generateTaskDraft: vi.fn()
+  sendTaskAssignedEmail: vi.fn()
 }));
 
 vi.mock('./db.js', () => ({
@@ -23,10 +22,6 @@ vi.mock('./email.js', () => ({
   sendPasswordResetEmail: mocks.sendPasswordResetEmail,
   sendTaskAssignedEmail: mocks.sendTaskAssignedEmail
 }));
-vi.mock('./ai.js', () => ({
-  generateTaskDraft: mocks.generateTaskDraft
-}));
-
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/employee_ms_test';
 process.env.JWT_SECRET = 'test-only-jwt-secret-that-is-at-least-32-characters';
@@ -34,8 +29,6 @@ process.env.CLIENT_URL = 'https://employee-ms.test';
 process.env.ALLOWED_ORIGINS = 'https://employee-ms.test';
 process.env.BREVO_API_KEY = 'test-brevo-key';
 process.env.BREVO_SENDER_EMAIL = 'no-reply@example.test';
-process.env.GEMINI_API_KEY = 'test-gemini-key';
-process.env.GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 const { app } = await import('./server.js');
 
@@ -341,7 +334,6 @@ beforeEach(() => {
   installQueryMock();
   mocks.sendTaskAssignedEmail.mockReset();
   mocks.sendTaskAssignedEmail.mockResolvedValue(undefined);
-  mocks.generateTaskDraft.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
@@ -669,86 +661,5 @@ describe('password reset API flow', () => {
       .send({ email: 'admin@example.test', password: 'reset-password-12345' }).expect(200);
     await request(app).post('/api/auth/reset-password')
       .send({ token, password: 'another-password-12345' }).expect(400);
-  });
-});
-
-describe('AI task drafting API', () => {
-  it('allows admins to request a draft without creating a task', async () => {
-    const draft = {
-      title: 'Review launch accessibility',
-      description: 'Audit key flows and report issues with reproduction steps.',
-      category: 'Quality',
-      priority: 'medium'
-    };
-    mocks.generateTaskDraft.mockResolvedValue(draft);
-    const admin = await request(app).post('/api/auth/login')
-      .send({ email: 'admin@example.test', password: 'correct-horse-battery-123' })
-      .expect(200);
-
-    const response = await request(app).post('/api/ai/task-draft')
-      .set('Authorization', `Bearer ${admin.body.token}`)
-      .send({ brief: 'Review accessibility in the key launch flows.', category: 'Quality' })
-      .expect(200);
-
-    expect(response.body).toEqual(draft);
-    expect(mocks.generateTaskDraft).toHaveBeenCalledWith({
-      apiKey: 'test-gemini-key',
-      model: 'gemini-2.5-flash-lite',
-      brief: 'Review accessibility in the key launch flows.',
-      category: 'Quality'
-    });
-    expect(tasks).toEqual([]);
-  });
-
-  it('rejects employee access and malformed briefs', async () => {
-    const employee = await request(app).post('/api/auth/login')
-      .send({ email: 'employee@example.test', password: 'correct-horse-battery-123' })
-      .expect(200);
-
-    await request(app).post('/api/ai/task-draft')
-      .set('Authorization', `Bearer ${employee.body.token}`)
-      .send({ brief: 'Draft a task for the team.' })
-      .expect(403);
-
-    const admin = await request(app).post('/api/auth/login')
-      .send({ email: 'admin@example.test', password: 'correct-horse-battery-123' })
-      .expect(200);
-    await request(app).post('/api/ai/task-draft')
-      .set('Authorization', `Bearer ${admin.body.token}`)
-      .send({ brief: 'short' })
-      .expect(400);
-    expect(mocks.generateTaskDraft).not.toHaveBeenCalled();
-  });
-
-  it('returns a clear retry response when the AI provider rate limit is reached', async () => {
-    const admin = await request(app).post('/api/auth/login')
-      .send({ email: 'admin@example.test', password: 'correct-horse-battery-123' })
-      .expect(200);
-    const error = new Error('Provider limit');
-    error.code = 'ai_rate_limited';
-    mocks.generateTaskDraft.mockRejectedValue(error);
-
-    const response = await request(app).post('/api/ai/task-draft')
-      .set('Authorization', `Bearer ${admin.body.token}`)
-      .send({ brief: 'Prepare a useful launch checklist for the team.' })
-      .expect(429);
-    expect(response.body.message).toMatch(/free usage limit/i);
-  });
-
-  it('explains provider credential failures without exposing provider details', async () => {
-    const admin = await request(app).post('/api/auth/login')
-      .send({ email: 'admin@example.test', password: 'correct-horse-battery-123' })
-      .expect(200);
-    const error = new Error('Provider credentials rejected');
-    error.code = 'ai_configuration_error';
-    error.status = 403;
-    mocks.generateTaskDraft.mockRejectedValue(error);
-
-    const response = await request(app).post('/api/ai/task-draft')
-      .set('Authorization', `Bearer ${admin.body.token}`)
-      .send({ brief: 'Prepare a useful launch checklist for the team.' })
-      .expect(503);
-    expect(response.body.message).toMatch(/check GEMINI_API_KEY/i);
-    expect(response.body.message).not.toContain('Provider credentials rejected');
   });
 });

@@ -12,7 +12,6 @@ import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { auth, adminOnly } from './middleware/auth.js';
 import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail } from './email.js';
-import { generateTaskDraft } from './ai.js';
 
 const app = express();
 if (config.TRUST_PROXY) app.set('trust proxy', 1);
@@ -26,7 +25,6 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draf
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many attempts. Please try again later.' } });
 const onboardingLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many account requests. Please try again later.' } });
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many password reset requests. Please try again later.' } });
-const aiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'AI drafting is temporarily rate-limited. Try again later.' } });
 const userFields = 'id, company_id AS "companyId", first_name AS "firstName", email, role, department, active';
 const taskFields = 'id, company_id AS "companyId", task_title AS "taskTitle", task_description AS "taskDescription", task_date AS "taskDate", category, priority, status, assigned_to AS "assignedTo", created_by AS "createdBy", archived_at AS "archivedAt", created_at AS "createdAt", updated_at AS "updatedAt"';
 const safeUser = u => ({ id: u.id, companyId: u.companyId, firstName: u.firstName, email: u.email, role: u.role, department: u.department, active: u.active });
@@ -103,10 +101,6 @@ const schemas = {
   register: z.object({ companyName: z.string().trim().min(2).max(120), industry: z.string().trim().min(2).max(80).default('General'), size: z.enum(['1-10', '11-50', '51-200', '201-500', '500+']).default('1-10'), firstName: z.string().trim().min(2).max(80), email, password }),
   employee: z.object({ firstName: z.string().trim().min(2).max(80), email, password, department: z.string().trim().min(2).max(80).default('General') }),
   invitation: z.object({ firstName: z.string().trim().min(2).max(80), email, department: z.string().trim().min(2).max(80).default('General') }),
-  aiTaskDraft: z.object({
-    brief: z.string().trim().min(10, 'Describe the task in at least 10 characters').max(1_000),
-    category: z.string().trim().max(80).optional()
-  }),
   task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Task date must be YYYY-MM-DD').refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Task date is invalid'), category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
@@ -474,41 +468,6 @@ app.patch('/api/notifications/read-all', auth, async (req, res, next) => {
     await query('UPDATE notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL', [req.user.id]);
     res.json({ success: true });
   } catch (error) {
-    next(error);
-  }
-});
-app.post('/api/ai/task-draft', auth, adminOnly, aiLimiter, async (req, res, next) => {
-  let values;
-  try {
-    values = body(schemas.aiTaskDraft, req.body);
-  } catch (error) {
-    return next(error);
-  }
-  if (!config.GEMINI_API_KEY) {
-    return res.status(503).json({ message: 'AI task drafting is not configured. Add GEMINI_API_KEY to the backend environment.' });
-  }
-  try {
-    const draft = await generateTaskDraft({
-      apiKey: config.GEMINI_API_KEY,
-      model: config.GEMINI_MODEL,
-      brief: values.brief,
-      category: values.category
-    });
-    res.json(draft);
-  } catch (error) {
-    console.error('AI task drafting failed:', { requestId: req.id, code: error.code || 'ai_provider_error', status: error.status });
-    if (error.code === 'ai_rate_limited') {
-      return res.status(429).json({ message: 'The AI provider is at its free usage limit. Try again later.' });
-    }
-    if (error.code === 'ai_network_error') {
-      return res.status(502).json({ message: 'The AI service could not be reached. Please try again.' });
-    }
-    if (error.code === 'ai_configuration_error') {
-      return res.status(503).json({ message: 'The AI provider rejected its credentials. Check GEMINI_API_KEY and model access in Render.' });
-    }
-    if (error.code === 'ai_invalid_response') {
-      return res.status(502).json({ message: 'The AI service returned an unusable draft. Please try again.' });
-    }
     next(error);
   }
 });
