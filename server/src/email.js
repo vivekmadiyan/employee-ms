@@ -1,49 +1,62 @@
 const BREVO_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 
 async function sendBrevoEmail({ apiKey, senderEmail, senderName, recipientEmail, payload, fetchImpl }) {
-  let response;
-  try {
-    response = await fetchImpl(BREVO_EMAIL_URL, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'api-key': apiKey,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        sender: { name: senderName, email: senderEmail },
-        to: [{ email: recipientEmail }],
-        ...payload
-      }),
-      signal: AbortSignal.timeout(10_000)
-    });
-  } catch {
-    const error = new Error('Could not reach the Brevo email API');
-    error.code = 'network_error';
-    throw error;
-  }
+  const request = {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'api-key': apiKey,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email: recipientEmail }],
+      ...payload
+    })
+  };
+  let lastError;
 
-  if (!response.ok) {
-    let providerError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response;
     try {
-      providerError = await response.json();
+      response = await fetchImpl(BREVO_EMAIL_URL, {
+        ...request,
+        signal: AbortSignal.timeout(10_000)
+      });
     } catch {
-      providerError = null;
+      lastError = new Error('Could not reach the Brevo email API');
+      lastError.code = 'network_error';
     }
 
-    const error = new Error(`Brevo rejected the email request with HTTP ${response.status}`);
-    error.code = response.status === 401 ? 'provider_auth_failed' : 'provider_rejected';
-    error.status = response.status;
-    if (typeof providerError?.code === 'string') {
-      error.providerCode = providerError.code.slice(0, 100);
+    if (response?.ok) return;
+
+    if (response) {
+      let providerError;
+      try {
+        providerError = await response.json();
+      } catch {
+        providerError = null;
+      }
+
+      lastError = new Error(`Brevo rejected the email request with HTTP ${response.status}`);
+      lastError.code = response.status === 401 ? 'provider_auth_failed' : 'provider_rejected';
+      lastError.status = response.status;
+      if (typeof providerError?.code === 'string') {
+        lastError.providerCode = providerError.code.slice(0, 100);
+      }
+      if (typeof providerError?.message === 'string') {
+        lastError.providerMessage = providerError.message
+          .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+          .replace(/[\r\n]/g, ' ')
+          .slice(0, 300);
+      }
     }
-    if (typeof providerError?.message === 'string') {
-      error.providerMessage = providerError.message
-        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
-        .replace(/[\r\n]/g, ' ')
-        .slice(0, 300);
-    }
-    throw error;
+
+    const retryable = lastError.code === 'network_error'
+      || lastError.status === 429
+      || lastError.status >= 500;
+    if (!retryable || attempt === 2) throw lastError;
+    await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
   }
 }
 

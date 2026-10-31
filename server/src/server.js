@@ -515,7 +515,15 @@ app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
        VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${taskFields}`,
       [req.company.id, values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, req.user.id, values.priority]
     )).rows[0];
-    await notifyUser(values.assignedTo, task.id, req.user.id, 'assigned', `New task assigned: ${task.taskTitle}`, `assigned:${task.id}:${values.assignedTo}`);
+    try {
+      await notifyUser(values.assignedTo, task.id, req.user.id, 'assigned', `New task assigned: ${task.taskTitle}`, `assigned:${task.id}:${values.assignedTo}`);
+    } catch (error) {
+      console.error('Task assignment notification failed:', {
+        requestId: req.id,
+        taskId: task.id,
+        message: error.message
+      });
+    }
     const email = await emailTaskAssignment(task, employee, req.user.firstName, req);
     res.status(201).json({ ...serializeTask(task), ...email });
   } catch (error) {

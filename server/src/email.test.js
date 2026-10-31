@@ -11,6 +11,18 @@ const emailOptions = {
   inviteUrl: 'https://app.example.com/invite/test-token'
 };
 
+const taskOptions = {
+  ...emailOptions,
+  assignedBy: 'Admin',
+  task: {
+    taskTitle: 'Prepare launch checklist',
+    taskDescription: 'Review production readiness.',
+    category: 'Operations',
+    priority: 'high',
+    taskDate: '2099-12-31'
+  }
+};
+
 describe('sendInvitationEmail', () => {
   it('sends a transactional email through Brevo over HTTPS', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
@@ -30,64 +42,7 @@ describe('sendInvitationEmail', () => {
     });
   });
 
-  describe('sendPasswordResetEmail', () => {
-    it('sends a reset link through the same HTTPS provider', async () => {
-      const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
-
-      await sendPasswordResetEmail({
-        apiKey: 'test-api-key',
-        senderEmail: 'sender@example.com',
-        senderName: 'EmployeeMS',
-        recipientEmail: 'employee@example.com',
-        recipientName: 'Alex',
-        resetUrl: 'https://app.example.com/reset-password/one-time-token',
-        fetchImpl
-      });
-
-      const [url, options] = fetchImpl.mock.calls[0];
-      expect(url).toBe('https://api.brevo.com/v3/smtp/email');
-      expect(JSON.parse(options.body)).toMatchObject({
-        to: [{ email: 'employee@example.com' }],
-        subject: 'Reset your EmployeeMS password',
-        textContent: expect.stringContaining('https://app.example.com/reset-password/one-time-token')
-      });
-    });
-
-    describe('sendTaskAssignedEmail', () => {
-      it('sends the task details to the assigned employee through Brevo', async () => {
-        const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
-
-        await sendTaskAssignedEmail({
-          apiKey: 'test-api-key',
-          senderEmail: 'sender@example.com',
-          senderName: 'EmployeeMS',
-          recipientEmail: 'employee@example.com',
-          recipientName: 'Alex',
-          companyName: 'Example Co',
-          assignedBy: 'Admin',
-          task: {
-            taskTitle: 'Prepare launch checklist',
-            taskDescription: 'Review production readiness.',
-            category: 'Operations',
-            priority: 'high',
-            taskDate: '2099-12-31'
-          },
-          fetchImpl
-        });
-
-        const [url, options] = fetchImpl.mock.calls[0];
-        expect(url).toBe('https://api.brevo.com/v3/smtp/email');
-        expect(JSON.parse(options.body)).toMatchObject({
-          to: [{ name: 'Alex', email: 'employee@example.com' }],
-          subject: 'New task assigned: Prepare launch checklist',
-          textContent: expect.stringContaining('Due date: 2099-12-31')
-        });
-        expect(JSON.parse(options.body).textContent).toContain('Admin assigned you a task in Example Co.');
-      });
-    });
-  });
-
-  it('reports provider rejection with safe diagnostic details', async () => {
+  it('reports provider rejection with safe diagnostic details without retrying', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       Response.json({
         code: 'sender_not_validated',
@@ -101,14 +56,12 @@ describe('sendInvitationEmail', () => {
       providerCode: 'sender_not_validated',
       providerMessage: 'Sender [email] is not verified'
     });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it('classifies Brevo 401 responses as invalid API credentials', async () => {
+  it('classifies Brevo 401 responses as invalid credentials without retrying', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
-      Response.json({
-        code: 'unauthorized',
-        message: 'Invalid API key'
-      }, { status: 401 })
+      Response.json({ code: 'unauthorized', message: 'Invalid API key' }, { status: 401 })
     );
 
     await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
@@ -117,12 +70,11 @@ describe('sendInvitationEmail', () => {
       providerCode: 'unauthorized',
       providerMessage: 'Invalid API key'
     });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('does not expose malformed provider response bodies', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      new Response('private provider response', { status: 401 })
-    );
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('private provider response', { status: 401 }));
 
     await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
       code: 'provider_auth_failed',
@@ -130,11 +82,59 @@ describe('sendInvitationEmail', () => {
     });
   });
 
-  it('classifies connection failures as network errors', async () => {
+  it('retries network failures up to three attempts', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
 
     await expect(sendInvitationEmail({ ...emailOptions, fetchImpl })).rejects.toMatchObject({
       code: 'network_error'
     });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('sendPasswordResetEmail', () => {
+  it('sends a reset link through the same HTTPS provider', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+
+    await sendPasswordResetEmail({
+      ...emailOptions,
+      resetUrl: 'https://app.example.com/reset-password/one-time-token',
+      fetchImpl
+    });
+
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://api.brevo.com/v3/smtp/email');
+    expect(JSON.parse(options.body)).toMatchObject({
+      to: [{ email: 'employee@example.com' }],
+      subject: 'Reset your EmployeeMS password',
+      textContent: expect.stringContaining('https://app.example.com/reset-password/one-time-token')
+    });
+  });
+});
+
+describe('sendTaskAssignedEmail', () => {
+  it('sends task details to the assigned employee through Brevo', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+
+    await sendTaskAssignedEmail({ ...taskOptions, fetchImpl });
+
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://api.brevo.com/v3/smtp/email');
+    expect(JSON.parse(options.body)).toMatchObject({
+      to: [{ name: 'Alex', email: 'employee@example.com' }],
+      subject: 'New task assigned: Prepare launch checklist',
+      textContent: expect.stringContaining('Due date: 2099-12-31')
+    });
+    expect(JSON.parse(options.body).textContent).toContain('Admin assigned you a task in Example Co.');
+  });
+
+  it('retries a transient Brevo error and succeeds when the provider recovers', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json({ code: 'temporary_error' }, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 201 }));
+
+    await sendTaskAssignedEmail({ ...taskOptions, fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
