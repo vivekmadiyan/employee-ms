@@ -52,6 +52,72 @@ export const getInvitationsApi = () => api('/invitations');
 export const resendInvitationApi = id => api(`/invitations/${id}/resend`, { method: 'POST' });
 export const revokeInvitationApi = id => api(`/invitations/${id}`, { method: 'DELETE' });
 export const getNotificationsApi = () => api('/notifications');
+export const subscribeNotificationsApi = (onUpdate, onError = () => {}) => {
+  const controller = new AbortController();
+  let retryDelay = 1000;
+
+  const connect = async () => {
+    while (!controller.signal.aborted) {
+      try {
+        if (!API_URL) throw new Error('The API is not configured. Set VITE_API_URL for this deployment.');
+        const token = localStorage.getItem('ems_token');
+        if (!token) {
+          window.dispatchEvent(new Event('ems:session-expired'));
+          return;
+        }
+
+        const response = await fetch(`${API_URL}/notifications/stream`, {
+          headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` },
+          signal: controller.signal
+        });
+        if (response.status === 401) {
+          localStorage.removeItem('ems_token');
+          localStorage.removeItem('ems_user');
+          window.dispatchEvent(new Event('ems:session-expired'));
+          return;
+        }
+        if (!response.ok || !response.body) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.message || `Live notifications failed (${response.status}).`);
+        }
+
+        retryDelay = 1000;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!controller.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split(/\r?\n\r?\n/);
+          buffer = events.pop() || '';
+          for (const event of events) {
+            const eventName = event.split(/\r?\n/).find(line => line.startsWith('event:'))?.slice(6).trim();
+            const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
+            if (eventName === 'notifications' && data) onUpdate(JSON.parse(data));
+            if (eventName === 'stream-error' && data) onError(JSON.parse(data).message);
+          }
+        }
+        reader.releaseLock();
+        if (!controller.signal.aborted) throw new Error('Live notifications disconnected.');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        onError(error.message || 'Live notifications are reconnecting.');
+        await new Promise(resolve => {
+          const timer = window.setTimeout(resolve, retryDelay);
+          controller.signal.addEventListener('abort', () => {
+            window.clearTimeout(timer);
+            resolve();
+          }, { once: true });
+        });
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+      }
+    }
+  };
+
+  connect();
+  return () => controller.abort();
+};
 export const markNotificationReadApi = id => api(`/notifications/${id}/read`, { method: 'PATCH', body: '{}' });
 export const markAllNotificationsReadApi = () => api('/notifications/read-all', { method: 'PATCH', body: '{}' });
 export const getTaskCommentsApi = id => api(`/tasks/${id}/comments`);

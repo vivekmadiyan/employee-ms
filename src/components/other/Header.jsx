@@ -1,6 +1,6 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { FaArrowRightFromBracket, FaBell, FaBuilding, FaGear, FaLayerGroup } from 'react-icons/fa6';
-import { getNotificationsApi, markAllNotificationsReadApi, markNotificationReadApi } from '../../api';
+import { getNotificationsApi, markAllNotificationsReadApi, markNotificationReadApi, subscribeNotificationsApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import AccountSettings from './AccountSettings';
 
@@ -25,9 +25,14 @@ const Header = ({ changeUser, data }) => {
   };
 
   useEffect(() => {
-    refreshNotifications();
-    const timer = window.setInterval(refreshNotifications, 60_000);
-    return () => window.clearInterval(timer);
+    return subscribeNotificationsApi(
+      result => {
+        setNotifications(result.notifications);
+        setUnreadCount(result.unreadCount);
+        setNotificationError('');
+      },
+      setNotificationError
+    );
   }, []);
 
   const markRead = async notification => {

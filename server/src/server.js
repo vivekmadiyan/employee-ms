@@ -35,6 +35,33 @@ const notifyUser = (userId, taskId, actorId, type, message, eventKey) => query(
   'INSERT INTO notifications(user_id,task_id,actor_id,type,message,event_key) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(event_key) DO NOTHING',
   [userId, taskId, actorId, type, message, eventKey]
 );
+const loadNotifications = async userId => {
+  const { rows } = await query(
+    `SELECT n.id,n.task_id AS "taskId",n.type,n.message,n.read_at AS "readAt",n.created_at AS "createdAt"
+     FROM notifications n WHERE n.user_id=$1 ORDER BY n.created_at DESC LIMIT 50`,
+    [userId]
+  );
+  return { notifications: rows, unreadCount: rows.filter(notification => !notification.readAt).length };
+};
+const syncDeadlineNotifications = async user => {
+  if (user.role !== 'employee') return;
+  await query(
+    `INSERT INTO notifications(user_id,task_id,type,message,event_key)
+     SELECT t.assigned_to,t.id,'due','Task due today: ' || t.task_title,'due:' || t.id || ':' || t.task_date
+     FROM tasks t WHERE t.company_id=$1 AND t.assigned_to=$2 AND t.archived_at IS NULL
+       AND t.status IN ('new','active') AND t.task_date=CURRENT_DATE::text
+     ON CONFLICT(event_key) DO NOTHING`,
+    [user.companyId, user.id]
+  );
+  await query(
+    `INSERT INTO notifications(user_id,task_id,type,message,event_key)
+     SELECT t.assigned_to,t.id,'overdue','Task is overdue: ' || t.task_title,'overdue:' || t.id || ':' || t.task_date
+     FROM tasks t WHERE t.company_id=$1 AND t.assigned_to=$2 AND t.archived_at IS NULL
+       AND t.status IN ('new','active') AND t.task_date<CURRENT_DATE::text
+     ON CONFLICT(event_key) DO NOTHING`,
+    [user.companyId, user.id]
+  );
+};
 const sign = user => jwt.sign({ userId: String(user.id), role: user.role, companyId: String(user.companyId) }, config.JWT_SECRET, { algorithm: 'HS256', expiresIn: '8h', issuer: 'employeems-api', audience: 'employeems-web' });
 const companyDto = c => ({ id: c.id, name: c.name, slug: c.slug, industry: c.industry, size: c.size });
 const findUser = async (email) => (await query(`SELECT ${userFields}, password_hash AS "passwordHash" FROM users WHERE email = $1`, [email])).rows[0];
@@ -325,33 +352,62 @@ app.post('/api/invitations/:token/accept', async (req, res, next) => { let value
 
 app.get('/api/notifications', auth, async (req, res, next) => {
   try {
-    if (req.user.role === 'employee') {
-      await query(
-        `INSERT INTO notifications(user_id,task_id,type,message,event_key)
-         SELECT t.assigned_to,t.id,'due','Task due today: ' || t.task_title,'due:' || t.id || ':' || t.task_date
-         FROM tasks t WHERE t.company_id=$1 AND t.assigned_to=$2 AND t.archived_at IS NULL
-           AND t.status IN ('new','active') AND t.task_date=CURRENT_DATE::text
-         ON CONFLICT(event_key) DO NOTHING`,
-        [req.company.id, req.user.id]
-      );
-      await query(
-        `INSERT INTO notifications(user_id,task_id,type,message,event_key)
-         SELECT t.assigned_to,t.id,'overdue','Task is overdue: ' || t.task_title,'overdue:' || t.id || ':' || t.task_date
-         FROM tasks t WHERE t.company_id=$1 AND t.assigned_to=$2 AND t.archived_at IS NULL
-           AND t.status IN ('new','active') AND t.task_date<CURRENT_DATE::text
-         ON CONFLICT(event_key) DO NOTHING`,
-        [req.company.id, req.user.id]
-      );
-    }
-    const { rows } = await query(
-      `SELECT n.id,n.task_id AS "taskId",n.type,n.message,n.read_at AS "readAt",n.created_at AS "createdAt"
-       FROM notifications n WHERE n.user_id=$1 ORDER BY n.created_at DESC LIMIT 50`,
-      [req.user.id]
-    );
-    res.json({ notifications: rows, unreadCount: rows.filter(notification => !notification.readAt).length });
+    await syncDeadlineNotifications(req.user);
+    res.json(await loadNotifications(req.user.id));
   } catch (error) {
     next(error);
   }
+});
+app.get('/api/notifications/stream', auth, async (req, res, next) => {
+  let initialState;
+  try {
+    await syncDeadlineNotifications(req.user);
+    initialState = await loadNotifications(req.user.id);
+  } catch (error) {
+    return next(error);
+  }
+
+  res.status(200);
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders();
+  res.write(`event: notifications\ndata: ${JSON.stringify(initialState)}\n\n`);
+
+  let previousState = JSON.stringify(initialState);
+  let polling = false;
+  const poll = async () => {
+    if (polling || res.writableEnded) return;
+    polling = true;
+    try {
+      await syncDeadlineNotifications(req.user);
+      const state = await loadNotifications(req.user.id);
+      const serialized = JSON.stringify(state);
+      if (serialized !== previousState) {
+        res.write(`event: notifications\ndata: ${serialized}\n\n`);
+        previousState = serialized;
+      }
+    } catch (error) {
+      console.error('Notification stream poll failed:', { requestId: req.id, message: error.message });
+      previousState = null;
+      if (!res.writableEnded) res.write('event: stream-error\ndata: {"message":"Live notifications are reconnecting."}\n\n');
+    } finally {
+      polling = false;
+    }
+  };
+  const pollTimer = setInterval(poll, 3000);
+  const heartbeatTimer = setInterval(() => {
+    if (!res.writableEnded) res.write(': keep-alive\n\n');
+  }, 15_000);
+  const closeStream = () => {
+    clearInterval(pollTimer);
+    clearInterval(heartbeatTimer);
+  };
+  req.on('aborted', closeStream);
+  res.on('close', closeStream);
 });
 app.patch('/api/notifications/:id/read', auth, async (req, res, next) => {
   try {

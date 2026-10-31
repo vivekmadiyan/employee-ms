@@ -42,6 +42,7 @@ Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transacti
 - The Render service must allow the exact Vercel origin.
 - Test company signup and login, invitation delivery and acceptance, password recovery, account profile/password changes, and sign-out.
 - As an admin, test task search/filter/edit/archive/restore, comments, and notifications; verify archived tasks do not appear in active dashboards.
+- Keep the authenticated notification stream available through the hosting proxy; the UI expects Server-Sent Events and reconnects automatically after interruptions.
 - Test that an employee can comment on and update only their own tasks, and that deactivation is blocked while they have open work.
 - Check the responsive layout and keyboard access for sign-in, invitation, dashboard, account settings, and task workflows.
 - Back up the production database and complete a restore rehearsal before inviting real users.

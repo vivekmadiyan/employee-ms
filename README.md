@@ -98,7 +98,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 
 - Admins can search and filter tasks, edit assignment/details, archive and restore tasks, and review task discussions.
 - Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
-- Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work.
+- Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. An authenticated Server-Sent Events stream updates notification badges and lists within a few seconds, including across devices.
 - Users can update their profile and password or request a time-limited password-reset email.
 
 ## Security notes
