@@ -1,4 +1,5 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AuthContext } from '../../context/AuthProvider';
 import { updateProfileApi } from '../../api';
 
@@ -12,6 +13,8 @@ export default function AccountSettings({ onClose }) {
 
   useEffect(() => {
     const dialog = dialogRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const closeButton = dialog?.querySelector('[data-dialog-close]');
     closeButton?.focus();
     const handleKeyDown = event => {
@@ -35,6 +38,7 @@ export default function AccountSettings({ onClose }) {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => {
+      document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
       document.querySelector('[aria-label="Account settings"]')?.focus();
     };
@@ -62,7 +66,7 @@ export default function AccountSettings({ onClose }) {
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-sm" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="account-settings-heading" className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-7">
         <div className="flex items-start justify-between gap-4">
@@ -90,6 +94,7 @@ export default function AccountSettings({ onClose }) {
           </div>
         </form>
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }

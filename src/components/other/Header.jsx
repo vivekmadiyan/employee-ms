@@ -111,7 +111,7 @@ const Header = ({ changeUser, data }) => {
               </section>
             )}
           </div>
-          <button type="button" onClick={() => setShowSettings(true)} aria-label="Account settings" className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50">
+          <button type="button" onClick={() => { setShowNotifications(false); setShowSettings(true); }} aria-label="Account settings" aria-haspopup="dialog" className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50">
             <FaGear aria-hidden="true" />
           </button>
           <button
