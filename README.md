@@ -87,6 +87,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/tasks`
 - `POST /api/tasks` (admin)
 - `PATCH /api/tasks/:id` and `PATCH /api/tasks/:id/archive` (admin)
+- `POST /api/tasks/bulk` (admin; archive, restore, or set priority for up to 100 task IDs)
 - `PATCH /api/tasks/:id/status`
 - `GET` and `POST /api/tasks/:id/comments`
 - `GET /api/notifications` and notification read endpoints
@@ -96,7 +97,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 
 ## V1 workflows
 
-- Admins can search and filter tasks, edit assignment/details, archive and restore tasks, and review task discussions.
+- Admins can search and filter tasks, edit assignment/details, archive and restore tasks individually or in bulk, apply a bulk priority, and review task discussions.
 - Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
 - Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream refreshes notifications, dashboards, task lists, team/invitation data, and open discussions across signed-in devices within a few seconds.
 - Users can update their profile and password or request a time-limited password-reset email.
@@ -124,7 +125,7 @@ This version is designed so multiple companies can use the same application whil
 
 ## Transactional email
 
-Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company and expire after 7 days. Brevo also emails employees when a task is assigned or reassigned. If email is not configured, invitations remain usable through the secure shareable invite link; task assignment remains available in the app and reports the email delivery status.
+Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company and expire after 7 days. Brevo emails employees when a task is assigned or reassigned and emails the other active task participants when status, comments, or due dates change. Email delivery failures do not undo saved task or comment changes and are reported to the user. If email is not configured, invitations remain usable through the secure shareable invite link and task workflows remain available in the app.
 
 ### Email configuration
 

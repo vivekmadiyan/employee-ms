@@ -6,6 +6,7 @@ export default function TaskComments({ taskId }) {
   const [comments, setComments] = useState([]);
   const [content, setContent] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -36,10 +37,18 @@ export default function TaskComments({ taskId }) {
     if (!content.trim()) return;
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       const comment = await createTaskCommentApi(taskId, content.trim());
       setComments(current => [...current, comment]);
       setContent('');
+      setNotice(comment.emailStatus === 'sent'
+        ? 'Comment posted; an email update was sent to the other task participants.'
+        : comment.emailStatus === 'not_configured'
+          ? 'Comment posted; email notifications are not configured.'
+          : comment.emailStatus === 'failed' || comment.emailStatus === 'partial_failure'
+            ? `Comment posted, but email delivery ${comment.emailStatus === 'failed' ? 'failed' : 'was incomplete'}.`
+            : '');
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -56,6 +65,7 @@ export default function TaskComments({ taskId }) {
         <div className="mt-3 space-y-3">
           {loading && <p role="status" className="text-xs text-slate-500">Loading comments…</p>}
           {error && <p role="alert" className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700">{error}</p>}
+          {notice && <p role="status" className="rounded-lg bg-emerald-50 p-2 text-xs text-emerald-800">{notice}</p>}
           {!loading && !comments.length && !error && <p className="text-xs text-slate-500">No comments yet.</p>}
           {comments.map(comment => (
             <article key={comment.id} className="rounded-lg bg-slate-50 p-3">

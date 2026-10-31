@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { auth, adminOnly } from './middleware/auth.js';
-import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail } from './email.js';
+import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail, sendTaskUpdateEmail } from './email.js';
 
 const app = express();
 if (config.TRUST_PROXY) app.set('trust proxy', 1);
@@ -62,6 +62,48 @@ const emailTaskAssignment = async (task, recipient, assignedBy, req) => {
       providerMessage: error.providerMessage
     });
     return { emailSent: false, emailStatus: error.code || 'failed' };
+  }
+};
+const emailTaskUpdate = async (task, recipientIds, actorId, actorName, updateType, updateDetails, req) => {
+  if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) return 'not_configured';
+  try {
+    const recipientResult = await query(
+      `SELECT id,first_name AS "firstName",email FROM users
+       WHERE id=ANY($1::int[]) AND company_id=$2 AND active=true`,
+      [[...new Set(recipientIds)].filter(id => id !== actorId), req.company.id]
+    );
+    if (!recipientResult.rows.length) return 'no_recipients';
+    const results = await Promise.allSettled(recipientResult.rows.map(recipient => sendTaskUpdateEmail({
+      apiKey: config.BREVO_API_KEY,
+      senderEmail: config.BREVO_SENDER_EMAIL,
+      senderName: config.BREVO_SENDER_NAME,
+      recipientEmail: recipient.email,
+      recipientName: recipient.firstName,
+      companyName: req.company.name,
+      task,
+      actorName,
+      updateType,
+      updateDetails
+    })));
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) {
+      console.error('Task update email failed:', {
+        requestId: req.id,
+        taskId: task.id,
+        event: updateType,
+        failureCount: failures.length,
+        codes: failures.map(result => result.reason.code || 'provider_error')
+      });
+    }
+    return failures.length === 0 ? 'sent' : failures.length === results.length ? 'failed' : 'partial_failure';
+  } catch (error) {
+    console.error('Task update email recipient lookup failed:', {
+      requestId: req.id,
+      taskId: task.id,
+      event: updateType,
+      message: error.message
+    });
+    return 'failed';
   }
 };
 const loadNotifications = async userId => {
@@ -552,25 +594,43 @@ app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
     )).rows[0];
     if (!employee) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
     const previous = (await query(
-      'SELECT assigned_to AS "assignedTo" FROM tasks WHERE id=$1 AND company_id=$2 AND archived_at IS NULL',
+      'SELECT assigned_to AS "assignedTo",task_date AS "taskDate" FROM tasks WHERE id=$1 AND company_id=$2 AND archived_at IS NULL',
       [req.params.id, req.company.id]
     )).rows[0];
     if (!previous) return res.status(404).json({ message: 'Task not found or archived' });
+    const previousTaskDate = previous.taskDate;
     const task = (await query(
       `UPDATE tasks SET task_title=$1,task_description=$2,task_date=$3,category=$4,assigned_to=$5,priority=$6,updated_at=NOW()
        WHERE id=$7 AND company_id=$8 AND archived_at IS NULL RETURNING ${taskFields}`,
       [values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, values.priority, req.params.id, req.company.id]
     )).rows[0];
     if (!task) return res.status(404).json({ message: 'Task not found or archived' });
+    const response = { ...serializeTask(task) };
     if (previous.assignedTo !== task.assignedTo) {
-      await Promise.all([
-        notifyUser(task.assignedTo, task.id, req.user.id, 'assigned', `Task assigned to you: ${task.taskTitle}`, `assigned:${task.id}:${task.assignedTo}:${crypto.randomUUID()}`),
-        notifyUser(previous.assignedTo, task.id, req.user.id, 'assigned', `Task reassigned: ${task.taskTitle}`, `reassigned:${task.id}:${previous.assignedTo}:${crypto.randomUUID()}`)
-      ]);
-      const email = await emailTaskAssignment(task, employee, req.user.firstName, req);
-      return res.json({ ...serializeTask(task), ...email });
+      try {
+        await Promise.all([
+          notifyUser(task.assignedTo, task.id, req.user.id, 'assigned', `Task assigned to you: ${task.taskTitle}`, `assigned:${task.id}:${task.assignedTo}:${crypto.randomUUID()}`),
+          notifyUser(previous.assignedTo, task.id, req.user.id, 'assigned', `Task reassigned: ${task.taskTitle}`, `reassigned:${task.id}:${previous.assignedTo}:${crypto.randomUUID()}`)
+        ]);
+      } catch (error) {
+        console.error('Task reassignment notification failed:', { requestId: req.id, taskId: task.id, message: error.message });
+      }
+      Object.assign(response, await emailTaskAssignment(task, employee, req.user.firstName, req));
     }
-    res.json(serializeTask(task));
+    if (previousTaskDate !== task.taskDate) {
+      const emailStatus = await emailTaskUpdate(
+        task,
+        [task.assignedTo, task.createdBy],
+        req.user.id,
+        req.user.firstName,
+        'due_date',
+        task.taskDate,
+        req
+      );
+      if (response.emailStatus) response.dueDateEmailStatus = emailStatus;
+      else response.emailStatus = emailStatus;
+    }
+    res.json(response);
   } catch (error) {
     next(error);
   }
@@ -589,6 +649,42 @@ app.patch('/api/tasks/:id/archive', auth, adminOnly, async (req, res, next) => {
     next(error);
   }
 });
+app.post('/api/tasks/bulk', auth, adminOnly, async (req, res, next) => {
+  try {
+    const values = body(z.object({
+      taskIds: z.array(z.coerce.number().int().positive()).min(1).max(100),
+      action: z.enum(['archive', 'restore', 'priority']),
+      priority: z.enum(['low', 'medium', 'high']).optional()
+    }).refine(value => value.action !== 'priority' || value.priority !== undefined, {
+      message: 'Priority is required for the priority action',
+      path: ['priority']
+    }), req.body);
+    const taskIds = [...new Set(values.taskIds)];
+    let updated;
+    if (values.action === 'priority') {
+      updated = await query(
+        `UPDATE tasks SET priority=$2,updated_at=NOW()
+         WHERE id=ANY($1::int[]) AND company_id=$3 AND archived_at IS NULL RETURNING id`,
+        [taskIds, values.priority, req.company.id]
+      );
+    } else {
+      updated = await query(
+        `UPDATE tasks SET archived_at=${values.action === 'archive' ? 'NOW()' : 'NULL'},updated_at=NOW()
+         WHERE id=ANY($1::int[]) AND company_id=$2 AND archived_at IS ${values.action === 'archive' ? 'NULL' : 'NOT NULL'} RETURNING id`,
+        [taskIds, req.company.id]
+      );
+    }
+    const updatedIds = updated.rows.map(task => task.id);
+    res.json({
+      requestedCount: taskIds.length,
+      updatedCount: updatedIds.length,
+      skippedCount: taskIds.length - updatedIds.length,
+      updatedIds
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 app.patch('/api/tasks/:id/status', auth, async (req, res, next) => {
   try {
     const { status } = body(z.object({ status: z.enum(['active', 'completed', 'failed']) }), req.body);
@@ -601,9 +697,22 @@ app.patch('/api/tasks/:id/status', auth, async (req, res, next) => {
     const updated = (await query(`UPDATE tasks SET status=$1,updated_at=NOW() WHERE id=$2 AND company_id=$3 RETURNING ${taskFields}`, [status, task.id, req.company.id])).rows[0];
     const notifyId = req.user.id === task.createdBy ? task.assignedTo : task.createdBy;
     if (notifyId !== req.user.id) {
-      await notifyUser(notifyId, task.id, req.user.id, 'status', `${req.user.firstName} marked "${task.taskTitle}" ${status}`, `status:${task.id}:${crypto.randomUUID()}`);
+      try {
+        await notifyUser(notifyId, task.id, req.user.id, 'status', `${req.user.firstName} marked "${task.taskTitle}" ${status}`, `status:${task.id}:${crypto.randomUUID()}`);
+      } catch (error) {
+        console.error('Task status notification failed:', { requestId: req.id, taskId: task.id, message: error.message });
+      }
     }
-    res.json(serializeTask(updated));
+    const emailStatus = await emailTaskUpdate(
+      updated,
+      [task.assignedTo, task.createdBy],
+      req.user.id,
+      req.user.firstName,
+      'status',
+      status,
+      req
+    );
+    res.json({ ...serializeTask(updated), emailStatus });
   } catch (error) {
     next(error);
   }
@@ -642,15 +751,28 @@ app.post('/api/tasks/:id/comments', auth, async (req, res, next) => {
     )).rows[0];
     const notifyTargets = new Set([task.assignedTo, task.createdBy]);
     notifyTargets.delete(req.user.id);
-    await Promise.all([...notifyTargets].map(userId => notifyUser(
-      userId,
-      task.id,
+    try {
+      await Promise.all([...notifyTargets].map(userId => notifyUser(
+        userId,
+        task.id,
+        req.user.id,
+        'comment',
+        `${req.user.firstName} commented on "${task.taskTitle}"`,
+        `comment:${comment.id}:${userId}`
+      )));
+    } catch (error) {
+      console.error('Task comment notification failed:', { requestId: req.id, taskId: task.id, message: error.message });
+    }
+    const emailStatus = await emailTaskUpdate(
+      task,
+      [task.assignedTo, task.createdBy],
       req.user.id,
+      req.user.firstName,
       'comment',
-      `${req.user.firstName} commented on "${task.taskTitle}"`,
-      `comment:${comment.id}:${userId}`
-    )));
-    res.status(201).json({ ...comment, userId: req.user.id, firstName: req.user.firstName });
+      content.slice(0, 500),
+      req
+    );
+    res.status(201).json({ ...comment, userId: req.user.id, firstName: req.user.firstName, emailStatus });
   } catch (error) {
     next(error);
   }

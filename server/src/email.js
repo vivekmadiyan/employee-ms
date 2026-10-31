@@ -142,3 +142,55 @@ export async function sendTaskAssignedEmail({
     }
   });
 }
+
+export async function sendTaskUpdateEmail({
+  apiKey,
+  senderEmail,
+  senderName,
+  recipientEmail,
+  recipientName,
+  companyName,
+  task,
+  actorName,
+  updateType,
+  updateDetails,
+  fetchImpl = fetch
+}) {
+  const updates = {
+    status: {
+      subject: `Task status updated: ${task.taskTitle}`,
+      description: `Status changed to ${updateDetails}.`
+    },
+    comment: {
+      subject: `New comment on task: ${task.taskTitle}`,
+      description: `New comment from ${actorName}: ${updateDetails}`
+    },
+    due_date: {
+      subject: `Task due date changed: ${task.taskTitle}`,
+      description: `Due date changed to ${updateDetails}.`
+    }
+  };
+  const update = updates[updateType];
+  if (!update) throw new Error('Unsupported task update email type');
+
+  return sendBrevoEmail({
+    apiKey,
+    senderEmail,
+    senderName,
+    recipientEmail,
+    fetchImpl,
+    payload: {
+      to: [{ name: recipientName, email: recipientEmail }],
+      subject: update.subject,
+      textContent: [
+        `Hi ${recipientName},`,
+        '',
+        `${actorName} updated a task in ${companyName}.`,
+        `Task: ${task.taskTitle}`,
+        update.description,
+        '',
+        'Sign in to EmployeeMS to review the update.'
+      ].join('\n')
+    }
+  });
+}

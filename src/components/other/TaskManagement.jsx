@@ -1,6 +1,6 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { FaBoxArchive, FaMagnifyingGlass, FaRotateLeft } from 'react-icons/fa6';
-import { archiveTaskApi, getTasksApi, updateTaskApi } from '../../api';
+import { archiveTaskApi, bulkUpdateTasksApi, getTasksApi, updateTaskApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import TaskComments from './TaskComments';
 
@@ -12,6 +12,13 @@ const statusStyles = {
   failed: 'bg-rose-50 text-rose-700'
 };
 const taskStatus = task => task.completed ? 'completed' : task.failed ? 'failed' : task.active ? 'active' : 'new';
+const emailStatusText = status => status === 'sent'
+  ? 'sent'
+  : status === 'not_configured'
+    ? 'not configured'
+    : status === 'no_recipients'
+      ? 'not sent (no other active recipients)'
+      : `failed (${status})`;
 const toForm = task => ({
   taskTitle: task.taskTitle,
   taskDescription: task.taskDescription,
@@ -32,6 +39,8 @@ export default function TaskManagement() {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkPriority, setBulkPriority] = useState('medium');
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -41,6 +50,7 @@ export default function TaskManagement() {
         includeArchived: includeArchived ? 'true' : 'false'
       });
       setTasks(result);
+      setSelectedIds(current => new Set([...current].filter(id => result.some(task => task.id === id))));
       setError('');
     } catch (requestError) {
       setError(requestError.message);
@@ -72,16 +82,15 @@ export default function TaskManagement() {
     setError('');
     setNotice('');
     try {
+      const previousTask = tasks.find(task => task.id === editingId);
       const updated = await updateTaskApi(editingId, { ...editForm, assignedTo: Number(editForm.assignedTo) });
       setEditingId(null);
       setEditForm(null);
-      setNotice(updated.emailStatus
-        ? updated.emailSent
-          ? 'Task reassigned and an email was sent to the new owner.'
-          : updated.emailStatus === 'not_configured'
-            ? 'Task reassigned, but assignment email is not configured.'
-            : `Task reassigned, but email delivery failed (${updated.emailStatus}).`
-        : 'Task updated.');
+      const emailAction = previousTask?.assignedTo !== Number(editForm.assignedTo) ? 'reassigned' : 'updated';
+      const emailNotes = [];
+      if (updated.emailStatus) emailNotes.push(`${emailAction} email ${emailStatusText(updated.emailStatus)}`);
+      if (updated.dueDateEmailStatus) emailNotes.push(`due-date email ${emailStatusText(updated.dueDateEmailStatus)}`);
+      setNotice(emailNotes.length ? `Task updated; ${emailNotes.join('; ')}.` : 'Task updated.');
       await loadTasks();
       try {
         await refresh();
@@ -119,10 +128,46 @@ export default function TaskManagement() {
 
   const updateFilter = event => {
     const { name, value } = event.target;
+    setSelectedIds(new Set());
     setFilters(current => ({ ...current, [name]: value }));
   };
 
+  const runBulkAction = async (action, priority) => {
+    const taskIds = [...selectedIds];
+    if (!taskIds.length) return;
+    if (action === 'archive' && !window.confirm(`Archive ${taskIds.length} selected task${taskIds.length === 1 ? '' : 's'}?`)) return;
+    setBusyId('bulk');
+    setError('');
+    setNotice('');
+    try {
+      const result = await bulkUpdateTasksApi({ taskIds, action, ...(priority ? { priority } : {}) });
+      setSelectedIds(new Set());
+      const actionLabel = action === 'priority' ? 'updated' : action === 'archive' ? 'archived' : 'restored';
+      setNotice(`${result.updatedCount} of ${result.requestedCount} selected task${result.requestedCount === 1 ? '' : 's'} ${actionLabel}${result.skippedCount ? `; ${result.skippedCount} skipped because they were unavailable or already in that state` : ''}.`);
+      await loadTasks();
+      try {
+        await refresh();
+      } catch (refreshError) {
+        setError(`Tasks were updated, but the team summary could not refresh: ${refreshError.message}`);
+      }
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleTaskSelection = (taskId, selected) => {
+    setSelectedIds(current => {
+      const next = new Set(current);
+      if (selected) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  };
+
   const activeEmployees = (userData || []).filter(employee => employee.active);
+  const allVisibleSelected = tasks.length > 0 && tasks.every(task => selectedIds.has(task.id));
 
   return (
     <section className="dashboard-card overflow-hidden">
@@ -133,7 +178,7 @@ export default function TaskManagement() {
           <p className="mt-1 text-xs text-slate-500">Search, prioritize, update, and archive team work.</p>
         </div>
         <label className="inline-flex min-h-9 items-center gap-2 self-start text-xs font-semibold text-slate-600 sm:self-auto">
-          <input type="checkbox" checked={includeArchived} onChange={event => setIncludeArchived(event.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+          <input type="checkbox" checked={includeArchived} onChange={event => { setSelectedIds(new Set()); setIncludeArchived(event.target.checked); }} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
           Show archived
         </label>
       </div>
@@ -178,6 +223,27 @@ export default function TaskManagement() {
       {error && <p role="alert" className="mx-5 mb-4 rounded-lg bg-rose-50 p-3 text-xs text-rose-700 sm:mx-6">{error}</p>}
       {notice && <p role="status" className="mx-5 mb-4 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800 sm:mx-6">{notice}</p>}
 
+      {tasks.length > 0 && !loading && (
+        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-5 py-3 sm:flex-row sm:items-center sm:px-6">
+          <p className="text-xs font-semibold text-slate-600">{selectedIds.size} selected</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => runBulkAction('archive')} disabled={!selectedIds.size || busyId === 'bulk'} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-600 disabled:opacity-50">
+              <FaBoxArchive aria-hidden="true" /> Archive
+            </button>
+            <button type="button" onClick={() => runBulkAction('restore')} disabled={!selectedIds.size || busyId === 'bulk'} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-600 disabled:opacity-50">
+              <FaRotateLeft aria-hidden="true" /> Restore
+            </button>
+            <label className="sr-only" htmlFor="bulk-task-priority">Set priority for selected tasks</label>
+            <select id="bulk-task-priority" value={bulkPriority} onChange={event => setBulkPriority(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-[10px]">
+              <option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option>
+            </select>
+            <button type="button" onClick={() => runBulkAction('priority', bulkPriority)} disabled={!selectedIds.size || busyId === 'bulk'} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-600 disabled:opacity-50">
+              Apply priority
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <p role="status" className="border-t border-slate-100 p-8 text-center text-xs text-slate-500">Loading tasks…</p>
       ) : !tasks.length ? (
@@ -186,7 +252,7 @@ export default function TaskManagement() {
         <div className="overflow-x-auto border-t border-slate-100">
           <table className="min-w-[760px] w-full text-left">
             <thead><tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              <th scope="col" className="px-5 py-3 sm:px-6">Task</th><th scope="col" className="px-4 py-3">Owner</th><th scope="col" className="px-4 py-3">Due</th><th scope="col" className="px-4 py-3">Priority</th><th scope="col" className="px-4 py-3">Status</th><th scope="col" className="px-5 py-3 sm:px-6">Actions</th>
+              <th scope="col" className="px-4 py-3"><input type="checkbox" aria-label="Select all visible tasks" checked={allVisibleSelected} onChange={event => setSelectedIds(event.target.checked ? new Set(tasks.map(task => task.id)) : new Set())} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" /></th><th scope="col" className="px-5 py-3 sm:px-6">Task</th><th scope="col" className="px-4 py-3">Owner</th><th scope="col" className="px-4 py-3">Due</th><th scope="col" className="px-4 py-3">Priority</th><th scope="col" className="px-4 py-3">Status</th><th scope="col" className="px-5 py-3 sm:px-6">Actions</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
               {tasks.map(task => {
@@ -195,6 +261,7 @@ export default function TaskManagement() {
                 return (
                   <React.Fragment key={task.id}>
                     <tr className={task.archived ? 'bg-slate-50/70 opacity-70' : 'hover:bg-slate-50/70'}>
+                      <td className="px-4 py-4"><input type="checkbox" aria-label={`Select ${task.taskTitle}`} checked={selectedIds.has(task.id)} onChange={event => toggleTaskSelection(task.id, event.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" /></td>
                       <td className="max-w-[260px] px-5 py-4 sm:px-6">
                         <p className="truncate text-xs font-bold text-slate-800">{task.taskTitle}</p>
                         <p title={task.taskDescription} className="mt-1 max-w-[220px] truncate text-[10px] text-slate-500">{task.taskDescription}</p>
@@ -216,7 +283,7 @@ export default function TaskManagement() {
                     </tr>
                     {editingId === task.id && editForm && (
                       <tr>
-                        <td colSpan="6" className="bg-indigo-50/40 px-5 py-4 sm:px-6">
+                        <td colSpan="7" className="bg-indigo-50/40 px-5 py-4 sm:px-6">
                           <form onSubmit={saveEdit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <label className="text-[10px] font-bold text-slate-600 sm:col-span-2 lg:col-span-1">Title
                               <input required minLength="2" maxLength="160" value={editForm.taskTitle} onChange={event => setEditForm(current => ({ ...current, taskTitle: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs" />
@@ -249,7 +316,7 @@ export default function TaskManagement() {
                       </tr>
                     )}
                     {!task.archived && <tr>
-                      <td colSpan="6" className="px-5 pb-3 sm:px-6">
+                      <td colSpan="7" className="px-5 pb-3 sm:px-6">
                         <div className="max-w-3xl"><TaskComments taskId={task.id} /></div>
                       </td>
                     </tr>}

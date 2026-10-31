@@ -22,7 +22,7 @@ The app consists of a Vite frontend, an Express API, and PostgreSQL. Deploy each
 
 ## Transactional email
 
-The Render free web service blocks outbound SMTP ports, so invitations, password resets, and task assignment emails use Brevo's HTTPS transactional email API instead.
+The Render free web service blocks outbound SMTP ports, so invitations, password resets, and task assignment/update emails use Brevo's HTTPS transactional email API instead.
 
 1. Create a Brevo account, generate an API key, and register/verify a sender email address in Brevo.
 2. In Render's `employeems-api` Environment settings, set:
@@ -41,7 +41,8 @@ Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transacti
 - The frontend bundle must use the public API URL, not `localhost`.
 - The Render service must allow the exact Vercel origin.
 - Test company signup and login, invitation delivery and acceptance, password recovery, account profile/password changes, and sign-out.
-- As an admin, test task search/filter/edit/archive/restore, comments, and notifications; verify archived tasks do not appear in active dashboards.
+- As an admin, test task search/filter/edit/archive/restore, bulk task actions, comments, and notifications; verify archived tasks do not appear in active dashboards.
+- Confirm assignment/reassignment, status, comment, and due-date emails reach the expected active task participants. Provider failures should be visible without undoing saved task changes.
 - Keep the authenticated Server-Sent Events stream available through the hosting proxy; it refreshes workspace data and notifications across signed-in devices within a few seconds and reconnects automatically after interruptions. Workspace-change tracking is installed automatically during database initialization; it needs no additional environment variables.
 - Test that an employee can comment on and update only their own tasks, and that deactivation is blocked while they have open work.
 - Check the responsive layout and keyboard access for sign-in, invitation, dashboard, account settings, and task workflows.

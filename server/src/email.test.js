@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail } from './email.js';
+import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail, sendTaskUpdateEmail } from './email.js';
 
 const emailOptions = {
   apiKey: 'test-api-key',
@@ -136,5 +136,43 @@ describe('sendTaskAssignedEmail', () => {
     await sendTaskAssignedEmail({ ...taskOptions, fetchImpl });
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('sendTaskUpdateEmail', () => {
+  it.each([
+    ['status', 'In progress', 'Task status updated: Prepare launch checklist', 'Status changed to In progress.'],
+    ['due_date', '2099-12-31', 'Task due date changed: Prepare launch checklist', 'Due date changed to 2099-12-31.'],
+    ['comment', 'I started the checklist.', 'New comment on task: Prepare launch checklist', 'New comment from Admin: I started the checklist.']
+  ])('sends an email for the %s event', async (updateType, updateDetails, subject, expectedDetail) => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+
+    await sendTaskUpdateEmail({
+      ...taskOptions,
+      actorName: 'Admin',
+      updateType,
+      updateDetails,
+      fetchImpl
+    });
+
+    const [, options] = fetchImpl.mock.calls[0];
+    expect(JSON.parse(options.body)).toMatchObject({
+      to: [{ name: 'Alex', email: 'employee@example.com' }],
+      subject,
+      textContent: expect.stringContaining(expectedDetail)
+    });
+  });
+
+  it('rejects unsupported event types instead of silently sending a generic message', async () => {
+    const fetchImpl = vi.fn();
+
+    await expect(sendTaskUpdateEmail({
+      ...taskOptions,
+      actorName: 'Admin',
+      updateType: 'profile',
+      updateDetails: 'changed',
+      fetchImpl
+    })).rejects.toThrow('Unsupported task update email type');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

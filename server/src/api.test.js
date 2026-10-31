@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   sendInvitationEmail: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
-  sendTaskAssignedEmail: vi.fn()
+  sendTaskAssignedEmail: vi.fn(),
+  sendTaskUpdateEmail: vi.fn()
 }));
 
 vi.mock('./db.js', () => ({
@@ -20,7 +21,8 @@ vi.mock('./db.js', () => ({
 vi.mock('./email.js', () => ({
   sendInvitationEmail: mocks.sendInvitationEmail,
   sendPasswordResetEmail: mocks.sendPasswordResetEmail,
-  sendTaskAssignedEmail: mocks.sendTaskAssignedEmail
+  sendTaskAssignedEmail: mocks.sendTaskAssignedEmail,
+  sendTaskUpdateEmail: mocks.sendTaskUpdateEmail
 }));
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/employee_ms_test';
@@ -111,6 +113,12 @@ function installQueryMock() {
       const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.role === 'employee' && item.active);
       return result(user ? [{ id: user.id, firstName: user.firstName, email: user.email }] : []);
     }
+    if (text.startsWith('select id,first_name as "firstname",email from users where id=any($1::int[])')) {
+      const ids = new Set(params[0].map(Number));
+      return result(users
+        .filter(user => ids.has(user.id) && user.companyId === Number(params[1]) && user.active)
+        .map(user => ({ id: user.id, firstName: user.firstName, email: user.email })));
+    }
     if (text.startsWith('select 1 from users where id=$1 and company_id=$2 and role=\'employee\'')) {
       return result(users.some(user => user.id === Number(params[0]) && user.companyId === Number(params[1]) && user.role === 'employee') ? [{ '?column?': 1 }] : []);
     }
@@ -132,9 +140,9 @@ function installQueryMock() {
       employee.department = params[1];
       return result([userFields(employee)]);
     }
-    if (text.startsWith('select assigned_to as "assignedto" from tasks where id=$1')) {
+    if (text.startsWith('select assigned_to as "assignedto",task_date as "taskdate" from tasks where id=$1')) {
       const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && !item.archivedAt);
-      return result(task ? [{ assignedTo: task.assignedTo }] : []);
+      return result(task ? [{ assignedTo: task.assignedTo, taskDate: task.taskDate }] : []);
     }
     if (text.startsWith('update tasks set task_title=$1')) {
       const task = tasks.find(item => item.id === Number(params[6]) && item.companyId === Number(params[7]) && !item.archivedAt);
@@ -300,6 +308,45 @@ function installQueryMock() {
       task.updatedAt = new Date().toISOString();
       return result([taskFields(task)]);
     }
+    if (text.startsWith('update tasks set priority=$2')) {
+      const requestedIds = new Set(params[0].map(Number));
+      const changed = tasks.filter(task =>
+        requestedIds.has(task.id) &&
+        task.companyId === Number(params[2]) &&
+        !task.archivedAt
+      );
+      changed.forEach(task => {
+        task.priority = params[1];
+        task.updatedAt = new Date().toISOString();
+      });
+      return result(changed.map(task => ({ id: task.id })));
+    }
+    if (text.startsWith('update tasks set archived_at=now()') && text.includes('id=any($1::int[])')) {
+      const requestedIds = new Set(params[0].map(Number));
+      const changed = tasks.filter(task =>
+        requestedIds.has(task.id) &&
+        task.companyId === Number(params[1]) &&
+        !task.archivedAt
+      );
+      changed.forEach(task => {
+        task.archivedAt = new Date().toISOString();
+        task.updatedAt = new Date().toISOString();
+      });
+      return result(changed.map(task => ({ id: task.id })));
+    }
+    if (text.startsWith('update tasks set archived_at=null') && text.includes('id=any($1::int[])')) {
+      const requestedIds = new Set(params[0].map(Number));
+      const changed = tasks.filter(task =>
+        requestedIds.has(task.id) &&
+        task.companyId === Number(params[1]) &&
+        Boolean(task.archivedAt)
+      );
+      changed.forEach(task => {
+        task.archivedAt = null;
+        task.updatedAt = new Date().toISOString();
+      });
+      return result(changed.map(task => ({ id: task.id })));
+    }
     if (text.startsWith('update tasks set archived_at=')) {
       const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]));
       if (!task) return result([]);
@@ -334,6 +381,8 @@ beforeEach(() => {
   installQueryMock();
   mocks.sendTaskAssignedEmail.mockReset();
   mocks.sendTaskAssignedEmail.mockResolvedValue(undefined);
+  mocks.sendTaskUpdateEmail.mockReset();
+  mocks.sendTaskUpdateEmail.mockResolvedValue(undefined);
   mocks.clientQuery.mockReset();
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
@@ -431,12 +480,41 @@ describe('authenticated API workflows', () => {
       .expect(200)
       .then(response => expect(response.body.map(task => task.id)).toEqual([created.body.id]));
 
-    await request(app).patch(`/api/tasks/${created.body.id}/status`)
+    const dueDateUpdate = await request(app).patch(`/api/tasks/${created.body.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        taskTitle: 'Prepare launch checklist',
+        taskDescription: 'Review all production-readiness items.',
+        taskDate: '2099-12-30',
+        category: 'Operations',
+        assignedTo: 2,
+        priority: 'high'
+      }).expect(200);
+    expect(dueDateUpdate.body.emailStatus).toBe('sent');
+    expect(mocks.sendTaskUpdateEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'employee@example.test',
+      updateType: 'due_date',
+      updateDetails: '2099-12-30'
+    }));
+
+    const activated = await request(app).patch(`/api/tasks/${created.body.id}/status`)
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ status: 'active' }).expect(200);
-    await request(app).post(`/api/tasks/${created.body.id}/comments`)
+    expect(activated.body.emailStatus).toBe('sent');
+    expect(mocks.sendTaskUpdateEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'admin@example.test',
+      updateType: 'status',
+      updateDetails: 'active'
+    }));
+    const comment = await request(app).post(`/api/tasks/${created.body.id}/comments`)
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ content: 'I started the checklist.' }).expect(201);
+    expect(comment.body.emailStatus).toBe('sent');
+    expect(mocks.sendTaskUpdateEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'admin@example.test',
+      updateType: 'comment',
+      updateDetails: 'I started the checklist.'
+    }));
     const discussion = await request(app).get(`/api/tasks/${created.body.id}/comments`)
       .set('Authorization', `Bearer ${adminToken}`).expect(200);
     expect(discussion.body).toMatchObject([{ content: 'I started the checklist.', firstName: 'Employee' }]);
@@ -457,6 +535,83 @@ describe('authenticated API workflows', () => {
     const activeTasks = await request(app).get('/api/tasks')
       .set('Authorization', `Bearer ${employeeToken}`).expect(200);
     expect(activeTasks.body).toEqual([]);
+  });
+
+  it('keeps task changes successful when task-update email delivery fails', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const created = await request(app).post('/api/tasks')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({
+        taskTitle: 'Prepare launch checklist',
+        taskDescription: 'Review all production-readiness items.',
+        taskDate: '2099-12-31',
+        category: 'Operations',
+        assignedTo: 2,
+        priority: 'high'
+      }).expect(201);
+    mocks.sendTaskUpdateEmail.mockRejectedValue(new Error('provider unavailable'));
+
+    const response = await request(app).patch(`/api/tasks/${created.body.id}/status`)
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ status: 'active' }).expect(200);
+
+    expect(response.body.active).toBe(true);
+    expect(response.body.emailStatus).toBe('failed');
+    expect(tasks[0].status).toBe('active');
+  });
+
+  it('bulk-updates only matching company tasks and reports skipped IDs', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    tasks = [
+      { id: 101, companyId: 1, taskTitle: 'Open task', taskDate: '2099-12-31', assignedTo: 2, createdBy: 1, status: 'new', priority: 'low', archivedAt: null },
+      { id: 102, companyId: 1, taskTitle: 'Archived task', taskDate: '2099-12-31', assignedTo: 2, createdBy: 1, status: 'new', priority: 'low', archivedAt: '2025-01-01' },
+      { id: 103, companyId: 2, taskTitle: 'Other workspace task', taskDate: '2099-12-31', assignedTo: 2, createdBy: 1, status: 'new', priority: 'low', archivedAt: null }
+    ];
+
+    const prioritized = await request(app).post('/api/tasks/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ taskIds: [101, 103, 999, 101], action: 'priority', priority: 'high' })
+      .expect(200);
+    expect(prioritized.body).toMatchObject({ requestedCount: 3, updatedCount: 1, skippedCount: 2, updatedIds: [101] });
+    expect(tasks.map(task => task.priority)).toEqual(['high', 'low', 'low']);
+
+    const archived = await request(app).post('/api/tasks/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ taskIds: [101, 102], action: 'archive' })
+      .expect(200);
+    expect(archived.body).toMatchObject({ updatedCount: 1, skippedCount: 1 });
+    const restored = await request(app).post('/api/tasks/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ taskIds: [101, 103], action: 'restore' })
+      .expect(200);
+    expect(restored.body).toMatchObject({ updatedCount: 1, skippedCount: 1 });
+    expect(tasks[0].archivedAt).toBeNull();
+    expect(tasks[1].archivedAt).toBe('2025-01-01');
+    const restoredPreviouslyArchived = await request(app).post('/api/tasks/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ taskIds: [102], action: 'restore' })
+      .expect(200);
+    expect(restoredPreviouslyArchived.body.updatedCount).toBe(1);
+    expect(tasks[1].archivedAt).toBeNull();
+
+    await request(app).post('/api/tasks/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ taskIds: [101], action: 'priority' })
+      .expect(400);
+    await request(app).post('/api/tasks/bulk')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ taskIds: [101], action: 'archive' })
+      .expect(403);
   });
 
   it('rejects unauthorized and cross-employee task access', async () => {

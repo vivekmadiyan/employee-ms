@@ -39,6 +39,7 @@ export const getTasksApi = (filters = {}) => {
 export const createTaskApi = (payload) => api('/tasks', {method:'POST', body:JSON.stringify(payload)});
 export const updateTaskApi = (id, payload) => api(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const archiveTaskApi = (id, archived = true) => api(`/tasks/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ archived }) });
+export const bulkUpdateTasksApi = payload => api('/tasks/bulk', { method: 'POST', body: JSON.stringify(payload) });
 export const updateTaskStatusApi = (id, status) => api(`/tasks/${id}/status`, {method:'PATCH', body:JSON.stringify({status})});
 export const registerCompanyApi = (payload) => api('/onboarding/register-company', {method:'POST', body:JSON.stringify(payload)});
 export const createEmployeeApi = (payload) => api('/employees', {method:'POST', body:JSON.stringify(payload)});

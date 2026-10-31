@@ -6,12 +6,21 @@ const AcceptTask = ({ data }) => {
   const { updateTaskStatus } = useContext(AuthContext);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const updateStatus = async status => {
     setBusy(true);
     setError('');
+    setNotice('');
     try {
-      await updateTaskStatus(data.id, status);
+      const updated = await updateTaskStatus(data.id, status);
+      if (updated.emailStatus && updated.emailStatus !== 'sent') {
+        setNotice(updated.emailStatus === 'not_configured'
+          ? 'Task updated; email notifications are not configured.'
+          : updated.emailStatus === 'no_recipients'
+            ? 'Task updated; no other active task participants were available to email.'
+            : `Task updated, but email delivery failed (${updated.emailStatus}).`);
+      }
     } catch (requestError) {
       setError(requestError.message || 'Could not update this task. Please try again.');
     } finally {
@@ -32,6 +41,7 @@ const AcceptTask = ({ data }) => {
         <p className="mt-2 text-sm leading-relaxed text-neutral-400">{data.taskDescription}</p>
       </div>
       {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}
+      {notice && <p role="status" className="mb-3 text-xs text-amber-700">{notice}</p>}
       <div className="flex items-center gap-3">
         <button
           disabled={busy}
