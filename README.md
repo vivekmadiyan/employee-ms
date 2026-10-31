@@ -98,7 +98,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 
 - Admins can search and filter tasks, edit assignment/details, archive and restore tasks, and review task discussions.
 - Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
-- Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. An authenticated Server-Sent Events stream updates notification badges and lists within a few seconds, including across devices.
+- Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream updates notification badges and lists within a few seconds, including across devices.
 - Users can update their profile and password or request a time-limited password-reset email.
 
 ## Security notes
@@ -122,9 +122,9 @@ This version is designed so multiple companies can use the same application whil
 - Deploy the frontend, API, and PostgreSQL using production environment variables.
 
 
-## Employee invitations
+## Transactional email
 
-Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company, expire after 7 days, and can be delivered through Brevo's transactional email API. If email is not configured, the admin receives a secure invitation link that can be copied and shared.
+Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company and expire after 7 days. Brevo also emails employees when a task is assigned or reassigned. If email is not configured, invitations remain usable through the secure shareable invite link; task assignment remains available in the app and reports the email delivery status.
 
 ### Email configuration
 
@@ -134,4 +134,4 @@ Set these optional values in `server/.env` or the backend hosting environment:
 - `BREVO_SENDER_EMAIL`
 - `BREVO_SENDER_NAME`
 
-The invitation link is generated from `CLIENT_URL` and never grants access to another company. Render's free service blocks SMTP ports, so email is sent over HTTPS through Brevo.
+The invitation link is generated from `CLIENT_URL` and never grants access to another company. Render's free service blocks SMTP ports, so transactional email is sent over HTTPS through Brevo.

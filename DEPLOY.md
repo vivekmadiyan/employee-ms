@@ -20,9 +20,9 @@ The app consists of a Vite frontend, an Express API, and PostgreSQL. Deploy each
 7. Deploy; the API creates the required tables and applies the additive task-archive column migration at startup.
 8. Confirm `https://your-api.onrender.com/api/health` reports `{"status":"ok","database":true}`.
 
-## Invitation email
+## Transactional email
 
-The Render free web service blocks outbound SMTP ports, so invitations are sent through Brevo's HTTPS transactional email API instead.
+The Render free web service blocks outbound SMTP ports, so invitations, password resets, and task assignment emails use Brevo's HTTPS transactional email API instead.
 
 1. Create a Brevo account, generate an API key, and register/verify a sender email address in Brevo.
 2. In Render's `employeems-api` Environment settings, set:
@@ -30,9 +30,9 @@ The Render free web service blocks outbound SMTP ports, so invitations are sent 
    - `BREVO_SENDER_EMAIL`: the exact sender address verified in Brevo
    - `BREVO_SENDER_NAME`: `EmployeeMS` (already the Blueprint default)
 3. Save the settings and wait for the backend to redeploy.
-4. Create a new invitation. The app reports whether the provider accepted it; acceptance is not a guarantee of inbox placement.
+4. Create an invitation and assign a task. The app reports whether the provider accepted each message; acceptance is not a guarantee of inbox placement.
 
-If email is not configured or Brevo rejects the message, the invitation remains valid and the admin can copy and share its 7-day invite link. Never put provider credentials in Git, Vercel frontend variables, or this document.
+If email is not configured or Brevo rejects a message, the invitation/task still remains available in the app and the admin sees a delivery status. For invitations, the admin can copy and share its 7-day invite link. Never put provider credentials in Git, Vercel frontend variables, or this document.
 
 Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transactional-email
 

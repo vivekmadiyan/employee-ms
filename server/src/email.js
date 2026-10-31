@@ -92,3 +92,40 @@ export async function sendPasswordResetEmail({
     }
   });
 }
+
+export async function sendTaskAssignedEmail({
+  apiKey,
+  senderEmail,
+  senderName,
+  recipientEmail,
+  recipientName,
+  companyName,
+  task,
+  assignedBy,
+  fetchImpl = fetch
+}) {
+  return sendBrevoEmail({
+    apiKey,
+    senderEmail,
+    senderName,
+    recipientEmail,
+    recipientName,
+    fetchImpl,
+    payload: {
+      to: [{ name: recipientName, email: recipientEmail }],
+      subject: `New task assigned: ${task.taskTitle}`,
+      textContent: [
+        `Hi ${recipientName},`,
+        '',
+        `${assignedBy} assigned you a task in ${companyName}.`,
+        `Task: ${task.taskTitle}`,
+        `Description: ${task.taskDescription}`,
+        `Category: ${task.category}`,
+        `Priority: ${task.priority}`,
+        `Due date: ${task.taskDate}`,
+        '',
+        'Sign in to EmployeeMS to review and update this task.'
+      ].join('\n')
+    }
+  });
+}

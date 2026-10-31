@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   connect: vi.fn(),
   sendInvitationEmail: vi.fn(),
-  sendPasswordResetEmail: vi.fn()
+  sendPasswordResetEmail: vi.fn(),
+  sendTaskAssignedEmail: vi.fn()
 }));
 
 vi.mock('./db.js', () => ({
@@ -18,7 +19,8 @@ vi.mock('./db.js', () => ({
 }));
 vi.mock('./email.js', () => ({
   sendInvitationEmail: mocks.sendInvitationEmail,
-  sendPasswordResetEmail: mocks.sendPasswordResetEmail
+  sendPasswordResetEmail: mocks.sendPasswordResetEmail,
+  sendTaskAssignedEmail: mocks.sendTaskAssignedEmail
 }));
 
 process.env.NODE_ENV = 'test';
@@ -106,8 +108,9 @@ function installQueryMock() {
       if (params.length === 4) user.passwordHash = params[2];
       return result([userFields(user)]);
     }
-    if (text.startsWith('select 1 from users where id=$1 and company_id=$2 and role=\'employee\' and active=true')) {
-      return result(users.some(user => user.id === Number(params[0]) && user.companyId === Number(params[1]) && user.role === 'employee' && user.active) ? [{ '?column?': 1 }] : []);
+    if (text.startsWith('select id,first_name as "firstname",email from users where id=$1 and company_id=$2 and role=\'employee\' and active=true')) {
+      const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.role === 'employee' && item.active);
+      return result(user ? [{ id: user.id, firstName: user.firstName, email: user.email }] : []);
     }
     if (text.startsWith('select 1 from users where id=$1 and company_id=$2 and role=\'employee\'')) {
       return result(users.some(user => user.id === Number(params[0]) && user.companyId === Number(params[1]) && user.role === 'employee') ? [{ '?column?': 1 }] : []);
@@ -314,7 +317,8 @@ beforeAll(async () => {
   const passwordHash = await bcrypt.hash('correct-horse-battery-123', 4);
   baseUsers = [
     { id: 1, companyId: 1, firstName: 'Admin', email: 'admin@example.test', passwordHash, role: 'admin', department: 'Management', active: true },
-    { id: 2, companyId: 1, firstName: 'Employee', email: 'employee@example.test', passwordHash, role: 'employee', department: 'Operations', active: true }
+    { id: 2, companyId: 1, firstName: 'Employee', email: 'employee@example.test', passwordHash, role: 'employee', department: 'Operations', active: true },
+    { id: 3, companyId: 1, firstName: 'Second Employee', email: 'second@example.test', passwordHash, role: 'employee', department: 'Research', active: true }
   ];
 });
 
@@ -329,6 +333,8 @@ beforeEach(() => {
   nextCommentId = 1;
   nextInvitationId = 1;
   installQueryMock();
+  mocks.sendTaskAssignedEmail.mockReset();
+  mocks.sendTaskAssignedEmail.mockResolvedValue(undefined);
   mocks.clientQuery.mockReset();
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
@@ -410,6 +416,15 @@ describe('authenticated API workflows', () => {
         priority: 'high'
       }).expect(201);
     expect(created.body.taskTitle).toBe('Prepare launch checklist');
+    expect(created.body.emailSent).toBe(true);
+    expect(created.body.emailStatus).toBe('sent');
+    expect(mocks.sendTaskAssignedEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'employee@example.test',
+      recipientName: 'Employee',
+      companyName: 'Test Workspace',
+      assignedBy: 'Admin',
+      task: expect.objectContaining({ taskTitle: 'Prepare launch checklist' })
+    }));
     expect(notifications.some(item => item.userId === 2 && item.type === 'assigned')).toBe(true);
 
     await request(app).get('/api/tasks')
@@ -524,6 +539,66 @@ describe('authenticated API workflows', () => {
     await request(app).patch('/api/employees/2/status')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ active: false }).expect(200);
+  });
+
+  it('keeps task creation successful and reports when assignment email fails', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    mocks.sendTaskAssignedEmail.mockRejectedValue(Object.assign(new Error('Brevo unavailable'), {
+      code: 'provider_rejected',
+      status: 503,
+      providerCode: 'temporarily_unavailable'
+    }));
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await request(app).post('/api/tasks')
+        .set('Authorization', `Bearer ${adminLogin.body.token}`)
+        .send({
+          taskTitle: 'Persist despite mail issue',
+          taskDescription: 'Task creation must not depend on the email provider.',
+          taskDate: '2099-12-31',
+          category: 'Operations',
+          assignedTo: 2,
+          priority: 'medium'
+        }).expect(201);
+      expect(response.body.taskTitle).toBe('Persist despite mail issue');
+      expect(response.body.emailSent).toBe(false);
+      expect(response.body.emailStatus).toBe('provider_rejected');
+    } finally {
+      logError.mockRestore();
+    }
+  });
+
+  it('emails the new owner when an admin reassigns an existing task', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const payload = {
+      taskTitle: 'Reassigned task',
+      taskDescription: 'Notify whoever currently owns this task.',
+      taskDate: '2099-12-31',
+      category: 'Operations',
+      assignedTo: 2,
+      priority: 'medium'
+    };
+    const created = await request(app).post('/api/tasks')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send(payload).expect(201);
+    mocks.sendTaskAssignedEmail.mockClear();
+
+    const updated = await request(app).patch(`/api/tasks/${created.body.id}`)
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ ...payload, assignedTo: 3 }).expect(200);
+
+    expect(updated.body.emailSent).toBe(true);
+    expect(mocks.sendTaskAssignedEmail).toHaveBeenCalledOnce();
+    expect(mocks.sendTaskAssignedEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'second@example.test',
+      recipientName: 'Second Employee'
+    }));
   });
 
   it('creates an invitation, refreshes the link, and accepts it exactly once', async () => {

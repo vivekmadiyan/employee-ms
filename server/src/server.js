@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { auth, adminOnly } from './middleware/auth.js';
-import { sendInvitationEmail, sendPasswordResetEmail } from './email.js';
+import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail } from './email.js';
 
 const app = express();
 if (config.TRUST_PROXY) app.set('trust proxy', 1);
@@ -20,10 +20,11 @@ app.use((req, res, next) => { req.id = crypto.randomUUID(); res.setHeader('X-Req
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
 app.use(cors({ origin(origin, callback) { if (!origin || allowedOrigins.has(origin)) return callback(null, true); return callback(new Error('Origin not allowed by CORS')); }, methods: ['GET', 'POST', 'PATCH', 'DELETE'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 }));
 app.use(express.json({ limit: '1mb' }));
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'Too many requests. Please try again later.' } }));
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'Too many attempts. Please try again later.' } });
-const onboardingLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'Too many account requests. Please try again later.' } });
-const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'Too many password reset requests. Please try again later.' } });
+const skipRateLimitForTests = () => config.NODE_ENV === 'test';
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many requests. Please try again later.' } }));
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many attempts. Please try again later.' } });
+const onboardingLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many account requests. Please try again later.' } });
+const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many password reset requests. Please try again later.' } });
 const userFields = 'id, company_id AS "companyId", first_name AS "firstName", email, role, department, active';
 const taskFields = 'id, company_id AS "companyId", task_title AS "taskTitle", task_description AS "taskDescription", task_date AS "taskDate", category, priority, status, assigned_to AS "assignedTo", created_by AS "createdBy", archived_at AS "archivedAt", created_at AS "createdAt", updated_at AS "updatedAt"';
 const safeUser = u => ({ id: u.id, companyId: u.companyId, firstName: u.firstName, email: u.email, role: u.role, department: u.department, active: u.active });
@@ -35,6 +36,34 @@ const notifyUser = (userId, taskId, actorId, type, message, eventKey) => query(
   'INSERT INTO notifications(user_id,task_id,actor_id,type,message,event_key) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(event_key) DO NOTHING',
   [userId, taskId, actorId, type, message, eventKey]
 );
+const emailTaskAssignment = async (task, recipient, assignedBy, req) => {
+  if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) {
+    return { emailSent: false, emailStatus: 'not_configured' };
+  }
+  try {
+    await sendTaskAssignedEmail({
+      apiKey: config.BREVO_API_KEY,
+      senderEmail: config.BREVO_SENDER_EMAIL,
+      senderName: config.BREVO_SENDER_NAME,
+      recipientEmail: recipient.email,
+      recipientName: recipient.firstName,
+      companyName: req.company.name,
+      assignedBy,
+      task
+    });
+    return { emailSent: true, emailStatus: 'sent' };
+  } catch (error) {
+    console.error('Task assignment email failed:', {
+      requestId: req.id,
+      taskId: task.id,
+      status: error.status,
+      code: error.code || 'network_error',
+      providerCode: error.providerCode,
+      providerMessage: error.providerMessage
+    });
+    return { emailSent: false, emailStatus: error.code || 'failed' };
+  }
+};
 const loadNotifications = async userId => {
   const { rows } = await query(
     `SELECT n.id,n.task_id AS "taskId",n.type,n.message,n.read_at AS "readAt",n.created_at AS "createdAt"
@@ -476,15 +505,19 @@ app.get('/api/tasks', auth, async (req, res, next) => {
 app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(schemas.task, req.body);
-    const valid = (await query("SELECT 1 FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true", [values.assignedTo, req.company.id])).rowCount;
-    if (!valid) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
+    const employee = (await query(
+      `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
+      [values.assignedTo, req.company.id]
+    )).rows[0];
+    if (!employee) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
     const task = (await query(
       `INSERT INTO tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${taskFields}`,
       [req.company.id, values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, req.user.id, values.priority]
     )).rows[0];
     await notifyUser(values.assignedTo, task.id, req.user.id, 'assigned', `New task assigned: ${task.taskTitle}`, `assigned:${task.id}:${values.assignedTo}`);
-    res.status(201).json(serializeTask(task));
+    const email = await emailTaskAssignment(task, employee, req.user.firstName, req);
+    res.status(201).json({ ...serializeTask(task), ...email });
   } catch (error) {
     next(error);
   }
@@ -492,8 +525,11 @@ app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
 app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(schemas.task, req.body);
-    const valid = (await query("SELECT 1 FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true", [values.assignedTo, req.company.id])).rowCount;
-    if (!valid) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
+    const employee = (await query(
+      `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
+      [values.assignedTo, req.company.id]
+    )).rows[0];
+    if (!employee) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
     const previous = (await query(
       'SELECT assigned_to AS "assignedTo" FROM tasks WHERE id=$1 AND company_id=$2 AND archived_at IS NULL',
       [req.params.id, req.company.id]
@@ -510,6 +546,8 @@ app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
         notifyUser(task.assignedTo, task.id, req.user.id, 'assigned', `Task assigned to you: ${task.taskTitle}`, `assigned:${task.id}:${task.assignedTo}:${crypto.randomUUID()}`),
         notifyUser(previous.assignedTo, task.id, req.user.id, 'assigned', `Task reassigned: ${task.taskTitle}`, `reassigned:${task.id}:${previous.assignedTo}:${crypto.randomUUID()}`)
       ]);
+      const email = await emailTaskAssignment(task, employee, req.user.firstName, req);
+      return res.json({ ...serializeTask(task), ...email });
     }
     res.json(serializeTask(task));
   } catch (error) {

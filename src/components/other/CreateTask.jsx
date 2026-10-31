@@ -13,13 +13,23 @@ const CreateTask = () => {
   const [category, setCategory] = useState('');
   const [priority, setPriority] = useState('medium');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState(null);
 
   const submitHandler = async (e) => {
-    e.preventDefault(); setError(''); setBusy(true);
+    e.preventDefault(); setError(''); setNotice(null); setBusy(true);
     const title=taskTitle.trim(), description=taskDescription.trim(), taskCategory=category.trim();
     if (!title || !description || !taskDate || !taskCategory || !assignTo) { setError('Please complete all fields.'); setBusy(false); return; }
     try {
-      await createTaskApi({ taskTitle:title, taskDescription:description, taskDate, category:taskCategory, assignedTo:assignTo, priority });
+      const created = await createTaskApi({ taskTitle:title, taskDescription:description, taskDate, category:taskCategory, assignedTo:assignTo, priority });
+      const employee = activeEmployees.find(person => String(person.id) === String(assignTo));
+      setNotice({
+        success: Boolean(created.emailSent),
+        message: created.emailSent
+          ? `Task assigned to ${employee?.firstName || 'employee'} and email sent to ${employee?.email}.`
+          : created.emailStatus === 'not_configured'
+            ? 'Task assigned, but assignment email is not configured. Set BREVO_API_KEY and a verified BREVO_SENDER_EMAIL in Render.'
+            : `Task assigned, but the email could not be sent (${created.emailStatus || 'unknown error'}). Check the backend logs.`
+      });
       setTaskTitle(''); setCategory(''); setAssignTo(''); setTaskDate(''); setTaskDescription(''); setPriority('medium');
       try {
         await refresh();
@@ -69,6 +79,7 @@ const CreateTask = () => {
             {dataError && <button type="button" onClick={() => refresh().catch(retryError => console.error('Retrying employee load failed:', retryError))} className="ml-2 font-semibold underline">Retry</button>}
           </div>
         )}
+        {notice && <p role="status" className={`rounded-lg px-3 py-2 text-sm ${notice.success ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>{notice.message}</p>}
 
         <div>
           <label htmlFor="task-title" className="block text-xs font-bold text-slate-600">Task title</label>

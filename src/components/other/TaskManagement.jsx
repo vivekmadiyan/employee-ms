@@ -67,10 +67,16 @@ export default function TaskManagement() {
     setError('');
     setNotice('');
     try {
-      await updateTaskApi(editingId, { ...editForm, assignedTo: Number(editForm.assignedTo) });
+      const updated = await updateTaskApi(editingId, { ...editForm, assignedTo: Number(editForm.assignedTo) });
       setEditingId(null);
       setEditForm(null);
-      setNotice('Task updated.');
+      setNotice(updated.emailStatus
+        ? updated.emailSent
+          ? 'Task reassigned and an email was sent to the new owner.'
+          : updated.emailStatus === 'not_configured'
+            ? 'Task reassigned, but assignment email is not configured.'
+            : `Task reassigned, but email delivery failed (${updated.emailStatus}).`
+        : 'Task updated.');
       await loadTasks();
       try {
         await refresh();
