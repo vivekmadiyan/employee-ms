@@ -1783,6 +1783,10 @@ describe('authenticated API workflows', () => {
       email: 'admin@example.test',
       password: 'correct-horse-battery-123'
     }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
     const adminToken = adminLogin.body.token;
     const created = await request(app).post('/api/tasks')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -1835,6 +1839,20 @@ describe('authenticated API workflows', () => {
         team: 'Customer Success',
         managerId: 3
       })));
+    await request(app).get('/api/auth/me')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .expect(200)
+      .then(response => expect(response.body.user).toMatchObject({
+        team: 'Customer Success',
+        managerId: 3
+      }));
+    await request(app).get('/api/dashboard/employee')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .expect(200)
+      .then(response => expect(response.body.user).toMatchObject({
+        team: 'Customer Success',
+        managerId: 3
+      }));
 
     await request(app).patch(`/api/tasks/${created.body.id}/status`)
       .set('Authorization', `Bearer ${adminToken}`)

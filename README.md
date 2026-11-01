@@ -182,6 +182,30 @@ The API exposes `/api/health/live`, `/api/health`, and Prometheus-formatted `/ap
 
 ## 12. Feature checklist
 
+### Release verification
+
+Run the same automated quality gates locally before a V2 release:
+
+```bash
+npm ci
+npm run check
+npm test
+npm --prefix server ci
+npm --prefix server test
+npm --prefix server audit --omit=dev
+```
+
+GitHub Actions runs the frontend lint/build and calendar tests, plus backend syntax checks and API/email/MFA tests on pushes to `main` and pull requests. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
+
+### V2 release-readiness gaps
+
+- **P0 — Real-database/browser end-to-end coverage:** current API workflow tests mock PostgreSQL queries; CI does not provision PostgreSQL or run browser-based workflows. The deployed API health and Vercel-origin CORS preflight were smoke-tested, but registration-to-invitation-to-leave workflows were not exercised against a real database in this environment.
+- **P0 — Recovery rehearsal:** production database backup, restore, and rollback of schema changes need an owner-run rehearsal against the actual hosting provider.
+- **P1 — Production observability:** health and Prometheus metrics exist, but hosted dashboards, alert routing, and an incident runbook are not configured by the application.
+- **P1 — Accessibility assurance:** run a WCAG-focused keyboard and assistive-technology audit before making an accessibility conformance claim.
+- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, documents, and offboarding are not implemented.
+- **Scope-dependent:** recruiting, payroll, benefits, billing, and advanced talent modules require customer and jurisdiction choices before implementation.
+
 ### Implemented
 - Employee profiles include job title, employment type, and hire date, available during direct and CSV invitations and editable/exportable from team management.
 - Team structure includes named teams, manager/reporting-line assignments, team-filtered directory, and a browsable org chart.
