@@ -83,6 +83,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
 - `GET /api/employees` (admin)
 - `PATCH /api/employees/:id` and `PATCH /api/employees/:id/status` (admin)
+- Employee records include team and an optional same-workspace employee manager; reporting cycles are rejected.
 - `GET /api/invitations`, `POST /api/invitations/:id/resend`, and `DELETE /api/invitations/:id` (admin)
 - `POST /api/invitations/bulk` (admin; create up to 100 invitations)
 - `GET /api/tasks`
@@ -95,6 +96,9 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/notifications` and notification read endpoints
 - `GET /api/audit-events` (admin; latest 100 company-scoped security events)
 - `GET /api/leave-requests`, `POST /api/leave-requests` (employee), `PATCH /api/leave-requests/:id/review` (admin), `DELETE /api/leave-requests/:id` (employee)
+- `GET /api/leave-policies`, `PUT /api/leave-policies` (admin configures annual allowances)
+- `GET /api/leave-balance?year=YYYY` (signed-in user's approved, pending, and remaining allowance)
+- `GET /api/leave-calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` (approved absences only; up to 93 days)
 - `GET /api/dashboard/admin` (admin)
 - `GET /api/dashboard/employee`
 - `GET /api/health`
@@ -107,6 +111,24 @@ The API validates environment variables and request bodies, scopes all tenant da
 - Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream refreshes notifications, dashboards, task lists, team/invitation data, and open discussions across signed-in devices within a few seconds.
 - Users can update their profile and password or request a time-limited password-reset email.
 
+## HRIS benchmark and product gaps
+
+This is a feature-pattern review of official vendor product pages, not an independent quality assessment or a plan-by-plan comparison:
+[BambooHR](https://www.bamboohr.com/platform/), [Rippling HRIS](https://www.rippling.com/products/hr/hris), [Zoho People](https://www.zoho.com/people/features.html), [OrangeHRM](https://orangehrm.com/), and [Workday HCM](https://www.workday.com/en-us/products/human-capital-management.html). The pages consistently emphasize employee records, onboarding, employee/manager workflows, time off, reporting, and access controls. Broader suites also promote documents and signatures, offboarding, attendance, performance, recruiting, payroll, benefits, and advanced analytics.
+
+EmployeeMS now supports company-scoped employee records with department, team, manager/reporting line, job title, employment type, hire date, status, profile edits, CSV export, and invitation-time profile capture. The team directory can filter by team and show a reporting-line org chart. Manager assignments are restricted to active employees in the same workspace, with self-reporting and cycles rejected. Existing records default to the General team and no manager; old invitation CSVs remain valid, with optional team and manager-email columns. Leave policies can set annual calendar-day allowances by leave type; pending requests reserve days, and employees can view their balances. The shared calendar shows approved absences without exposing leave reasons or types. The app also has employee onboarding checklists, leave request/approval email, audit events, and task/roster reporting.
+
+### Prioritized gaps
+
+1. **Employee documents and acknowledgements — next core HRIS gap.** Add private, company-scoped document storage with explicit access rules, retention/deletion behavior, and audit events before supporting signed or sensitive documents. Do not store private files in a public static directory.
+2. **Accrual-aware leave policies and holidays.** Current allowances are annual calendar-day caps by leave type, not accrual schedules, working-day calculations, holiday calendars, carryover, or jurisdiction-specific rules.
+3. **Offboarding workflow.** Add an owner-assigned exit checklist, due dates, access deactivation, and an auditable completion trail; preserve employee records and task history when access ends.
+4. **HR reporting.** Current reports focus on tasks and roster exports. Add company-scoped headcount and employee-lifecycle reporting, then leave reporting once leave policies are defined.
+5. **Conditional workforce tools.** Attendance, timesheets, and scheduling should be prioritized only for customers with hourly or shift-based teams.
+6. **Segment-dependent suites.** Recruiting, payroll, benefits, performance/OKRs, and learning are broader modules; payroll/benefits require jurisdiction-specific compliance work and should not be treated as launch blockers for the current small-team HRIS scope.
+
+This comparison is based on vendor feature descriptions; verify plan, region, and implementation details directly with each vendor before using it for procurement decisions.
+
 ## V2 task reporting
 
 Admins can review task status, priority, category, overdue work, and assignee workload for a selected task-creation date range, with CSV export. Reports are scoped to the current company and exclude archived tasks.
@@ -116,7 +138,9 @@ Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected 
 
 Admins can review a company-scoped audit trail of account, employee, invitation, integration, and task changes. Audit records omit passwords, reset tokens, and invitation tokens; audit storage errors are logged without undoing completed workflows.
 
-Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Admins can review requests for their workspace. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
+Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Admins can review requests for their workspace. New requests are emailed to active workspace admins, and approvals are emailed to the employee with any manager note. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
+
+Admins can configure annual calendar-day allowances per leave type; a blank allowance is unlimited. Approved and pending requests count toward the employee's allowance for each calendar year, and request creation serializes per employee to prevent concurrent requests from exceeding a configured cap. The team calendar shows approved absences only and omits leave reasons and leave types. Accrual schedules, working-day calculations, public holidays, carryover, and jurisdiction-specific policies are not implemented.
 
 Users can optionally enable authenticator-app MFA from Account Settings. TOTP secrets are encrypted in PostgreSQL, login requires a current authenticator code, and ten single-use recovery codes are shown once. Slack incoming webhook URLs are also encrypted and restricted to Slack's HTTPS webhook host. Set a stable `MFA_ENCRYPTION_KEY` (at least 32 characters) in the API environment; if omitted, the API derives the encryption key from `JWT_SECRET`, so rotating the JWT secret will require MFA re-enrollment for users without recovery codes and reconfiguration of Slack.
 
@@ -159,6 +183,10 @@ The API exposes `/api/health/live`, `/api/health`, and Prometheus-formatted `/ap
 ## 12. Feature checklist
 
 ### Implemented
+- Employee profiles include job title, employment type, and hire date, available during direct and CSV invitations and editable/exportable from team management.
+- Team structure includes named teams, manager/reporting-line assignments, team-filtered directory, and a browsable org chart.
+- Leave request emails go to active workspace admins; approval emails go to the employee, with delivery status surfaced in the workflow.
+- Admin-configurable annual leave allowances, employee leave balances, and a shared calendar of approved absences.
 - Dark mode with a persisted theme preference.
 - Live workspace updates and notification delivery using authenticated Server-Sent Events.
 - Admin task reports with CSV export and employee-directory CSV export.
@@ -173,6 +201,9 @@ The API exposes `/api/health/live`, `/api/health`, and Prometheus-formatted `/ap
 Calendar export downloads an `.ics` file for the tasks currently visible to the user. Import it into Google Calendar, Outlook, or Apple Calendar. Automatic OAuth-based synchronization and ongoing calendar updates are not implemented.
 
 ### Remaining
+- Secure employee document storage and acknowledgement workflows.
+- Accrual-aware leave policies, working-day/holiday calculations, and carryover rules.
+- Auditable offboarding checklists and employee-lifecycle reporting.
 - Full accessibility audit and remediation against WCAG, including assistive-technology testing.
 - Internationalization and locale-aware formatting.
 - Workspace-editable email templates and branding.

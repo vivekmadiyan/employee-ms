@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   connect: vi.fn(),
   sendInvitationEmail: vi.fn(),
+  sendLeaveRequestEmail: vi.fn(),
+  sendLeaveDecisionEmail: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
   sendTaskAssignedEmail: vi.fn(),
   sendTaskUpdateEmail: vi.fn()
@@ -20,6 +22,8 @@ vi.mock('./db.js', () => ({
 }));
 vi.mock('./email.js', () => ({
   sendInvitationEmail: mocks.sendInvitationEmail,
+  sendLeaveRequestEmail: mocks.sendLeaveRequestEmail,
+  sendLeaveDecisionEmail: mocks.sendLeaveDecisionEmail,
   sendPasswordResetEmail: mocks.sendPasswordResetEmail,
   sendTaskAssignedEmail: mocks.sendTaskAssignedEmail,
   sendTaskUpdateEmail: mocks.sendTaskUpdateEmail
@@ -43,6 +47,7 @@ let comments;
 let notifications;
 let auditEvents;
 let leaveRequests;
+let leavePolicies;
 let invitations;
 let passwordResets;
 let slackWebhookEncrypted;
@@ -62,6 +67,11 @@ const userFields = user => ({
   email: user.email,
   role: user.role,
   department: user.department,
+  jobTitle: user.jobTitle || '',
+  employmentType: user.employmentType || 'unspecified',
+  hireDate: user.hireDate || null,
+  team: user.team || 'General',
+  managerId: user.managerId || null,
   active: user.active
 });
 const taskFields = task => ({ ...task });
@@ -189,6 +199,69 @@ function installQueryMock() {
         leave.endDate >= params[2]
       );
       return result(overlap ? [{ id: overlap.id }] : []);
+    }
+    if (text.startsWith('insert into company_leave_policies(')) {
+      leavePolicies = params[1].map((leaveType, index) => ({
+        companyId: Number(params[0]),
+        leaveType,
+        annualAllowanceDays: params[2][index],
+        updatedBy: Number(params[3])
+      }));
+      return result(leavePolicies.map(({ leaveType, annualAllowanceDays }) => ({ leaveType, annualAllowanceDays })));
+    }
+    if (text.startsWith('select leave_type as "leavetype",annual_allowance_days as "annualallowancedays" from company_leave_policies')) {
+      const companyPolicies = leavePolicies.filter(policy => policy.companyId === Number(params[0]));
+      return result(params.length > 1
+        ? companyPolicies.filter(policy => policy.leaveType === params[1]).map(policy => ({ annualAllowanceDays: policy.annualAllowanceDays }))
+        : companyPolicies.map(({ leaveType, annualAllowanceDays }) => ({ leaveType, annualAllowanceDays })));
+    }
+    if (text.startsWith('select annual_allowance_days as "annualallowancedays" from company_leave_policies')) {
+      const policy = leavePolicies.find(item =>
+        item.companyId === Number(params[0]) && item.leaveType === params[1]
+      );
+      return result(policy ? [{ annualAllowanceDays: policy.annualAllowanceDays }] : []);
+    }
+    if (text.startsWith('select start_date::text as "startdate",end_date::text as "enddate" from leave_requests')) {
+      return result(leaveRequests.filter(leave =>
+        leave.companyId === Number(params[0]) &&
+        leave.userId === Number(params[1]) &&
+        leave.leaveType === params[2] &&
+        ['pending', 'approved'].includes(leave.status) &&
+        leave.startDate <= params[4] &&
+        leave.endDate >= params[3]
+      ).map(leave => ({ startDate: leave.startDate, endDate: leave.endDate })));
+    }
+    if (text.startsWith('select leave_type as "leavetype",status,start_date::text as "startdate"')) {
+      return result(leaveRequests.filter(leave =>
+        leave.companyId === Number(params[0]) &&
+        leave.userId === Number(params[1]) &&
+        ['pending', 'approved'].includes(leave.status) &&
+        leave.startDate <= params[2] &&
+        leave.endDate >= params[3]
+      ).map(leave => ({
+        leaveType: leave.leaveType,
+        status: leave.status,
+        startDate: leave.startDate,
+        endDate: leave.endDate
+      })));
+    }
+    if (text.startsWith('select l.user_id as "userid",u.first_name as "employeename",u.department')) {
+      return result(leaveRequests.filter(leave =>
+        leave.companyId === Number(params[0]) &&
+        leave.status === 'approved' &&
+        leave.startDate <= params[2] &&
+        leave.endDate >= params[1] &&
+        users.find(user => user.id === leave.userId)?.active
+      ).map(leave => {
+        const user = users.find(item => item.id === leave.userId);
+        return {
+          userId: leave.userId,
+          employeeName: user.firstName,
+          department: user.department,
+          startDate: leave.startDate,
+          endDate: leave.endDate
+        };
+      }));
     }
     if (text.startsWith('insert into leave_requests(')) {
       const leave = {
@@ -352,7 +425,7 @@ function installQueryMock() {
         };
       }).sort((a, b) => b.totalTasks - a.totalTasks));
     }
-    if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, active, password_hash as "passwordhash" from users where email')) {
+    if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, job_title as "jobtitle"') && text.includes('password_hash as "passwordhash" from users where email')) {
       const user = users.find(item => item.email === params[0]);
       return result(user ? [{ ...userFields(user), passwordHash: user.passwordHash }] : []);
     }
@@ -403,6 +476,46 @@ function installQueryMock() {
       const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.role === 'employee' && item.active);
       return result(user ? [{ id: user.id, firstName: user.firstName, email: user.email }] : []);
     }
+    if (text.startsWith('select id from users where id=$1 and company_id=$2 and role=\'employee\' and active=true')) {
+      const manager = users.find(user =>
+        user.id === Number(params[0]) &&
+        user.companyId === Number(params[1]) &&
+        user.role === 'employee' &&
+        user.active
+      );
+      return result(manager ? [{ id: manager.id }] : []);
+    }
+    if (text.startsWith('select id from users where company_id=$1 and lower(email)=$2')) {
+      const manager = users.find(user =>
+        user.companyId === Number(params[0]) &&
+        user.email.toLowerCase() === params[1] &&
+        user.role === 'employee' &&
+        user.active
+      );
+      return result(manager ? [{ id: manager.id }] : []);
+    }
+    if (text.startsWith('with recursive manager_chain as')) {
+      let cursor = users.find(user =>
+        user.id === Number(params[1]) && user.companyId === Number(params[0])
+      );
+      const visited = new Set();
+      let createsCycle = false;
+      while (cursor && !visited.has(cursor.id)) {
+        if (cursor.id === Number(params[2])) createsCycle = true;
+        visited.add(cursor.id);
+        cursor = users.find(user => user.id === cursor.managerId && user.companyId === Number(params[0]));
+      }
+      return result([{ createsCycle }]);
+    }
+    if (text.startsWith('select id,first_name as "firstname",email from users where company_id=$1 and role=\'admin\' and active=true')) {
+      return result(users
+        .filter(user => user.companyId === Number(params[0]) && user.role === 'admin' && user.active)
+        .map(user => ({ id: user.id, firstName: user.firstName, email: user.email })));
+    }
+    if (text.startsWith('select id,first_name as "firstname",email from users where id=$1 and company_id=$2 and active=true')) {
+      const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.active);
+      return result(user ? [{ id: user.id, firstName: user.firstName, email: user.email }] : []);
+    }
     if (text.startsWith('select id,first_name as "firstname",email from users where id=any($1::int[])')) {
       const ids = new Set(params[0].map(Number));
       return result(users
@@ -412,7 +525,7 @@ function installQueryMock() {
     if (text.startsWith('select 1 from users where id=$1 and company_id=$2 and role=\'employee\'')) {
       return result(users.some(user => user.id === Number(params[0]) && user.companyId === Number(params[1]) && user.role === 'employee') ? [{ '?column?': 1 }] : []);
     }
-    if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, active from users where company_id=$1 and role=\'employee\'')) {
+    if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, job_title as "jobtitle"') && text.includes('from users where company_id=$1 and role=\'employee\'')) {
       return result(users.filter(user => user.companyId === Number(params[0]) && user.role === 'employee').map(userFields));
     }
     if (text.startsWith('update users u set active=$1')) {
@@ -423,11 +536,16 @@ function installQueryMock() {
       employee.active = params[0];
       return result([userFields(employee)]);
     }
-    if (text.startsWith('update users set first_name=$1,department=$2')) {
-      const employee = users.find(user => user.id === Number(params[2]) && user.companyId === Number(params[3]) && user.role === 'employee');
+    if (text.startsWith('update users set first_name=$1,department=$2,job_title=coalesce')) {
+      const employee = users.find(user => user.id === Number(params[5]) && user.companyId === Number(params[6]) && user.role === 'employee');
       if (!employee) return result([]);
       employee.firstName = params[0];
       employee.department = params[1];
+      employee.jobTitle = params[2] ?? employee.jobTitle ?? '';
+      employee.employmentType = params[3] ?? employee.employmentType ?? 'unspecified';
+      if (params[7]) employee.hireDate = params[4];
+      employee.team = params[8] ?? employee.team ?? 'General';
+      if (params[9]) employee.managerId = params[10] == null ? null : Number(params[10]);
       return result([userFields(employee)]);
     }
     if (text.startsWith('select assigned_to as "assignedto",task_date as "taskdate" from tasks where id=$1')) {
@@ -458,17 +576,27 @@ function installQueryMock() {
         expiresAt: new Date(Date.now() + 7 * 86400000),
         acceptedAt: null,
         invitedBy: Number(params[5]),
+        jobTitle: params[6] || '',
+        employmentType: params[7] || 'unspecified',
+        hireDate: params[8] || null,
+        team: params[9] || 'General',
+        managerId: params[10] == null ? null : Number(params[10]),
         createdAt: new Date()
       };
       invitations.push(invitation);
       return result([{ id: invitation.id, expiresAt: invitation.expiresAt }]);
     }
-    if (text.startsWith('select id,email,first_name as "firstname",department,expires_at as "expiresat"')) {
+    if (text.startsWith('select id,email,first_name as "firstname",department,job_title as "jobtitle"')) {
       return result(invitations.filter(item => item.companyId === Number(params[0])).map(item => ({
         id: item.id,
         email: item.email,
         firstName: item.firstName,
         department: item.department,
+        jobTitle: item.jobTitle,
+        employmentType: item.employmentType,
+        hireDate: item.hireDate,
+        team: item.team,
+        managerId: item.managerId,
         expiresAt: item.expiresAt,
         acceptedAt: item.acceptedAt,
         createdAt: item.createdAt
@@ -486,12 +614,17 @@ function installQueryMock() {
       invitations = invitations.filter(item => !(item.id === Number(params[0]) && item.companyId === Number(params[1]) && !item.acceptedAt));
       return { rows: [], rowCount: previousLength - invitations.length };
     }
-    if (text.startsWith('select i.first_name as "firstname",i.email,i.department,c.name,c.slug from invitations')) {
+    if (text.startsWith('select i.first_name as "firstname",i.email,i.department,i.job_title as "jobtitle"')) {
       const invitation = invitations.find(item => item.tokenHash === params[0] && !item.acceptedAt && item.expiresAt > new Date());
       return result(invitation ? [{
         firstName: invitation.firstName,
         email: invitation.email,
         department: invitation.department,
+        jobTitle: invitation.jobTitle,
+        employmentType: invitation.employmentType,
+        hireDate: invitation.hireDate,
+        team: invitation.team,
+        managerId: invitation.managerId,
         name: company.name,
         slug: company.slug
       }] : []);
@@ -652,9 +785,9 @@ function installQueryMock() {
 beforeAll(async () => {
   const passwordHash = await bcrypt.hash('correct-horse-battery-123', 4);
   baseUsers = [
-    { id: 1, companyId: 1, firstName: 'Admin', email: 'admin@example.test', passwordHash, role: 'admin', department: 'Management', active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] },
-    { id: 2, companyId: 1, firstName: 'Employee', email: 'employee@example.test', passwordHash, role: 'employee', department: 'Operations', active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] },
-    { id: 3, companyId: 1, firstName: 'Second Employee', email: 'second@example.test', passwordHash, role: 'employee', department: 'Research', active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] }
+    { id: 1, companyId: 1, firstName: 'Admin', email: 'admin@example.test', passwordHash, role: 'admin', department: 'Management', jobTitle: '', employmentType: 'unspecified', hireDate: null, team: 'General', managerId: null, active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] },
+    { id: 2, companyId: 1, firstName: 'Employee', email: 'employee@example.test', passwordHash, role: 'employee', department: 'Operations', jobTitle: '', employmentType: 'unspecified', hireDate: null, team: 'General', managerId: null, active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] },
+    { id: 3, companyId: 1, firstName: 'Second Employee', email: 'second@example.test', passwordHash, role: 'employee', department: 'Research', jobTitle: '', employmentType: 'unspecified', hireDate: null, team: 'General', managerId: null, active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] }
   ];
 });
 
@@ -665,6 +798,7 @@ beforeEach(() => {
   notifications = [];
   auditEvents = [];
   leaveRequests = [];
+  leavePolicies = [];
   invitations = [];
   passwordResets = [];
   slackWebhookEncrypted = null;
@@ -677,6 +811,10 @@ beforeEach(() => {
   installQueryMock();
   mocks.sendInvitationEmail.mockReset();
   mocks.sendInvitationEmail.mockResolvedValue(undefined);
+  mocks.sendLeaveRequestEmail.mockReset();
+  mocks.sendLeaveRequestEmail.mockResolvedValue(undefined);
+  mocks.sendLeaveDecisionEmail.mockReset();
+  mocks.sendLeaveDecisionEmail.mockResolvedValue(undefined);
   mocks.sendTaskAssignedEmail.mockReset();
   mocks.sendTaskAssignedEmail.mockResolvedValue(undefined);
   mocks.sendTaskUpdateEmail.mockReset();
@@ -685,6 +823,63 @@ beforeEach(() => {
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
   if (['begin', 'commit', 'rollback'].includes(text)) return result([]);
+  if (text.startsWith('select id from users where id=$1 and company_id=$2 for update')) {
+    const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]));
+    return result(user ? [{ id: user.id }] : []);
+  }
+  if (text.startsWith('select id from leave_requests')) {
+    const overlap = leaveRequests.find(leave =>
+      leave.companyId === Number(params[0]) &&
+      leave.userId === Number(params[1]) &&
+      ['pending', 'approved'].includes(leave.status) &&
+      leave.startDate <= params[3] &&
+      leave.endDate >= params[2]
+    );
+    return result(overlap ? [{ id: overlap.id }] : []);
+  }
+  if (text.startsWith('select annual_allowance_days as "annualallowancedays" from company_leave_policies')) {
+    const policy = leavePolicies.find(item =>
+      item.companyId === Number(params[0]) && item.leaveType === params[1]
+    );
+    return result(policy ? [{ annualAllowanceDays: policy.annualAllowanceDays }] : []);
+  }
+  if (text.startsWith('select start_date::text as "startdate",end_date::text as "enddate" from leave_requests')) {
+    return result(leaveRequests.filter(leave =>
+      leave.companyId === Number(params[0]) &&
+      leave.userId === Number(params[1]) &&
+      leave.leaveType === params[2] &&
+      ['pending', 'approved'].includes(leave.status) &&
+      leave.startDate <= params[4] &&
+      leave.endDate >= params[3]
+    ).map(leave => ({ startDate: leave.startDate, endDate: leave.endDate })));
+  }
+  if (text.startsWith('insert into leave_requests(')) {
+    const leave = {
+      id: nextLeaveId++,
+      companyId: Number(params[0]),
+      userId: Number(params[1]),
+      startDate: params[2],
+      endDate: params[3],
+      leaveType: params[4],
+      reason: params[5],
+      status: 'pending',
+      reviewNote: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date().toISOString()
+    };
+    leaveRequests.push(leave);
+    return result([{
+      id: leave.id,
+      userId: leave.userId,
+      startDate: leave.startDate,
+      endDate: leave.endDate,
+      leaveType: leave.leaveType,
+      reason: leave.reason,
+      status: leave.status,
+      createdAt: leave.createdAt
+    }]);
+  }
   if (text.startsWith('select id,first_name as "firstname",email from users where id=$1 and company_id=$2 and role=\'employee\' and active=true')) {
     const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.role === 'employee' && item.active);
     return result(user ? [{ id: user.id, firstName: user.firstName, email: user.email }] : []);
@@ -726,13 +921,18 @@ beforeEach(() => {
       company_id: invitation.companyId,
       email: invitation.email,
       first_name: invitation.firstName,
-      department: invitation.department
+      department: invitation.department,
+      job_title: invitation.jobTitle,
+      employment_type: invitation.employmentType,
+      hire_date: invitation.hireDate,
+      team: invitation.team,
+      manager_id: invitation.managerId
     }] : []);
   }
   if (text.startsWith('select id,name,slug,industry,size,active from companies where id=')) {
     return result(company.id === Number(params[0]) ? [company] : []);
   }
-  if (text.startsWith('insert into users(company_id,first_name,email,password_hash,role,department)')) {
+  if (text.startsWith('insert into users(company_id,first_name,email,password_hash,role,department,job_title,employment_type,hire_date,team,manager_id)')) {
     const user = {
       id: Math.max(...users.map(item => item.id)) + 1,
       companyId: Number(params[0]),
@@ -741,6 +941,11 @@ beforeEach(() => {
       passwordHash: params[3],
       role: 'employee',
       department: params[4],
+      jobTitle: params[5] || '',
+      employmentType: params[6] || 'unspecified',
+      hireDate: params[7] || null,
+      team: params[8] || 'General',
+      managerId: params[9] == null ? null : Number(params[9]),
       active: true
     };
     users.push(user);
@@ -1172,7 +1377,17 @@ describe('authenticated API workflows', () => {
       .set('Authorization', `Bearer ${adminLogin.body.token}`)
       .send({
         employees: [
-          { row: 2, firstName: '  New Teammate  ', email: 'New.Person@example.test', department: 'Operations' },
+          {
+            row: 2,
+            firstName: '  New Teammate  ',
+            email: 'New.Person@example.test',
+            department: 'Operations',
+            team: 'Platform',
+            managerEmail: 'employee@example.test',
+            jobTitle: 'Operations Analyst',
+            employmentType: 'full_time',
+            hireDate: '2026-03-15'
+          },
           { row: 3, firstName: 'Duplicate Row', email: 'new.person@example.test', department: 'Operations' },
           { row: 4, firstName: 'Known User', email: 'employee@example.test', department: 'Support' },
           { row: 5, firstName: 'Invalid Email', email: 'not-an-email', department: 'Support' },
@@ -1197,6 +1412,13 @@ describe('authenticated API workflows', () => {
     expect(response.body.results[0].inviteUrl).toMatch(/^https:\/\/employee-ms\.test\/invite\/[a-f0-9]{64}$/);
     expect(invitations).toHaveLength(2);
     expect(invitations.every(invitation => invitation.companyId === company.id)).toBe(true);
+    expect(invitations.find(invitation => invitation.email === 'new.person@example.test')).toMatchObject({
+      jobTitle: 'Operations Analyst',
+      employmentType: 'full_time',
+      hireDate: '2026-03-15',
+      team: 'Platform',
+      managerId: 2
+    });
     expect(mocks.sendInvitationEmail).toHaveBeenCalledTimes(2);
 
     await request(app).post('/api/invitations/bulk')
@@ -1318,8 +1540,17 @@ describe('authenticated API workflows', () => {
       userId: 2,
       employeeName: 'Employee',
       status: 'pending',
-      leaveType: 'vacation'
+      leaveType: 'vacation',
+      emailStatus: 'sent'
     });
+    expect(mocks.sendLeaveRequestEmail).toHaveBeenCalledOnce();
+    expect(mocks.sendLeaveRequestEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'admin@example.test',
+      recipientName: 'Admin',
+      employeeName: 'Employee',
+      companyName: 'Test Workspace',
+      leave: expect.objectContaining({ startDate: '2026-12-01', endDate: '2026-12-02', reason: 'Family trip' })
+    }));
     await request(app).post('/api/leave-requests')
       .set('Authorization', `Bearer ${employeeLogin.body.token}`)
       .send({ startDate: '2026-12-02', endDate: '2026-12-04', leaveType: 'personal', reason: 'Overlapping dates' })
@@ -1360,8 +1591,23 @@ describe('authenticated API workflows', () => {
     expect(reviewed.body).toMatchObject({
       id: pending.body.id,
       status: 'approved',
-      reviewNote: 'Approved. Please coordinate coverage.'
+      reviewNote: 'Approved. Please coordinate coverage.',
+      emailStatus: 'sent'
     });
+    expect(mocks.sendLeaveDecisionEmail).toHaveBeenCalledOnce();
+    expect(mocks.sendLeaveDecisionEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'employee@example.test',
+      recipientName: 'Employee',
+      companyName: 'Test Workspace',
+      reviewerName: 'Admin',
+      leave: expect.objectContaining({
+        startDate: '2026-12-10',
+        endDate: '2026-12-12',
+        leaveType: 'sick',
+        status: 'approved',
+        reviewNote: 'Approved. Please coordinate coverage.'
+      })
+    }));
     await request(app).patch(`/api/leave-requests/${pending.body.id}/review`)
       .set('Authorization', `Bearer ${adminLogin.body.token}`)
       .send({ status: 'rejected' })
@@ -1376,6 +1622,115 @@ describe('authenticated API workflows', () => {
       'leave.requested',
       'leave.approved'
     ]);
+  });
+
+  it('configures annual leave allowances, enforces reserved balances, and shares private approved absences', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const adminAuth = `Bearer ${adminLogin.body.token}`;
+    const employeeAuth = `Bearer ${employeeLogin.body.token}`;
+
+    const defaults = await request(app).get('/api/leave-policies').set('Authorization', employeeAuth).expect(200);
+    expect(defaults.body).toEqual([
+      { leaveType: 'vacation', annualAllowanceDays: null },
+      { leaveType: 'sick', annualAllowanceDays: null },
+      { leaveType: 'personal', annualAllowanceDays: null },
+      { leaveType: 'other', annualAllowanceDays: null }
+    ]);
+
+    const configuredPolicies = [
+      { leaveType: 'vacation', annualAllowanceDays: 3 },
+      { leaveType: 'sick', annualAllowanceDays: 5 },
+      { leaveType: 'personal', annualAllowanceDays: 2 },
+      { leaveType: 'other', annualAllowanceDays: null }
+    ];
+    await request(app).put('/api/leave-policies')
+      .set('Authorization', employeeAuth)
+      .send({ policies: configuredPolicies })
+      .expect(403);
+    await request(app).put('/api/leave-policies')
+      .set('Authorization', adminAuth)
+      .send({ policies: configuredPolicies.slice(1) })
+      .expect(400);
+    const savedPolicies = await request(app).put('/api/leave-policies')
+      .set('Authorization', adminAuth)
+      .send({ policies: configuredPolicies })
+      .expect(200);
+    expect(savedPolicies.body).toEqual(configuredPolicies);
+
+    const requested = await request(app).post('/api/leave-requests')
+      .set('Authorization', employeeAuth)
+      .send({ startDate: '2026-12-01', endDate: '2026-12-02', leaveType: 'vacation', reason: 'Family trip' })
+      .expect(201);
+    await request(app).post('/api/leave-requests')
+      .set('Authorization', employeeAuth)
+      .send({ startDate: '2026-12-03', endDate: '2026-12-04', leaveType: 'vacation', reason: 'More time away' })
+      .expect(409);
+
+    const balance = await request(app).get('/api/leave-balance?year=2026').set('Authorization', employeeAuth).expect(200);
+    expect(balance.body).toContainEqual({
+      leaveType: 'vacation',
+      annualAllowanceDays: 3,
+      approvedDays: 0,
+      pendingDays: 2,
+      remainingDays: 1
+    });
+
+    await request(app).patch(`/api/leave-requests/${requested.body.id}/review`)
+      .set('Authorization', adminAuth)
+      .send({ status: 'approved' })
+      .expect(200);
+    const calendar = await request(app).get('/api/leave-calendar?from=2026-12-01&to=2026-12-31')
+      .set('Authorization', employeeAuth)
+      .expect(200);
+    expect(calendar.body).toEqual([{
+      userId: 2,
+      employeeName: 'Employee',
+      department: 'Operations',
+      startDate: '2026-12-01',
+      endDate: '2026-12-02'
+    }]);
+    expect(calendar.body[0]).not.toHaveProperty('reason');
+    expect(calendar.body[0]).not.toHaveProperty('leaveType');
+    expect(auditEvents.map(event => event.action)).toContain('leave.policies_updated');
+  });
+
+  it('keeps leave workflows successful and reports status when email delivery fails', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      mocks.sendLeaveRequestEmail.mockRejectedValue(new Error('provider unavailable'));
+      const requested = await request(app).post('/api/leave-requests')
+        .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-21', leaveType: 'personal', reason: 'Personal matter' })
+        .expect(201);
+      expect(requested.body).toMatchObject({ status: 'pending', emailStatus: 'failed' });
+      expect(leaveRequests).toHaveLength(1);
+
+      mocks.sendLeaveDecisionEmail.mockRejectedValue(new Error('provider unavailable'));
+      const approved = await request(app).patch(`/api/leave-requests/${requested.body.id}/review`)
+        .set('Authorization', `Bearer ${adminLogin.body.token}`)
+        .send({ status: 'approved' })
+        .expect(200);
+      expect(approved.body).toMatchObject({ status: 'approved', emailStatus: 'failed' });
+      expect(leaveRequests[0].status).toBe('approved');
+      expect(logError).toHaveBeenCalledTimes(2);
+    } finally {
+      logError.mockRestore();
+    }
   });
 
   it('rejects unauthorized and cross-employee task access', async () => {
@@ -1445,8 +1800,41 @@ describe('authenticated API workflows', () => {
       .send({ active: false }).expect(409);
     await request(app).patch('/api/employees/2')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ firstName: 'Updated Employee', department: 'Support' }).expect(200)
-      .then(response => expect(response.body).toMatchObject({ firstName: 'Updated Employee', department: 'Support' }));
+      .send({
+        firstName: 'Updated Employee',
+        department: 'Support',
+        jobTitle: 'Support Specialist',
+        employmentType: 'part_time',
+        hireDate: '2026-03-15',
+        team: 'Customer Success',
+        managerId: 3
+      }).expect(200)
+      .then(response => expect(response.body).toMatchObject({
+        firstName: 'Updated Employee',
+        department: 'Support',
+        jobTitle: 'Support Specialist',
+        employmentType: 'part_time',
+        hireDate: '2026-03-15',
+        team: 'Customer Success',
+        managerId: 3
+      }));
+    await request(app).patch('/api/employees/3')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ firstName: 'Second Employee', department: 'Research', managerId: 2 })
+      .expect(400)
+      .expect(response => expect(response.body.message).toMatch(/reporting cycle/));
+    await request(app).patch('/api/employees/3')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ firstName: 'Second Employee', department: 'Research', managerId: 999 })
+      .expect(400);
+    await request(app).get('/api/employees')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .expect(200)
+      .then(response => expect(response.body).toContainEqual(expect.objectContaining({
+        id: 2,
+        team: 'Customer Success',
+        managerId: 3
+      })));
 
     await request(app).patch(`/api/tasks/${created.body.id}/status`)
       .set('Authorization', `Bearer ${adminToken}`)
@@ -1527,7 +1915,16 @@ describe('authenticated API workflows', () => {
     const adminToken = adminLogin.body.token;
     const created = await request(app).post('/api/invitations')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ firstName: 'New Teammate', email: 'new@example.test', department: 'Research' }).expect(201);
+      .send({
+        firstName: 'New Teammate',
+        email: 'new@example.test',
+        department: 'Research',
+        jobTitle: 'Research Analyst',
+        employmentType: 'contractor',
+        hireDate: '2026-03-15',
+        team: 'Research',
+        managerId: 2
+      }).expect(201);
     expect(created.body.emailStatus).toBe('sent');
     const oldToken = new URL(created.body.inviteUrl).pathname.split('/').pop();
     await request(app).get(`/api/invitations/${oldToken}`).expect(200);
@@ -1538,11 +1935,25 @@ describe('authenticated API workflows', () => {
     await request(app).get(`/api/invitations/${oldToken}`).expect(404);
     await request(app).get(`/api/invitations/${currentToken}`)
       .expect(200)
-      .then(response => expect(response.body.email).toBe('new@example.test'));
+      .then(response => expect(response.body).toMatchObject({
+        email: 'new@example.test',
+        jobTitle: 'Research Analyst',
+        employmentType: 'contractor',
+        hireDate: '2026-03-15',
+        team: 'Research',
+        managerId: 2
+      }));
 
     const accepted = await request(app).post(`/api/invitations/${currentToken}/accept`)
       .send({ password: 'accepted-password-12345' }).expect(201);
     expect(accepted.body.user.role).toBe('employee');
+    expect(accepted.body.user).toMatchObject({
+      jobTitle: 'Research Analyst',
+      employmentType: 'contractor',
+      hireDate: '2026-03-15',
+      team: 'Research',
+      managerId: 2
+    });
     await request(app).post('/api/auth/login')
       .send({ email: 'new@example.test', password: 'accepted-password-12345' }).expect(200);
     await request(app).post(`/api/invitations/${currentToken}/accept`)

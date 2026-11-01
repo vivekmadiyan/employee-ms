@@ -55,9 +55,9 @@ const parseCsv = text => {
 const normalizeHeader = value => value.trim().replace(/^\uFEFF/, '').toLowerCase().replace(/[\s_-]/g, '');
 
 const csvTemplate = [
-  'firstName,email,department',
-  'Alex Morgan,alex@example.com,Operations',
-  '"Jordan Lee","jordan@example.com","Engineering"'
+  'firstName,email,department,team,managerEmail,jobTitle,employmentType,hireDate',
+  'Alex Morgan,alex@example.com,Operations,Platform,manager@example.com,Analyst,full_time,2026-03-15',
+  '"Jordan Lee","jordan@example.com","Engineering","Design","","Product Designer","part_time","2026-04-01"'
 ].join('\r\n');
 
 export default function BulkInviteEmployees() {
@@ -102,6 +102,11 @@ export default function BulkInviteEmployees() {
       const firstNameIndex = headers.findIndex(header => ['firstname', 'name'].includes(header));
       const emailIndex = headers.indexOf('email');
       const departmentIndex = headers.indexOf('department');
+      const teamIndex = headers.indexOf('team');
+      const managerEmailIndex = headers.indexOf('manageremail');
+      const jobTitleIndex = headers.indexOf('jobtitle');
+      const employmentTypeIndex = headers.indexOf('employmenttype');
+      const hireDateIndex = headers.indexOf('hiredate');
       if (firstNameIndex < 0 || emailIndex < 0) {
         throw new Error('CSV headers must include firstName (or name) and email. Department is optional.');
       }
@@ -109,7 +114,12 @@ export default function BulkInviteEmployees() {
         row: line,
         firstName: cells[firstNameIndex]?.trim() || '',
         email: cells[emailIndex]?.trim() || '',
-        department: departmentIndex < 0 ? 'General' : cells[departmentIndex]?.trim() || 'General'
+        department: departmentIndex < 0 ? 'General' : cells[departmentIndex]?.trim() || 'General',
+        team: teamIndex < 0 ? 'General' : cells[teamIndex]?.trim() || 'General',
+        managerEmail: managerEmailIndex < 0 ? null : cells[managerEmailIndex]?.trim() || null,
+        jobTitle: jobTitleIndex < 0 ? '' : cells[jobTitleIndex]?.trim() || '',
+        employmentType: employmentTypeIndex < 0 ? 'unspecified' : cells[employmentTypeIndex]?.trim() || 'unspecified',
+        hireDate: hireDateIndex < 0 ? null : cells[hireDateIndex]?.trim() || null
       }));
       if (parsed.length > maximumRows) {
         throw new Error(`Import up to ${maximumRows} employees at a time; this file has ${parsed.length}.`);
@@ -212,6 +222,11 @@ export default function BulkInviteEmployees() {
                       <th scope="col" className="px-3.5 py-2">Name</th>
                       <th scope="col" className="px-3.5 py-2">Email</th>
                       <th scope="col" className="px-3.5 py-2">Department</th>
+                      <th scope="col" className="px-3.5 py-2">Team</th>
+                      <th scope="col" className="px-3.5 py-2">Manager</th>
+                      <th scope="col" className="px-3.5 py-2">Job Title</th>
+                      <th scope="col" className="px-3.5 py-2">Employment Type</th>
+                      <th scope="col" className="px-3.5 py-2">Hire Date</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
@@ -221,6 +236,11 @@ export default function BulkInviteEmployees() {
                         <td className="px-3.5 py-2 font-medium text-slate-800">{employee.firstName || <span className="text-rose-600">Missing</span>}</td>
                         <td className="px-3.5 py-2 text-slate-600">{employee.email || <span className="text-rose-600">Missing</span>}</td>
                         <td className="px-3.5 py-2 text-slate-500">{employee.department}</td>
+                        <td className="px-3.5 py-2 text-slate-500">{employee.team}</td>
+                        <td className="px-3.5 py-2 text-slate-500">{employee.managerEmail || '—'}</td>
+                        <td className="px-3.5 py-2 text-slate-500">{employee.jobTitle || '—'}</td>
+                        <td className="px-3.5 py-2 text-slate-500">{employee.employmentType.replace('_', ' ')}</td>
+                        <td className="px-3.5 py-2 text-slate-500">{employee.hireDate || '—'}</td>
                       </tr>
                     ))}
                   </tbody>

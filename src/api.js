@@ -65,6 +65,10 @@ export const acceptInvitationApi = (token, password) => api(`/invitations/${enco
 export const getInvitationsApi = () => api('/invitations');
 export const getAuditEventsApi = () => api('/audit-events');
 export const getLeaveRequestsApi = () => api('/leave-requests');
+export const getLeavePoliciesApi = () => api('/leave-policies');
+export const updateLeavePoliciesApi = policies => api('/leave-policies', { method: 'PUT', body: JSON.stringify({ policies }) });
+export const getLeaveBalanceApi = year => api(`/leave-balance?${new URLSearchParams({ year })}`);
+export const getLeaveCalendarApi = (from, to) => api(`/leave-calendar?${new URLSearchParams({ from, to })}`);
 export const createLeaveRequestApi = payload => api('/leave-requests', { method: 'POST', body: JSON.stringify(payload) });
 export const reviewLeaveRequestApi = (id, payload) => api(`/leave-requests/${id}/review`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const cancelLeaveRequestApi = id => api(`/leave-requests/${id}`, { method: 'DELETE', body: '{}' });

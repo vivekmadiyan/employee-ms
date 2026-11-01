@@ -11,7 +11,14 @@ import { z } from 'zod';
 import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { auth, adminOnly } from './middleware/auth.js';
-import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail, sendTaskUpdateEmail } from './email.js';
+import {
+  sendInvitationEmail,
+  sendLeaveDecisionEmail,
+  sendLeaveRequestEmail,
+  sendPasswordResetEmail,
+  sendTaskAssignedEmail,
+  sendTaskUpdateEmail
+} from './email.js';
 import {
   createRecoveryCodes,
   decryptSecret,
@@ -30,7 +37,7 @@ app.disable('x-powered-by');
 const httpMetrics = { requests: 0, serverErrors: 0, durationSeconds: 0 };
 app.use((req, res, next) => { req.id = crypto.randomUUID(); res.setHeader('X-Request-Id', req.id); next(); });
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
-app.use(cors({ origin(origin, callback) { if (!origin || allowedOrigins.has(origin)) return callback(null, true); return callback(new Error('Origin not allowed by CORS')); }, methods: ['GET', 'POST', 'PATCH', 'DELETE'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 }));
+app.use(cors({ origin(origin, callback) { if (!origin || allowedOrigins.has(origin)) return callback(null, true); return callback(new Error('Origin not allowed by CORS')); }, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 }));
 app.use(express.json({ limit: '1mb' }));
 const skipRateLimitForTests = () => config.NODE_ENV === 'test';
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many requests. Please try again later.' } }));
@@ -46,13 +53,69 @@ app.use((req, res, next) => {
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many attempts. Please try again later.' } });
 const onboardingLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many account requests. Please try again later.' } });
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many password reset requests. Please try again later.' } });
-const userFields = 'id, company_id AS "companyId", first_name AS "firstName", email, role, department, active';
+const userFields = 'id, company_id AS "companyId", first_name AS "firstName", email, role, department, job_title AS "jobTitle", employment_type AS "employmentType", hire_date::text AS "hireDate", team, manager_id AS "managerId", active';
+const leaveTypes = ['vacation', 'sick', 'personal', 'other'];
+const leaveYearDays = (startDate, endDate, year) => {
+  const yearStart = Date.UTC(year, 0, 1);
+  const yearEnd = Date.UTC(year + 1, 0, 1) - 86400000;
+  const start = Math.max(Date.parse(`${startDate}T00:00:00Z`), yearStart);
+  const end = Math.min(Date.parse(`${endDate}T00:00:00Z`), yearEnd);
+  return start <= end ? Math.floor((end - start) / 86400000) + 1 : 0;
+};
 const taskFields = 'id, company_id AS "companyId", task_title AS "taskTitle", task_description AS "taskDescription", task_date AS "taskDate", category, priority, status, assigned_to AS "assignedTo", created_by AS "createdBy", archived_at AS "archivedAt", created_at AS "createdAt", updated_at AS "updatedAt"';
-const safeUser = u => ({ id: u.id, companyId: u.companyId, firstName: u.firstName, email: u.email, role: u.role, department: u.department, active: u.active });
+const safeUser = u => ({ id: u.id, companyId: u.companyId, firstName: u.firstName, email: u.email, role: u.role, department: u.department, jobTitle: u.jobTitle || '', employmentType: u.employmentType || 'unspecified', hireDate: u.hireDate || null, team: u.team || 'General', managerId: u.managerId || null, active: u.active });
 const serializeTask = t => ({ id: t.id, companyId: t.companyId, taskTitle: t.taskTitle, taskDescription: t.taskDescription, taskDate: t.taskDate, category: t.category, priority: t.priority, active: t.status === 'active', newTask: t.status === 'new', completed: t.status === 'completed', failed: t.status === 'failed', overdue: !t.archivedAt && !['completed', 'failed'].includes(t.status) && t.taskDate < new Date().toISOString().slice(0, 10), archived: Boolean(t.archivedAt), assignedTo: t.assignedTo, createdBy: t.createdBy, createdAt: t.createdAt, updatedAt: t.updatedAt });
 const counts = tasks => ({ newTask: tasks.filter(t => t.status === 'new').length, active: tasks.filter(t => t.status === 'active').length, completed: tasks.filter(t => t.status === 'completed').length, failed: tasks.filter(t => t.status === 'failed').length });
 const slugify = value => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
 const hashToken = token => crypto.createHash('sha256').update(token).digest('hex');
+const validateEmployeeManager = async (companyId, employeeId, managerId) => {
+  if (managerId == null) return;
+  if (managerId === Number(employeeId)) {
+    const error = new Error('An employee cannot report to themselves');
+    error.status = 400;
+    throw error;
+  }
+  const manager = (await query(
+    `SELECT id FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
+    [managerId, companyId]
+  )).rows[0];
+  if (!manager) {
+    const error = new Error('Select an active employee in this workspace as the manager');
+    error.status = 400;
+    throw error;
+  }
+  if (employeeId == null) return;
+  const cycle = (await query(
+    `WITH RECURSIVE manager_chain AS (
+       SELECT id,manager_id FROM users WHERE id=$2 AND company_id=$1
+       UNION
+       SELECT u.id,u.manager_id FROM users u
+       JOIN manager_chain chain ON u.id=chain.manager_id
+       WHERE u.company_id=$1
+     )
+     SELECT EXISTS(SELECT 1 FROM manager_chain WHERE id=$3) AS "createsCycle"`,
+    [companyId, managerId, employeeId]
+  )).rows[0]?.createsCycle;
+  if (cycle) {
+    const error = new Error('This manager assignment would create a reporting cycle');
+    error.status = 400;
+    throw error;
+  }
+};
+const resolveManagerEmail = async (companyId, managerEmail) => {
+  if (!managerEmail) return null;
+  const manager = (await query(
+    `SELECT id FROM users WHERE company_id=$1 AND lower(email)=$2
+       AND role='employee' AND active=true`,
+    [companyId, managerEmail]
+  )).rows[0];
+  if (!manager) {
+    const error = new Error('Manager email must belong to an active employee in this workspace');
+    error.status = 400;
+    throw error;
+  }
+  return manager.id;
+};
 const recordAuditEvent = async (companyId, actorId, req, action, entityType, entityId, details = {}) => {
   try {
     await query(
@@ -144,6 +207,74 @@ const emailTaskUpdate = async (task, recipientIds, actorId, actorName, updateTyp
     return 'failed';
   }
 };
+const emailLeaveRequest = async (leave, employeeName, req) => {
+  if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) return 'not_configured';
+  try {
+    const admins = (await query(
+      `SELECT id,first_name AS "firstName",email FROM users
+       WHERE company_id=$1 AND role='admin' AND active=true`,
+      [req.company.id]
+    )).rows;
+    if (!admins.length) return 'no_recipients';
+    const results = await Promise.allSettled(admins.map(admin => sendLeaveRequestEmail({
+      apiKey: config.BREVO_API_KEY,
+      senderEmail: config.BREVO_SENDER_EMAIL,
+      senderName: config.BREVO_SENDER_NAME,
+      recipientEmail: admin.email,
+      recipientName: admin.firstName,
+      companyName: req.company.name,
+      employeeName,
+      leave
+    })));
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) {
+      console.error('Leave request email failed:', {
+        requestId: req.id,
+        leaveRequestId: leave.id,
+        failureCount: failures.length,
+        codes: failures.map(result => result.reason.code || 'provider_error')
+      });
+    }
+    return failures.length === 0 ? 'sent' : failures.length === results.length ? 'failed' : 'partial_failure';
+  } catch (error) {
+    console.error('Leave request email recipient lookup failed:', {
+      requestId: req.id,
+      leaveRequestId: leave.id,
+      message: error.message
+    });
+    return 'failed';
+  }
+};
+const emailLeaveApproval = async (leave, req) => {
+  if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) return 'not_configured';
+  try {
+    const employee = (await query(
+      `SELECT id,first_name AS "firstName",email FROM users
+       WHERE id=$1 AND company_id=$2 AND active=true`,
+      [leave.userId, req.company.id]
+    )).rows[0];
+    if (!employee) return 'no_recipients';
+    await sendLeaveDecisionEmail({
+      apiKey: config.BREVO_API_KEY,
+      senderEmail: config.BREVO_SENDER_EMAIL,
+      senderName: config.BREVO_SENDER_NAME,
+      recipientEmail: employee.email,
+      recipientName: employee.firstName,
+      companyName: req.company.name,
+      leave,
+      reviewerName: req.user.firstName
+    });
+    return 'sent';
+  } catch (error) {
+    console.error('Leave approval email failed:', {
+      requestId: req.id,
+      leaveRequestId: leave.id,
+      code: error.code || 'provider_error',
+      message: error.message
+    });
+    return 'failed';
+  }
+};
 const notifySlackTaskAssigned = async (task, recipient, req) => {
   try {
     const integration = (await query(
@@ -181,6 +312,10 @@ const notifySlackTaskAssigned = async (task, recipient, req) => {
   }
 };
 const createEmployeeInvitation = async (values, req) => {
+  const managerId = values.managerEmail
+    ? await resolveManagerEmail(req.company.id, values.managerEmail)
+    : values.managerId;
+  await validateEmployeeManager(req.company.id, null, managerId);
   if (await findUser(values.email)) {
     const error = new Error('This email already belongs to an account');
     error.status = 409;
@@ -189,8 +324,9 @@ const createEmployeeInvitation = async (values, req) => {
   await query('DELETE FROM invitations WHERE company_id=$1 AND email=$2 AND accepted_at IS NULL', [req.company.id, values.email]);
   const rawToken = crypto.randomBytes(32).toString('hex');
   const invitation = (await query(
-    'INSERT INTO invitations(company_id,email,first_name,department,token_hash,expires_at,invited_by) VALUES($1,$2,$3,$4,$5,NOW() + INTERVAL \'7 days\',$6) RETURNING id,expires_at AS "expiresAt"',
-    [req.company.id, values.email, values.firstName, values.department, hashToken(rawToken), req.user.id]
+    `INSERT INTO invitations(company_id,email,first_name,department,token_hash,expires_at,invited_by,job_title,employment_type,hire_date,team,manager_id)
+     VALUES($1,$2,$3,$4,$5,NOW() + INTERVAL '7 days',$6,$7,$8,$9,$10,$11) RETURNING id,expires_at AS "expiresAt"`,
+    [req.company.id, values.email, values.firstName, values.department, hashToken(rawToken), req.user.id, values.jobTitle, values.employmentType, values.hireDate, values.team, managerId]
   )).rows[0];
   await recordAuditEvent(req.company.id, req.user.id, req, 'invitation.created', 'invitation', invitation.id, {
     email: values.email,
@@ -271,8 +407,47 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD
 const schemas = {
   login: z.object({ email, password: z.string().min(1).max(128), mfaCode: z.string().trim().max(64).optional() }),
   register: z.object({ companyName: z.string().trim().min(2).max(120), industry: z.string().trim().min(2).max(80).default('General'), size: z.enum(['1-10', '11-50', '51-200', '201-500', '500+']).default('1-10'), firstName: z.string().trim().min(2).max(80), email, password }),
-  employee: z.object({ firstName: z.string().trim().min(2).max(80), email, password, department: z.string().trim().min(2).max(80).default('General') }),
-  invitation: z.object({ firstName: z.string().trim().min(2).max(80), email, department: z.string().trim().min(2).max(80).default('General') }),
+  employee: z.object({
+    firstName: z.string().trim().min(2).max(80),
+    email,
+    password,
+    department: z.string().trim().min(2).max(80).default('General'),
+    jobTitle: z.string().trim().max(120).optional().default(''),
+    employmentType: z.enum(['full_time', 'part_time', 'contractor', 'temporary', 'intern', 'unspecified']).optional().default('unspecified'),
+    hireDate: isoDate.nullable().optional().default(null),
+    team: z.string().trim().min(2).max(80).optional().default('General'),
+    managerId: z.number().int().positive().nullable().optional().default(null)
+  }),
+  invitation: z.object({
+    firstName: z.string().trim().min(2).max(80),
+    email,
+    department: z.string().trim().min(2).max(80).default('General'),
+    jobTitle: z.string().trim().max(120).optional().default(''),
+    employmentType: z.enum(['full_time', 'part_time', 'contractor', 'temporary', 'intern', 'unspecified']).optional().default('unspecified'),
+    hireDate: isoDate.nullable().optional().default(null),
+    team: z.string().trim().min(2).max(80).optional().default('General'),
+    managerId: z.number().int().positive().nullable().optional().default(null),
+    managerEmail: email.nullable().optional().default(null)
+  }).refine(invitation => !(invitation.managerId && invitation.managerEmail), {
+    message: 'Provide either a manager ID or manager email, not both'
+  }),
+  employeeProfile: z.object({
+    firstName: z.string().trim().min(2).max(80),
+    department: z.string().trim().min(2).max(80),
+    jobTitle: z.string().trim().max(120).optional(),
+    employmentType: z.enum(['full_time', 'part_time', 'contractor', 'temporary', 'intern', 'unspecified']).optional(),
+    hireDate: isoDate.nullable().optional(),
+    team: z.string().trim().min(2).max(80).optional(),
+    managerId: z.number().int().positive().nullable().optional()
+  }),
+  leavePolicies: z.object({
+    policies: z.array(z.object({
+      leaveType: z.enum(['vacation', 'sick', 'personal', 'other']),
+      annualAllowanceDays: z.number().int().min(0).max(365).nullable()
+    })).length(4).refine(policies => new Set(policies.map(policy => policy.leaveType)).size === leaveTypes.length, {
+      message: 'Provide exactly one annual allowance for each leave type'
+    })
+  }),
   task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: isoDate, category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
@@ -580,15 +755,20 @@ app.get('/api/employees', auth, adminOnly, async (req, res) => { const users = (
 app.post('/api/employees', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(schemas.employee, req.body);
+    await validateEmployeeManager(req.company.id, null, values.managerId);
     if (await findUser(values.email)) return res.status(409).json({ message: 'This email is already registered' });
     const passwordHash = await bcrypt.hash(values.password, 12);
     const user = (await query(
-      `INSERT INTO users(company_id,first_name,email,password_hash,role,department) VALUES($1,$2,$3,$4,'employee',$5) RETURNING ${userFields}`,
-      [req.company.id, values.firstName, values.email, passwordHash, values.department]
+      `INSERT INTO users(company_id,first_name,email,password_hash,role,department,job_title,employment_type,hire_date,team,manager_id)
+       VALUES($1,$2,$3,$4,'employee',$5,$6,$7,$8,$9,$10) RETURNING ${userFields}`,
+      [req.company.id, values.firstName, values.email, passwordHash, values.department, values.jobTitle, values.employmentType, values.hireDate, values.team, values.managerId]
     )).rows[0];
     await recordAuditEvent(req.company.id, req.user.id, req, 'employee.created', 'user', user.id, {
       email: user.email,
-      department: user.department
+      department: user.department,
+      jobTitle: user.jobTitle,
+      employmentType: user.employmentType,
+      hireDate: user.hireDate
     });
     res.status(201).json(safeUser(user));
   } catch (error) {
@@ -621,13 +801,30 @@ app.patch('/api/employees/:id/status', auth, adminOnly, async (req, res, next) =
 });
 app.patch('/api/employees/:id', auth, adminOnly, async (req, res, next) => {
   try {
-    const values = body(z.object({
-      firstName: z.string().trim().min(2).max(80),
-      department: z.string().trim().min(2).max(80)
-    }), req.body);
+    const values = body(schemas.employeeProfile, req.body);
+    const employeeId = Number(req.params.id);
+    if (Object.hasOwn(req.body, 'managerId')) {
+      await validateEmployeeManager(req.company.id, employeeId, values.managerId);
+    }
     const employee = (await query(
-      `UPDATE users SET first_name=$1,department=$2,updated_at=NOW() WHERE id=$3 AND company_id=$4 AND role='employee' RETURNING ${userFields}`,
-      [values.firstName, values.department, req.params.id, req.company.id]
+      `UPDATE users SET first_name=$1,department=$2,job_title=COALESCE($3,job_title),
+         employment_type=COALESCE($4,employment_type),
+         hire_date=CASE WHEN $8 THEN $5::date ELSE hire_date END,
+         team=COALESCE($9,team),manager_id=CASE WHEN $10 THEN $11 ELSE manager_id END,updated_at=NOW()
+       WHERE id=$6 AND company_id=$7 AND role='employee' RETURNING ${userFields}`,
+      [
+        values.firstName,
+        values.department,
+        values.jobTitle ?? null,
+        values.employmentType ?? null,
+        values.hireDate ?? null,
+        employeeId,
+        req.company.id,
+        Object.hasOwn(req.body, 'hireDate'),
+        values.team ?? null,
+        Object.hasOwn(req.body, 'managerId'),
+        values.managerId ?? null
+      ]
     )).rows[0];
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'employee.updated', 'user', employee.id);
@@ -803,7 +1000,7 @@ app.post('/api/invitations/bulk', auth, adminOnly, async (req, res, next) => {
     next(error);
   }
 });
-app.get('/api/invitations', auth, adminOnly, async (req, res) => { const { rows } = await query('SELECT id,email,first_name AS "firstName",department,expires_at AS "expiresAt",accepted_at AS "acceptedAt",created_at AS "createdAt" FROM invitations WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100', [req.company.id]); res.json(rows.map(i => ({ ...i, status: i.acceptedAt ? 'accepted' : (i.expiresAt < new Date() ? 'expired' : 'pending') }))); });
+app.get('/api/invitations', auth, adminOnly, async (req, res) => { const { rows } = await query('SELECT id,email,first_name AS "firstName",department,job_title AS "jobTitle",employment_type AS "employmentType",hire_date::text AS "hireDate",team,manager_id AS "managerId",expires_at AS "expiresAt",accepted_at AS "acceptedAt",created_at AS "createdAt" FROM invitations WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100', [req.company.id]); res.json(rows.map(i => ({ ...i, status: i.acceptedAt ? 'accepted' : (i.expiresAt < new Date() ? 'expired' : 'pending') }))); });
 app.post('/api/invitations/:id/resend', auth, adminOnly, async (req, res, next) => {
   try {
     const rawToken = crypto.randomBytes(32).toString('hex');
@@ -905,7 +1102,110 @@ app.get('/api/leave-requests', auth, async (req, res, next) => {
     next(error);
   }
 });
+app.get('/api/leave-policies', auth, async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT leave_type AS "leaveType",annual_allowance_days AS "annualAllowanceDays" FROM company_leave_policies WHERE company_id=$1',
+      [req.company.id]
+    );
+    const configured = new Map(rows.map(policy => [policy.leaveType, policy.annualAllowanceDays]));
+    res.json(leaveTypes.map(leaveType => ({
+      leaveType,
+      annualAllowanceDays: configured.has(leaveType) ? configured.get(leaveType) : null
+    })));
+  } catch (error) {
+    next(error);
+  }
+});
+app.put('/api/leave-policies', auth, adminOnly, async (req, res, next) => {
+  try {
+    const values = body(schemas.leavePolicies, req.body);
+    const leaveTypeValues = values.policies.map(policy => policy.leaveType);
+    const allowanceValues = values.policies.map(policy => policy.annualAllowanceDays);
+    const { rows } = await query(
+      `INSERT INTO company_leave_policies(company_id,leave_type,annual_allowance_days,updated_by)
+       SELECT $1,policy.leave_type,policy.days,$4
+       FROM unnest($2::text[],$3::int[]) AS policy(leave_type,days)
+       ON CONFLICT(company_id,leave_type) DO UPDATE
+       SET annual_allowance_days=EXCLUDED.annual_allowance_days,updated_by=EXCLUDED.updated_by,updated_at=NOW()
+       RETURNING leave_type AS "leaveType",annual_allowance_days AS "annualAllowanceDays"`,
+      [req.company.id, leaveTypeValues, allowanceValues, req.user.id]
+    );
+    const configured = new Map(rows.map(policy => [policy.leaveType, policy.annualAllowanceDays]));
+    const policies = leaveTypes.map(leaveType => ({
+      leaveType,
+      annualAllowanceDays: configured.has(leaveType) ? configured.get(leaveType) : null
+    }));
+    await recordAuditEvent(req.company.id, req.user.id, req, 'leave.policies_updated', 'leave_policy', null, { policies });
+    res.json(policies);
+  } catch (error) {
+    next(error);
+  }
+});
+app.get('/api/leave-balance', auth, async (req, res, next) => {
+  try {
+    const year = body(z.object({
+      year: z.coerce.number().int().min(2000).max(2100).default(new Date().getUTCFullYear())
+    }), req.query).year;
+    const policies = await query(
+      'SELECT leave_type AS "leaveType",annual_allowance_days AS "annualAllowanceDays" FROM company_leave_policies WHERE company_id=$1',
+      [req.company.id]
+    );
+    const usage = await query(
+      `SELECT leave_type AS "leaveType",status,start_date::text AS "startDate",end_date::text AS "endDate"
+       FROM leave_requests WHERE company_id=$1 AND user_id=$2 AND status IN ('pending','approved')
+         AND start_date<=$3::date AND end_date>=$4::date`,
+      [req.company.id, req.user.id, `${year}-12-31`, `${year}-01-01`]
+    );
+    const allowanceByType = new Map(policies.rows.map(policy => [policy.leaveType, policy.annualAllowanceDays]));
+    res.json(leaveTypes.map(leaveType => {
+      const byStatus = { approvedDays: 0, pendingDays: 0 };
+      usage.rows.filter(item => item.leaveType === leaveType).forEach(item => {
+        const days = leaveYearDays(item.startDate, item.endDate, year);
+        if (item.status === 'approved') byStatus.approvedDays += days;
+        if (item.status === 'pending') byStatus.pendingDays += days;
+      });
+      const annualAllowanceDays = allowanceByType.has(leaveType) ? allowanceByType.get(leaveType) : null;
+      const remainingDays = annualAllowanceDays === null
+        ? null
+        : Math.max(0, annualAllowanceDays - byStatus.approvedDays - byStatus.pendingDays);
+      return { leaveType, annualAllowanceDays, ...byStatus, remainingDays };
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+app.get('/api/leave-calendar', auth, async (req, res, next) => {
+  try {
+    const range = body(z.object({
+      from: isoDate,
+      to: isoDate
+    }).refine(({ from, to }) => from <= to, {
+      message: 'End date must be on or after start date',
+      path: ['to']
+    }).refine(({ from, to }) =>
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 <= 92,
+    {
+      message: 'Calendar range cannot exceed 93 days',
+      path: ['to']
+    }), req.query);
+    const { rows } = await query(
+      `SELECT l.user_id AS "userId",u.first_name AS "employeeName",u.department,
+         l.start_date::text AS "startDate",l.end_date::text AS "endDate"
+       FROM leave_requests l JOIN users u ON u.id=l.user_id AND u.company_id=l.company_id
+       WHERE l.company_id=$1 AND l.status='approved' AND u.active=true
+         AND l.start_date<=$3::date AND l.end_date>=$2::date
+       ORDER BY l.start_date,u.first_name`,
+      [req.company.id, range.from, range.to]
+    );
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
 app.post('/api/leave-requests', auth, async (req, res, next) => {
+  let client;
+  let transactionOpen = false;
   try {
     if (req.user.role !== 'employee') return res.status(403).json({ message: 'Only employees can submit leave requests' });
     const values = body(z.object({
@@ -920,29 +1220,74 @@ app.post('/api/leave-requests', auth, async (req, res, next) => {
       message: 'A leave request cannot exceed 90 calendar days',
       path: ['endDate']
     }), req.body);
-    const conflict = await query(
+    const firstYear = Number(values.startDate.slice(0, 4));
+    const lastYear = Number(values.endDate.slice(0, 4));
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transactionOpen = true;
+    await client.query('SELECT id FROM users WHERE id=$1 AND company_id=$2 FOR UPDATE', [req.user.id, req.company.id]);
+    const conflict = await client.query(
       `SELECT id FROM leave_requests
        WHERE company_id=$1 AND user_id=$2 AND status IN ('pending','approved')
          AND daterange(start_date,end_date,'[]') && daterange($3::date,$4::date,'[]')
        LIMIT 1`,
       [req.company.id, req.user.id, values.startDate, values.endDate]
     );
-    if (conflict.rowCount) return res.status(409).json({ message: 'This request overlaps an existing pending or approved leave request' });
-    const leave = (await query(
+    if (conflict.rowCount) {
+      await client.query('ROLLBACK');
+      transactionOpen = false;
+      return res.status(409).json({ message: 'This request overlaps an existing pending or approved leave request' });
+    }
+    const [policyResult, usageResult] = await Promise.all([
+      client.query(
+        'SELECT annual_allowance_days AS "annualAllowanceDays" FROM company_leave_policies WHERE company_id=$1 AND leave_type=$2',
+        [req.company.id, values.leaveType]
+      ),
+      client.query(
+        `SELECT start_date::text AS "startDate",end_date::text AS "endDate"
+         FROM leave_requests WHERE company_id=$1 AND user_id=$2 AND leave_type=$3
+           AND status IN ('pending','approved') AND start_date<=$5::date AND end_date>=$4::date`,
+        [req.company.id, req.user.id, values.leaveType, `${firstYear}-01-01`, `${lastYear}-12-31`]
+      )
+    ]);
+    const allowance = policyResult.rows[0]?.annualAllowanceDays ?? null;
+    if (allowance !== null) {
+      for (let year = firstYear; year <= lastYear; year += 1) {
+        const requestedDays = leaveYearDays(values.startDate, values.endDate, year);
+        const existingDays = usageResult.rows.reduce(
+          (total, leave) => total + leaveYearDays(leave.startDate, leave.endDate, year),
+          0
+        );
+        if (existingDays + requestedDays > allowance) {
+          await client.query('ROLLBACK');
+          transactionOpen = false;
+          return res.status(409).json({
+            message: `This request exceeds the ${year} annual ${values.leaveType} leave allowance (${allowance} calendar days)`
+          });
+        }
+      }
+    }
+    const leave = (await client.query(
       `INSERT INTO leave_requests(company_id,user_id,start_date,end_date,leave_type,reason)
        VALUES($1,$2,$3,$4,$5,$6)
        RETURNING id,user_id AS "userId",start_date::text AS "startDate",end_date::text AS "endDate",
          leave_type AS "leaveType",reason,status,created_at AS "createdAt"`,
       [req.company.id, req.user.id, values.startDate, values.endDate, values.leaveType, values.reason]
     )).rows[0];
+    await client.query('COMMIT');
+    transactionOpen = false;
     await recordAuditEvent(req.company.id, req.user.id, req, 'leave.requested', 'leave_request', leave.id, {
       startDate: leave.startDate,
       endDate: leave.endDate,
       leaveType: leave.leaveType
     });
-    res.status(201).json({ ...leave, employeeName: req.user.firstName });
+    const emailStatus = await emailLeaveRequest(leave, req.user.firstName, req);
+    res.status(201).json({ ...leave, employeeName: req.user.firstName, emailStatus });
   } catch (error) {
+    if (transactionOpen) await client.query('ROLLBACK');
     next(error);
+  } finally {
+    client?.release();
   }
 });
 app.patch('/api/leave-requests/:id/review', auth, adminOnly, async (req, res, next) => {
@@ -962,7 +1307,8 @@ app.patch('/api/leave-requests/:id/review', auth, adminOnly, async (req, res, ne
     await recordAuditEvent(req.company.id, req.user.id, req, `leave.${values.status}`, 'leave_request', leave.id, {
       employeeId: leave.userId
     });
-    res.json(leave);
+    const emailStatus = values.status === 'approved' ? await emailLeaveApproval(leave, req) : 'not_applicable';
+    res.json({ ...leave, emailStatus });
   } catch (error) {
     next(error);
   }
@@ -983,8 +1329,91 @@ app.delete('/api/leave-requests/:id', auth, async (req, res, next) => {
     next(error);
   }
 });
-app.get('/api/invitations/:token', async (req, res) => { const { rows } = await query('SELECT i.first_name AS "firstName",i.email,i.department,c.name,c.slug FROM invitations i JOIN companies c ON c.id=i.company_id WHERE i.token_hash=$1 AND i.accepted_at IS NULL AND i.expires_at > NOW()', [hashToken(req.params.token)]); const i = rows[0]; if (!i) return res.status(404).json({ message: 'Invitation is invalid or expired' }); res.json({ firstName: i.firstName, email: i.email, department: i.department, company: { name: i.name, slug: i.slug } }); });
-app.post('/api/invitations/:token/accept', async (req, res, next) => { let values; try { values = body(z.object({ password }).strict(), req.body); } catch (error) { return next(error); } const client = await pool.connect(); try { await client.query('BEGIN'); const invitation = (await client.query('SELECT * FROM invitations WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at > NOW() FOR UPDATE', [hashToken(req.params.token)])).rows[0]; if (!invitation) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Invitation is invalid or expired' }); } if (await findUser(invitation.email)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'An account with this email already exists' }); } const company = (await client.query('SELECT id,name,slug,industry,size,active FROM companies WHERE id=$1', [invitation.company_id])).rows[0]; if (!company?.active) { await client.query('ROLLBACK'); return res.status(403).json({ message: 'This company workspace is currently inactive' }); } const user = (await client.query(`INSERT INTO users(company_id,first_name,email,password_hash,role,department) VALUES($1,$2,$3,$4,'employee',$5) RETURNING ${userFields}`, [company.id, invitation.first_name, invitation.email, await bcrypt.hash(values.password, 12), invitation.department])).rows[0]; await client.query('UPDATE invitations SET accepted_at=NOW() WHERE id=$1', [invitation.id]); await client.query('COMMIT'); await recordAuditEvent(company.id, user.id, req, 'invitation.accepted', 'invitation', invitation.id); res.status(201).json({ token: sign(user), user: { ...safeUser(user), companyName: company.name }, company: companyDto(company) }); } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ message: 'Could not accept invitation' }); } finally { client.release(); } });
+app.get('/api/invitations/:token', async (req, res) => {
+  const { rows } = await query(
+    `SELECT i.first_name AS "firstName",i.email,i.department,i.job_title AS "jobTitle",
+       i.employment_type AS "employmentType",i.hire_date::text AS "hireDate",i.team,
+       i.manager_id AS "managerId",c.name,c.slug
+     FROM invitations i JOIN companies c ON c.id=i.company_id
+     WHERE i.token_hash=$1 AND i.accepted_at IS NULL AND i.expires_at > NOW()`,
+    [hashToken(req.params.token)]
+  );
+  const invitation = rows[0];
+  if (!invitation) return res.status(404).json({ message: 'Invitation is invalid or expired' });
+  res.json({
+    firstName: invitation.firstName,
+    email: invitation.email,
+    department: invitation.department,
+    jobTitle: invitation.jobTitle || '',
+    employmentType: invitation.employmentType || 'unspecified',
+    hireDate: invitation.hireDate || null,
+    team: invitation.team || 'General',
+    managerId: invitation.managerId || null,
+    company: { name: invitation.name, slug: invitation.slug }
+  });
+});
+app.post('/api/invitations/:token/accept', async (req, res, next) => {
+  let values;
+  try {
+    values = body(z.object({ password }).strict(), req.body);
+  } catch (error) {
+    return next(error);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const invitation = (await client.query(
+      'SELECT * FROM invitations WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at > NOW() FOR UPDATE',
+      [hashToken(req.params.token)]
+    )).rows[0];
+    if (!invitation) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Invitation is invalid or expired' });
+    }
+    if (await findUser(invitation.email)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'An account with this email already exists' });
+    }
+    const company = (await client.query(
+      'SELECT id,name,slug,industry,size,active FROM companies WHERE id=$1',
+      [invitation.company_id]
+    )).rows[0];
+    if (!company?.active) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'This company workspace is currently inactive' });
+    }
+    const user = (await client.query(
+      `INSERT INTO users(company_id,first_name,email,password_hash,role,department,job_title,employment_type,hire_date,team,manager_id)
+       VALUES($1,$2,$3,$4,'employee',$5,$6,$7,$8,$9,$10) RETURNING ${userFields}`,
+      [
+        company.id,
+        invitation.first_name,
+        invitation.email,
+        await bcrypt.hash(values.password, 12),
+        invitation.department,
+        invitation.job_title || '',
+        invitation.employment_type || 'unspecified',
+        invitation.hire_date || null,
+        invitation.team || 'General',
+        invitation.manager_id || null
+      ]
+    )).rows[0];
+    await client.query('UPDATE invitations SET accepted_at=NOW() WHERE id=$1', [invitation.id]);
+    await client.query('COMMIT');
+    await recordAuditEvent(company.id, user.id, req, 'invitation.accepted', 'invitation', invitation.id);
+    res.status(201).json({
+      token: sign(user),
+      user: { ...safeUser(user), companyName: company.name },
+      company: companyDto(company)
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error(error);
+    res.status(500).json({ message: 'Could not accept invitation' });
+  } finally {
+    client.release();
+  }
+});
 
 app.get('/api/notifications', auth, async (req, res, next) => {
   try {

@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
-import { FaArrowsRotate, FaCopy, FaFileArrowDown, FaUserGroup, FaPenToSquare, FaClipboardCheck } from 'react-icons/fa6';
+import { FaArrowsRotate, FaCopy, FaFileArrowDown, FaUserGroup, FaPenToSquare, FaClipboardCheck, FaSitemap } from 'react-icons/fa6';
 import { createEmployeeOnboardingApi, getInvitationsApi, resendInvitationApi, revokeInvitationApi, updateEmployeeApi, updateEmployeeStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { HelpIcon } from './Tooltip';
@@ -11,6 +11,38 @@ const statusClass = status => ({
   expired: 'bg-slate-100 text-slate-600'
 }[status] || 'bg-slate-100 text-slate-600');
 
+function OrgNode({ employee, childrenByManager, activeEmployees, path = [] }) {
+  if (path.includes(employee.id)) {
+    return <p role="alert" className="text-xs text-rose-700">Reporting cycle detected. Update the reporting line.</p>;
+  }
+  const descendants = childrenByManager.get(employee.id) || [];
+  return (
+    <li className="mt-3 list-none">
+      <article className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <p className="text-xs font-bold text-slate-900">{employee.firstName}</p>
+        <p className="mt-0.5 text-[10px] text-slate-500">{employee.jobTitle || employee.department}</p>
+        <p className="mt-1 text-[10px] font-semibold text-indigo-700">{employee.team || 'General'} team</p>
+      </article>
+      {descendants.length > 0 && (
+        <ul className="ml-4 border-l border-slate-200 pl-3">
+          {descendants.map(report => (
+            <OrgNode
+              key={report.id}
+              employee={report}
+              childrenByManager={childrenByManager}
+              activeEmployees={activeEmployees}
+              path={[...path, employee.id]}
+            />
+          ))}
+        </ul>
+      )}
+      {!activeEmployees.has(employee.managerId) && employee.managerId && (
+        <p className="ml-4 mt-1 text-[10px] text-slate-400">Reports to an inactive or unavailable manager</p>
+      )}
+    </li>
+  );
+}
+
 export default function TeamManagement() {
   const teamReportRef = React.useRef(null);
   const { userData, refresh } = useContext(AuthContext);
@@ -20,7 +52,9 @@ export default function TeamManagement() {
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [editId, setEditId] = useState(null);
-  const [editForm, setEditForm] = useState({ firstName: '', department: '' });
+  const [editForm, setEditForm] = useState({ firstName: '', department: '', team: 'General', managerId: null });
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [showOrgChart, setShowOrgChart] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
   const [freshLinks, setFreshLinks] = useState({});
 
@@ -46,7 +80,15 @@ export default function TeamManagement() {
 
   const startEdit = employee => {
     setEditId(employee.id);
-    setEditForm({ firstName: employee.firstName, department: employee.department });
+    setEditForm({
+      firstName: employee.firstName,
+      department: employee.department,
+      jobTitle: employee.jobTitle || '',
+      employmentType: employee.employmentType || 'unspecified',
+      hireDate: employee.hireDate || '',
+      team: employee.team || 'General',
+      managerId: employee.managerId || ''
+    });
     setEmployeeError('');
     setMessage('');
   };
@@ -56,7 +98,14 @@ export default function TeamManagement() {
     setBusyId(editId);
     setEmployeeError('');
     try {
-      await updateEmployeeApi(editId, editForm);
+      const currentEmployee = userData.find(employee => employee.id === editId);
+      const payload = { ...editForm };
+      if (String(editForm.managerId || '') === String(currentEmployee?.managerId || '')) {
+        delete payload.managerId;
+      } else {
+        payload.managerId = editForm.managerId === '' ? null : Number(editForm.managerId);
+      }
+      await updateEmployeeApi(editId, payload);
       setEditId(null);
       setMessage('Employee details updated.');
       try {
@@ -163,12 +212,17 @@ export default function TeamManagement() {
 
   const exportCsv = () => {
     if (!userData?.length) return;
-    const headers = ['ID', 'Name', 'Email', 'Department', 'Role', 'Status', 'Open Tasks', 'Completed Tasks'];
+    const headers = ['ID', 'Name', 'Email', 'Department', 'Team', 'Manager', 'Job Title', 'Employment Type', 'Hire Date', 'Role', 'Status', 'Open Tasks', 'Completed Tasks'];
     const rows = userData.map(e => [
       e.id,
       e.firstName,
       e.email,
       e.department || 'General',
+      e.team || 'General',
+      userData.find(manager => manager.id === e.managerId)?.firstName || '',
+      e.jobTitle || '',
+      e.employmentType || 'unspecified',
+      e.hireDate || '',
       e.role || 'employee',
       e.active ? 'Active' : 'Inactive',
       (e.taskCounts?.newTask || 0) + (e.taskCounts?.active || 0),
@@ -185,6 +239,22 @@ export default function TeamManagement() {
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  const activeEmployees = (userData || []).filter(employee => employee.active);
+  const activeEmployeeIds = new Set(activeEmployees.map(employee => employee.id));
+  const childrenByManager = new Map();
+  activeEmployees.forEach(employee => {
+    if (!activeEmployeeIds.has(employee.managerId)) return;
+    const reports = childrenByManager.get(employee.managerId) || [];
+    reports.push(employee);
+    childrenByManager.set(employee.managerId, reports);
+  });
+  const orgRoots = activeEmployees.filter(employee => !activeEmployeeIds.has(employee.managerId));
+  const chartRoots = orgRoots.length ? orgRoots : activeEmployees;
+  const teams = [...new Set((userData || []).map(employee => employee.team || 'General'))].sort();
+  const filteredEmployees = (userData || []).filter(employee =>
+    teamFilter === 'all' || (employee.team || 'General') === teamFilter
+  );
 
   return (
     <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm">
@@ -230,31 +300,68 @@ export default function TeamManagement() {
 
       {/* Team Members Table */}
       <div ref={teamReportRef} className="p-5 sm:p-6">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-            Team Members <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">{userData?.length || 0}</span>
-          </h3>
-          <PdfExportButton targetRef={teamReportRef} title="Export roster PDF" />
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+              Team Members <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">{userData?.length || 0}</span>
+            </h3>
+            <button type="button" onClick={() => setShowOrgChart(value => !value)} aria-pressed={showOrgChart} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-50">
+              <FaSitemap aria-hidden="true" />
+              {showOrgChart ? 'Show directory' : 'Org chart'}
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            {!showOrgChart && (
+              <label className="text-[10px] font-semibold text-slate-500">
+                Team
+                <select value={teamFilter} onChange={event => setTeamFilter(event.target.value)} aria-label="Filter employees by team" className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-700">
+                  <option value="all">All teams</option>
+                  {teams.map(team => <option key={team} value={team}>{team}</option>)}
+                </select>
+              </label>
+            )}
+            <PdfExportButton targetRef={teamReportRef} title="Export roster PDF" />
+          </div>
         </div>
 
-        {!userData?.length ? (
+        {showOrgChart ? (
+          activeEmployees.length ? (
+            <div className="overflow-x-auto rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+              <ul className="min-w-max">
+                {chartRoots.map(employee => (
+                  <OrgNode
+                    key={employee.id}
+                    employee={employee}
+                    childrenByManager={childrenByManager}
+                    activeEmployees={activeEmployeeIds}
+                  />
+                ))}
+              </ul>
+            </div>
+          ) : <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">No active employees to show in the org chart.</p>
+        ) : !userData?.length ? (
           <p className="mt-3 rounded-2xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-500">
             No employees have joined yet. Invite a teammate to get started.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-slate-100">
-            <table className="min-w-[620px] w-full text-left text-xs">
+            <table className="min-w-[1320px] w-full text-left text-xs">
               <thead className="bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
                 <tr>
                   <th scope="col" className="px-4 py-3">Employee</th>
                   <th scope="col" className="px-4 py-3">Department</th>
+                  <th scope="col" className="px-4 py-3">Team</th>
+                  <th scope="col" className="px-4 py-3">Reports To</th>
+                  <th scope="col" className="px-4 py-3">Job Title</th>
+                  <th scope="col" className="px-4 py-3">Employment Type</th>
+                  <th scope="col" className="px-4 py-3">Hire Date</th>
                   <th scope="col" className="px-4 py-3 text-center">Open Tasks</th>
                   <th scope="col" className="px-4 py-3 text-center">Status</th>
                   <th scope="col" className="print-export-control px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {userData.map(employee => {
+                {filteredEmployees.map(employee => {
                   const initial = employee.firstName?.slice(0, 1).toUpperCase() || 'U';
                   const openCount = (employee.taskCounts?.newTask || 0) + (employee.taskCounts?.active || 0);
                   return (
@@ -304,6 +411,76 @@ export default function TeamManagement() {
                             {employee.department || 'General'}
                           </span>
                         )}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {editId === employee.id ? (
+                          <input form={`edit-employee-${employee.id}`} aria-label="Team" required minLength={2} maxLength={80} value={editForm.team} onChange={event => setEditForm(current => ({ ...current, team: event.target.value }))} className="w-36 rounded-lg border border-slate-200 p-1.5 text-xs text-slate-900" />
+                        ) : <span className="inline-flex rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{employee.team || 'General'}</span>}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {editId === employee.id ? (
+                          <select
+                            form={`edit-employee-${employee.id}`}
+                            aria-label="Reports to"
+                            value={editForm.managerId}
+                            onChange={event => setEditForm(current => ({ ...current, managerId: event.target.value ? Number(event.target.value) : null }))}
+                            className="w-40 rounded-lg border border-slate-200 p-1.5 text-xs text-slate-900"
+                          >
+                            <option value="">No manager</option>
+                            {activeEmployees.filter(manager => manager.id !== employee.id).map(manager => (
+                              <option key={manager.id} value={manager.id}>{manager.firstName}</option>
+                            ))}
+                            {employee.managerId && !activeEmployeeIds.has(employee.managerId) && (
+                              <option value={employee.managerId}>
+                                {userData.find(manager => manager.id === employee.managerId)?.firstName || 'Former employee'} (inactive)
+                              </option>
+                            )}
+                          </select>
+                        ) : employee.managerId ? (
+                          <span>{userData.find(manager => manager.id === employee.managerId)?.firstName || 'Unavailable manager'}</span>
+                        ) : <span className="text-slate-400">No manager</span>}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {editId === employee.id ? (
+                          <input
+                            form={`edit-employee-${employee.id}`}
+                            aria-label="Job title"
+                            value={editForm.jobTitle}
+                            onChange={event => setEditForm(current => ({ ...current, jobTitle: event.target.value }))}
+                            maxLength={120}
+                            className="w-40 rounded-lg border border-slate-200 p-1.5 text-xs text-slate-900"
+                          />
+                        ) : employee.jobTitle || <span className="text-slate-400">Not set</span>}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {editId === employee.id ? (
+                          <select
+                            form={`edit-employee-${employee.id}`}
+                            aria-label="Employment type"
+                            value={editForm.employmentType}
+                            onChange={event => setEditForm(current => ({ ...current, employmentType: event.target.value }))}
+                            className="w-36 rounded-lg border border-slate-200 p-1.5 text-xs text-slate-900"
+                          >
+                            <option value="unspecified">Unspecified</option>
+                            <option value="full_time">Full-time</option>
+                            <option value="part_time">Part-time</option>
+                            <option value="contractor">Contractor</option>
+                            <option value="temporary">Temporary</option>
+                            <option value="intern">Intern</option>
+                          </select>
+                        ) : <span className="capitalize">{(employee.employmentType || 'unspecified').replace('_', ' ')}</span>}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {editId === employee.id ? (
+                          <input
+                            form={`edit-employee-${employee.id}`}
+                            aria-label="Hire date"
+                            type="date"
+                            value={editForm.hireDate}
+                            onChange={event => setEditForm(current => ({ ...current, hireDate: event.target.value }))}
+                            className="w-36 rounded-lg border border-slate-200 p-1.5 text-xs text-slate-900"
+                          />
+                        ) : employee.hireDate || <span className="text-slate-400">Not set</span>}
                       </td>
                       <td className="px-4 py-3.5 text-center font-semibold text-slate-700">
                         {openCount}
@@ -399,8 +576,17 @@ export default function TeamManagement() {
                       {invitation.firstName} <span className="font-normal text-slate-500">({invitation.email})</span>
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-400">
-                      {invitation.department} · Expires {new Date(invitation.expiresAt).toLocaleDateString()}
+                      {invitation.department} · {invitation.team || 'General'} team
+                      {invitation.managerId ? ` · Reports to ${userData.find(manager => manager.id === invitation.managerId)?.firstName || 'assigned manager'}` : ''}
+                      {' · '}Expires {new Date(invitation.expiresAt).toLocaleDateString()}
                     </p>
+                    {(invitation.jobTitle || (invitation.employmentType && invitation.employmentType !== 'unspecified') || invitation.hireDate) && (
+                      <p className="mt-0.5 text-[10px] text-slate-500">
+                        {[invitation.jobTitle, invitation.employmentType?.replace('_', ' '), invitation.hireDate]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize ${statusClass(invitation.status)}`}>

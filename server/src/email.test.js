@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail, sendTaskUpdateEmail } from './email.js';
+import {
+  sendInvitationEmail,
+  sendLeaveDecisionEmail,
+  sendLeaveRequestEmail,
+  sendPasswordResetEmail,
+  sendTaskAssignedEmail,
+  sendTaskUpdateEmail
+} from './email.js';
 
 const emailOptions = {
   apiKey: 'test-api-key',
@@ -160,6 +167,66 @@ describe('sendTaskUpdateEmail', () => {
       to: [{ name: 'Alex', email: 'employee@example.com' }],
       subject,
       textContent: expect.stringContaining(expectedDetail)
+    });
+  });
+
+  describe('leave request emails', () => {
+    const leave = {
+      startDate: '2026-12-10',
+      endDate: '2026-12-12',
+      leaveType: 'sick',
+      reason: 'Medical leave',
+      status: 'pending'
+    };
+
+    it('emails workspace admins when an employee requests leave', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+
+      await sendLeaveRequestEmail({
+        ...emailOptions,
+        employeeName: 'Alex',
+        leave,
+        fetchImpl
+      });
+
+      const [, options] = fetchImpl.mock.calls[0];
+      expect(JSON.parse(options.body)).toMatchObject({
+        to: [{ name: 'Alex', email: 'employee@example.com' }],
+        subject: 'Leave request from Alex',
+        textContent: expect.stringContaining('Dates: 2026-12-10 through 2026-12-12')
+      });
+      expect(JSON.parse(options.body).textContent).toContain('Reason: Medical leave');
+    });
+
+    it('emails the employee after approval, including the manager note', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+
+      await sendLeaveDecisionEmail({
+        ...emailOptions,
+        reviewerName: 'Manager',
+        leave: { ...leave, status: 'approved', reviewNote: 'Please coordinate coverage.' },
+        fetchImpl
+      });
+
+      const [, options] = fetchImpl.mock.calls[0];
+      expect(JSON.parse(options.body)).toMatchObject({
+        to: [{ name: 'Alex', email: 'employee@example.com' }],
+        subject: 'Your leave request was approved',
+        textContent: expect.stringContaining('Manager approved your leave request in Example Co.')
+      });
+      expect(JSON.parse(options.body).textContent).toContain('Manager note: Please coordinate coverage.');
+    });
+
+    it('refuses to send an approval email for unsupported decisions', async () => {
+      const fetchImpl = vi.fn();
+
+      await expect(sendLeaveDecisionEmail({
+        ...emailOptions,
+        reviewerName: 'Manager',
+        leave: { ...leave, status: 'rejected' },
+        fetchImpl
+      })).rejects.toThrow('Unsupported leave decision email status');
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
 

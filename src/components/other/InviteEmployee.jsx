@@ -1,9 +1,21 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import { FaArrowRight, FaCheck, FaCopy, FaEnvelope, FaUserPlus } from 'react-icons/fa6';
 import { createInvitationApi } from '../../api';
+import { AuthContext } from '../../context/AuthProvider';
 
 export default function InviteEmployee() {
-  const [form, setForm] = useState({ firstName: '', email: '', department: 'General' });
+  const emptyForm = () => ({
+    firstName: '',
+    email: '',
+    department: 'General',
+    jobTitle: '',
+    employmentType: 'unspecified',
+    hireDate: '',
+    team: 'General',
+    managerId: ''
+  });
+  const { userData } = useContext(AuthContext);
+  const [form, setForm] = useState(emptyForm);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -14,9 +26,13 @@ export default function InviteEmployee() {
   const submit = async e => {
     e.preventDefault(); setBusy(true); setError(''); setResult(null); setCopyMessage('');
     try { 
-      const data = await createInvitationApi(form); 
+      const data = await createInvitationApi({
+        ...form,
+        hireDate: form.hireDate || null,
+        managerId: form.managerId ? Number(form.managerId) : null
+      });
       setResult(data); 
-      setForm({ firstName: '', email: '', department: 'General' }); 
+      setForm(emptyForm());
       window.dispatchEvent(new Event('ems:invitations-updated')); 
     }
     catch (err) { setError(err.message); }
@@ -156,6 +172,77 @@ export default function InviteEmployee() {
             value={form.department} 
             onChange={update} 
             className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" 
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Team</label>
+          <input
+            name="team"
+            required
+            minLength={2}
+            maxLength={80}
+            aria-label="Team"
+            placeholder="e.g. Platform"
+            value={form.team}
+            onChange={update}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Reports To <span className="font-normal text-slate-400">(optional)</span></label>
+          <select
+            name="managerId"
+            value={form.managerId}
+            onChange={update}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+          >
+            <option value="">No manager assigned</option>
+            {(userData || []).filter(employee => employee.active).map(employee => (
+              <option key={employee.id} value={employee.id}>{employee.firstName} · {employee.jobTitle || employee.team || employee.department}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Job Title <span className="font-normal text-slate-400">(optional)</span></label>
+          <input
+            name="jobTitle"
+            maxLength={120}
+            aria-label="Job title"
+            placeholder="e.g. Product Designer"
+            value={form.jobTitle}
+            onChange={update}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Employment Type</label>
+          <select
+            name="employmentType"
+            value={form.employmentType}
+            onChange={update}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+          >
+            <option value="unspecified">Unspecified</option>
+            <option value="full_time">Full-time</option>
+            <option value="part_time">Part-time</option>
+            <option value="contractor">Contractor</option>
+            <option value="temporary">Temporary</option>
+            <option value="intern">Intern</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Hire Date <span className="font-normal text-slate-400">(optional)</span></label>
+          <input
+            name="hireDate"
+            type="date"
+            value={form.hireDate}
+            onChange={update}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
           />
         </div>
 

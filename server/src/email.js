@@ -194,3 +194,74 @@ export async function sendTaskUpdateEmail({
     }
   });
 }
+
+export async function sendLeaveRequestEmail({
+  apiKey,
+  senderEmail,
+  senderName,
+  recipientEmail,
+  recipientName,
+  companyName,
+  employeeName,
+  leave,
+  fetchImpl = fetch
+}) {
+  return sendBrevoEmail({
+    apiKey,
+    senderEmail,
+    senderName,
+    recipientEmail,
+    recipientName,
+    fetchImpl,
+    payload: {
+      to: [{ name: recipientName, email: recipientEmail }],
+      subject: `Leave request from ${employeeName}`,
+      textContent: [
+        `Hi ${recipientName},`,
+        '',
+        `${employeeName} submitted a leave request for ${companyName}.`,
+        `Type: ${leave.leaveType}`,
+        `Dates: ${leave.startDate} through ${leave.endDate}`,
+        `Reason: ${leave.reason}`,
+        '',
+        'Sign in to EmployeeMS to review this request.'
+      ].join('\n')
+    }
+  });
+}
+
+export async function sendLeaveDecisionEmail({
+  apiKey,
+  senderEmail,
+  senderName,
+  recipientEmail,
+  recipientName,
+  companyName,
+  leave,
+  reviewerName,
+  fetchImpl = fetch
+}) {
+  if (leave.status !== 'approved') throw new Error('Unsupported leave decision email status');
+  return sendBrevoEmail({
+    apiKey,
+    senderEmail,
+    senderName,
+    recipientEmail,
+    recipientName,
+    fetchImpl,
+    payload: {
+      to: [{ name: recipientName, email: recipientEmail }],
+      subject: 'Your leave request was approved',
+      textContent: [
+        `Hi ${recipientName},`,
+        '',
+        `${reviewerName} approved your leave request in ${companyName}.`,
+        `Type: ${leave.leaveType}`,
+        `Dates: ${leave.startDate} through ${leave.endDate}`,
+        ...(leave.reviewNote ? [`Manager note: ${leave.reviewNote}`] : []),
+        '',
+        'Sign in to EmployeeMS to review your leave request.'
+      ].join('\n')
+    }
+  });
+}
