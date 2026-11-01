@@ -51,9 +51,15 @@ export const updateEmployeeApi = (id, payload) => api(`/employees/${id}`, { meth
 export const updateEmployeeStatusApi = (id, active) => api(`/employees/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) });
 
 export const createInvitationApi = (payload) => api('/invitations', {method:'POST', body:JSON.stringify(payload)});
+export const createBulkInvitationsApi = employees => api('/invitations/bulk', { method: 'POST', body: JSON.stringify({ employees }) });
 export const getInvitationApi = (token) => api(`/invitations/${encodeURIComponent(token)}`);
 export const acceptInvitationApi = (token, password) => api(`/invitations/${encodeURIComponent(token)}/accept`, {method:'POST', body:JSON.stringify({password})});
 export const getInvitationsApi = () => api('/invitations');
+export const getAuditEventsApi = () => api('/audit-events');
+export const getLeaveRequestsApi = () => api('/leave-requests');
+export const createLeaveRequestApi = payload => api('/leave-requests', { method: 'POST', body: JSON.stringify(payload) });
+export const reviewLeaveRequestApi = (id, payload) => api(`/leave-requests/${id}/review`, { method: 'PATCH', body: JSON.stringify(payload) });
+export const cancelLeaveRequestApi = id => api(`/leave-requests/${id}`, { method: 'DELETE', body: '{}' });
 export const resendInvitationApi = id => api(`/invitations/${id}/resend`, { method: 'POST' });
 export const revokeInvitationApi = id => api(`/invitations/${id}`, { method: 'DELETE' });
 export const getNotificationsApi = () => api('/notifications');

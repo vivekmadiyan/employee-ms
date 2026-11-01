@@ -8,13 +8,14 @@
   }
 
   html {
-    font-family: "DM Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: "Inter", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     text-rendering: optimizeLegibility;
     scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-neutral-100 text-slate-700;
+    background-color: #f8fafc;
+    color: #1e293b;
     min-width: 320px;
     margin: 0;
     font-size: 14px;
@@ -23,26 +24,42 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
-    text-wrap: balance;
+    font-family: "Plus Jakarta Sans", "Inter", sans-serif;
+    letter-spacing: -0.025em;
   }
 
-  p {
-    text-wrap: pretty;
+  button, input, select, textarea {
+    font-family: inherit;
   }
+}
 
-  button,
-  input,
-  select,
-  textarea {
-    font: inherit;
-  }
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
 
-  button {
-    -webkit-tap-highlight-color: transparent;
-  }
+/* Glassmorphism helpers */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
 
-  ::selection {
-    color: #24204f;
-    background: #dcd9ff;
-  }
+.glass-panel-dark {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(51, 65, 85, 0.6);
 }

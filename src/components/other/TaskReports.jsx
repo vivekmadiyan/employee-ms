@@ -8,39 +8,41 @@ const localDate = date => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
 const defaultRange = () => {
   const to = new Date();
   const from = new Date(to);
   from.setDate(from.getDate() - 29);
   return { from: localDate(from), to: localDate(to) };
 };
+
 const csvCell = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
 const statusNames = { new: 'New', active: 'In progress', completed: 'Completed', failed: 'Needs attention' };
 const priorityNames = { high: 'High', medium: 'Medium', low: 'Low' };
 
 function Breakdown({ title, rows, labelFor, total, tone = 'bg-indigo-500' }) {
   return (
-    <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-      <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+    <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs">
+      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">{title}</h3>
       {rows.length ? (
-        <ul className="mt-4 space-y-4">
+        <ul className="mt-4 space-y-3.5">
           {rows.map((row, index) => {
             const count = Number(row.count);
-            const width = total ? Math.max((count / total) * 100, count ? 3 : 0) : 0;
+            const width = total ? Math.max((count / total) * 100, count ? 4 : 0) : 0;
             return (
               <li key={`${labelFor(row)}-${index}`}>
                 <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
-                  <span className="truncate font-medium text-slate-600">{labelFor(row)}</span>
-                  <span className="shrink-0 font-bold tabular-nums text-slate-800">{count}</span>
+                  <span className="truncate font-semibold text-slate-700">{labelFor(row)}</span>
+                  <span className="shrink-0 font-bold tabular-nums text-slate-900">{count}</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                  <div className={`h-full rounded-full ${tone}`} style={{ width: `${width}%` }} />
+                  <div className={`h-full rounded-full transition-all duration-500 ${tone}`} style={{ width: `${width}%` }} />
                 </div>
               </li>
             );
           })}
         </ul>
-      ) : <p className="mt-4 text-xs text-slate-500">No task data in this period.</p>}
+      ) : <p className="mt-4 text-xs text-slate-400">No task data recorded in this period.</p>}
     </section>
   );
 }
@@ -126,82 +128,118 @@ export default function TaskReports() {
 
   return (
     <section className="dashboard-section space-y-4" aria-labelledby="task-reports-heading">
-      <div className="flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-6">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-6">
         <div>
-          <div className="flex items-center gap-2 text-indigo-600">
-            <FaChartColumn aria-hidden="true" />
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em]">Workspace insights</p>
+          <div className="flex items-center gap-1.5 text-indigo-600">
+            <FaChartColumn aria-hidden="true" className="text-xs" />
+            <p className="text-[10px] font-bold uppercase tracking-wider">Analytics & Trends</p>
           </div>
-          <h2 id="task-reports-heading" className="mt-1 text-lg font-bold tracking-tight text-slate-900">Task reports</h2>
-          <p className="mt-1 text-xs text-slate-500">Current task outcomes for tasks created within the selected period.</p>
+          <h2 id="task-reports-heading" className="mt-1 text-base sm:text-lg font-bold tracking-tight text-slate-900">Task Performance Reports</h2>
+          <p className="mt-0.5 text-xs text-slate-500">Outcomes and velocity for deliverables created within the selected date window.</p>
         </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="text-[10px] font-semibold text-slate-500">
-            Created from
-            <input type="date" name="from" value={range.from} max={range.to} onChange={updateRange} className="mt-1 block rounded-lg border border-slate-200 px-2.5 py-2 text-xs text-slate-700" />
+        <div className="flex flex-wrap items-end gap-2.5">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            From
+            <input 
+              type="date" 
+              name="from" 
+              value={range.from} 
+              max={range.to} 
+              onChange={updateRange} 
+              className="mt-1 block rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 shadow-xs focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" 
+            />
           </label>
-          <label className="text-[10px] font-semibold text-slate-500">
-            Created through
-            <input type="date" name="to" value={range.to} min={range.from} onChange={updateRange} className="mt-1 block rounded-lg border border-slate-200 px-2.5 py-2 text-xs text-slate-700" />
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            To
+            <input 
+              type="date" 
+              name="to" 
+              value={range.to} 
+              min={range.from} 
+              onChange={updateRange} 
+              className="mt-1 block rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 shadow-xs focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" 
+            />
           </label>
-          <button type="button" onClick={downloadCsv} disabled={!report || loading} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
-            <FaDownload aria-hidden="true" /> Export CSV
+          <button 
+            type="button" 
+            onClick={downloadCsv} 
+            disabled={!report || loading} 
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FaDownload aria-hidden="true" className="text-xs text-slate-400" /> 
+            <span>Export CSV</span>
           </button>
         </div>
       </div>
 
-      {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
+      {error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
+
       {loading && !report ? (
-        <p role="status" className="rounded-2xl border border-slate-100 bg-white p-8 text-center text-xs text-slate-500">Loading task report…</p>
+        <div role="status" className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-400">
+          <span className="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mb-2" />
+          <p className="text-xs">Compiling reporting insights…</p>
+        </div>
       ) : report && (
-        <>
-          <p className="text-[10px] text-slate-500" aria-live="polite">
-            {loading ? 'Updating report… ' : ''}Showing tasks created {report.range.from} through {report.range.to}. Archived tasks are excluded.
+        <div className="space-y-4 animate-fade-in">
+          <p className="text-[11px] text-slate-500" aria-live="polite">
+            {loading ? 'Updating report… ' : ''}Analyzing tasks created {report.range.from} through {report.range.to}.
           </p>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
             {[
-              ['Tasks in period', summary.totalTasks, 'bg-indigo-50 text-indigo-700'],
-              ['Completed', `${completionRate}%`, 'bg-emerald-50 text-emerald-700'],
-              ['In progress', summary.activeTasks, 'bg-sky-50 text-sky-700'],
-              ['Overdue open', summary.overdueTasks, summary.overdueTasks ? 'bg-rose-50 text-rose-700' : 'bg-slate-50 text-slate-600']
-            ].map(([label, value, style]) => (
-              <article key={label} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              ['Tasks Created', summary.totalTasks, 'text-indigo-600', 'bg-indigo-50/70 border-indigo-100'],
+              ['Completion Rate', `${completionRate}%`, 'text-emerald-600', 'bg-emerald-50/70 border-emerald-100'],
+              ['In Progress', summary.activeTasks, 'text-violet-600', 'bg-violet-50/70 border-violet-100'],
+              ['Overdue Open', summary.overdueTasks, summary.overdueTasks ? 'text-rose-600' : 'text-slate-700', summary.overdueTasks ? 'bg-rose-50/70 border-rose-100' : 'bg-slate-50/70 border-slate-200']
+            ].map(([label, value, textColor, cardBg]) => (
+              <article key={label} className={`rounded-2xl border p-4 sm:p-5 shadow-xs ${cardBg}`}>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
-                <p className={`mt-3 inline-flex rounded-xl px-3 py-1.5 text-2xl font-bold tabular-nums ${style}`}>{value}</p>
+                <p className={`mt-2 text-2xl sm:text-3xl font-extrabold tracking-tight tabular-nums ${textColor}`}>{value}</p>
               </article>
             ))}
           </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
-            <Breakdown title="Task status" rows={report.statusBreakdown} labelFor={row => statusNames[row.status] || row.status} total={summary.totalTasks} tone="bg-indigo-500" />
-            <Breakdown title="Priority mix" rows={report.priorityBreakdown} labelFor={row => priorityNames[row.priority] || row.priority} total={summary.totalTasks} tone="bg-amber-500" />
-            <Breakdown title="Top categories" rows={report.categoryBreakdown} labelFor={row => row.category} total={summary.totalTasks} tone="bg-cyan-500" />
-            <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <Breakdown title="Status Breakdown" rows={report.statusBreakdown} labelFor={row => statusNames[row.status] || row.status} total={summary.totalTasks} tone="bg-indigo-600" />
+            <Breakdown title="Priority Distribution" rows={report.priorityBreakdown} labelFor={row => priorityNames[row.priority] || row.priority} total={summary.totalTasks} tone="bg-amber-500" />
+            <Breakdown title="Deliverable Categories" rows={report.categoryBreakdown} labelFor={row => row.category} total={summary.totalTasks} tone="bg-sky-500" />
+            
+            <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xs">
               <div className="border-b border-slate-100 p-5">
-                <h3 className="text-sm font-bold text-slate-800">Team workload</h3>
-                <p className="mt-1 text-[10px] text-slate-500">Tasks created in this period by current assignee.</p>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Team Workload Distribution</h3>
+                <p className="mt-0.5 text-[11px] text-slate-400">Assigned task distribution during this period.</p>
               </div>
               {report.assigneeBreakdown.length ? (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[440px] text-left text-xs">
-                    <thead className="bg-slate-50 text-[9px] font-bold uppercase tracking-wider text-slate-500">
-                      <tr><th scope="col" className="px-4 py-3">Employee</th><th scope="col" className="px-3 py-3">Assigned</th><th scope="col" className="px-3 py-3">Completed</th><th scope="col" className="px-4 py-3">Overdue</th></tr>
+                    <thead className="bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
+                      <tr>
+                        <th scope="col" className="px-4 py-2.5">Employee</th>
+                        <th scope="col" className="px-3 py-2.5 text-center">Assigned</th>
+                        <th scope="col" className="px-3 py-2.5 text-center">Completed</th>
+                        <th scope="col" className="px-4 py-2.5 text-center">Overdue</th>
+                      </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 bg-white">
                       {report.assigneeBreakdown.map(row => (
-                        <tr key={row.assigneeId}>
-                          <td className="px-4 py-3 font-semibold text-slate-700">{row.assigneeName}{!row.active && <span className="ml-1 text-[9px] font-medium text-slate-400">(inactive)</span>}</td>
-                          <td className="px-3 py-3 tabular-nums text-slate-600">{row.totalTasks}</td>
-                          <td className="px-3 py-3 tabular-nums text-emerald-700">{row.completedTasks}</td>
-                          <td className={`px-4 py-3 tabular-nums ${row.overdueTasks ? 'font-bold text-rose-600' : 'text-slate-600'}`}>{row.overdueTasks}</td>
+                        <tr key={row.assigneeId} className="hover:bg-slate-50/60">
+                          <td className="px-4 py-3 font-semibold text-slate-800">
+                            {row.assigneeName}
+                            {!row.active && <span className="ml-1 text-[10px] font-normal text-slate-400">(inactive)</span>}
+                          </td>
+                          <td className="px-3 py-3 text-center tabular-nums text-slate-700">{row.totalTasks}</td>
+                          <td className="px-3 py-3 text-center tabular-nums font-semibold text-emerald-700">{row.completedTasks}</td>
+                          <td className={`px-4 py-3 text-center tabular-nums ${row.overdueTasks ? 'font-bold text-rose-600' : 'text-slate-500'}`}>
+                            {row.overdueTasks}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              ) : <p className="p-5 text-xs text-slate-500">No assigned tasks in this period.</p>}
+              ) : <p className="p-8 text-center text-xs text-slate-400">No assigned deliverables in this timeframe.</p>}
             </section>
           </div>
-        </>
+        </div>
       )}
     </section>
   );

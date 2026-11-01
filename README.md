@@ -84,6 +84,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/employees` (admin)
 - `PATCH /api/employees/:id` and `PATCH /api/employees/:id/status` (admin)
 - `GET /api/invitations`, `POST /api/invitations/:id/resend`, and `DELETE /api/invitations/:id` (admin)
+- `POST /api/invitations/bulk` (admin; create up to 100 invitations)
 - `GET /api/tasks`
 - `POST /api/tasks` (admin)
 - `PATCH /api/tasks/:id` and `PATCH /api/tasks/:id/archive` (admin)
@@ -92,6 +93,8 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET` and `POST /api/tasks/:id/comments`
 - `GET /api/reports/tasks?from=YYYY-MM-DD&to=YYYY-MM-DD` (admin)
 - `GET /api/notifications` and notification read endpoints
+- `GET /api/audit-events` (admin; latest 100 company-scoped security events)
+- `GET /api/leave-requests`, `POST /api/leave-requests` (employee), `PATCH /api/leave-requests/:id/review` (admin), `DELETE /api/leave-requests/:id` (employee)
 - `GET /api/dashboard/admin` (admin)
 - `GET /api/dashboard/employee`
 - `GET /api/health`
@@ -100,6 +103,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 
 - Admins can search and filter tasks, edit assignment/details, archive and restore tasks individually or in bulk, apply a bulk priority, and review task discussions.
 - Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
+- Admins can invite up to 100 employees from a CSV; each valid row creates a secure invitation without generating or sharing passwords, while invalid and duplicate rows are reported individually.
 - Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream refreshes notifications, dashboards, task lists, team/invitation data, and open discussions across signed-in devices within a few seconds.
 - Users can update their profile and password or request a time-limited password-reset email.
 
@@ -109,6 +113,10 @@ Admins can review task status, priority, category, overdue work, and assignee wo
 
 ## Security notes
 Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected APIs, and employees can only modify tasks assigned to them. For production, use HTTPS, a strong JWT secret, secure cookie-based refresh tokens, rate limiting, request validation, and managed PostgreSQL credentials.
+
+Admins can review a company-scoped audit trail of account, employee, invitation, and task changes. Audit records omit passwords, reset tokens, and invitation tokens; audit storage errors are logged without undoing completed workflows.
+
+Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Admins can review requests for their workspace. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
 
 
 ## Multi-company / SaaS-ready architecture

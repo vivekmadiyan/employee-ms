@@ -43,6 +43,9 @@ Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transacti
 - Test company signup and login, invitation delivery and acceptance, password recovery, account profile/password changes, and sign-out.
 - As an admin, test task search/filter/edit/archive/restore, bulk task actions, comments, and notifications; verify archived tasks do not appear in active dashboards.
 - Check task reports for multiple date ranges, verify status/priority/category and assignee totals, and export a CSV. Confirm archived and other-company tasks are excluded.
+- Test bulk employee CSV invitations with valid, duplicate, malformed, and already-registered addresses; verify each successful invitation expires after 7 days and failures are identified by row.
+- Verify admins can review only their own workspace's security activity, employees cannot access the audit trail, and password/reset/invitation tokens are never recorded.
+- Test employee leave submission, overlap rejection, pending cancellation, admin approval/decline, and live updates; confirm users cannot read or modify another company's requests.
 - Confirm assignment/reassignment, status, comment, and due-date emails reach the expected active task participants. Provider failures should be visible without undoing saved task changes.
 - Keep the authenticated Server-Sent Events stream available through the hosting proxy; it refreshes workspace data and notifications across signed-in devices within a few seconds and reconnects automatically after interruptions. Workspace-change tracking is installed automatically during database initialization; it needs no additional environment variables.
 - Test that an employee can comment on and update only their own tasks, and that deactivation is blocked while they have open work.

@@ -39,12 +39,16 @@ let users;
 let tasks;
 let comments;
 let notifications;
+let auditEvents;
+let leaveRequests;
 let invitations;
 let passwordResets;
 let baseUsers;
 let nextTaskId;
 let nextCommentId;
 let nextInvitationId;
+let nextLeaveId;
+let failAuditWrites;
 
 const result = rows => ({ rows, rowCount: rows.length });
 const userFields = user => ({
@@ -62,6 +66,133 @@ const normalize = sql => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 function installQueryMock() {
   mocks.query.mockImplementation(async (sql, params = []) => {
     const text = normalize(sql);
+    if (text.startsWith('insert into audit_events(')) {
+      if (failAuditWrites) throw new Error('audit storage unavailable');
+      auditEvents.push({
+        id: auditEvents.length + 1,
+        companyId: Number(params[0]),
+        actorId: params[1] == null ? null : Number(params[1]),
+        action: params[2],
+        entityType: params[3],
+        entityId: params[4],
+        details: JSON.parse(params[5]),
+        requestId: params[6],
+        createdAt: new Date().toISOString()
+      });
+      return result([]);
+    }
+    if (text.startsWith('select a.id,a.actor_user_id as "actorid"')) {
+      const visibleEvents = auditEvents
+        .filter(event => event.companyId === Number(params[0]))
+        .sort((left, right) => right.id - left.id)
+        .slice(0, 100)
+        .map(event => ({
+          id: event.id,
+          actorId: event.actorId,
+          actorName: users.find(user => user.id === event.actorId)?.firstName || 'Former user',
+          action: event.action,
+          entityType: event.entityType,
+          entityId: event.entityId,
+          details: event.details,
+          requestId: event.requestId,
+          createdAt: event.createdAt
+        }));
+      return result(visibleEvents);
+    }
+    if (text.startsWith('select id from leave_requests')) {
+      const overlap = leaveRequests.find(leave =>
+        leave.companyId === Number(params[0]) &&
+        leave.userId === Number(params[1]) &&
+        ['pending', 'approved'].includes(leave.status) &&
+        leave.startDate <= params[3] &&
+        leave.endDate >= params[2]
+      );
+      return result(overlap ? [{ id: overlap.id }] : []);
+    }
+    if (text.startsWith('insert into leave_requests(')) {
+      const leave = {
+        id: nextLeaveId++,
+        companyId: Number(params[0]),
+        userId: Number(params[1]),
+        startDate: params[2],
+        endDate: params[3],
+        leaveType: params[4],
+        reason: params[5],
+        status: 'pending',
+        reviewNote: null,
+        reviewedBy: null,
+        reviewedAt: null,
+        createdAt: new Date().toISOString()
+      };
+      leaveRequests.push(leave);
+      return result([{
+        id: leave.id,
+        userId: leave.userId,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        leaveType: leave.leaveType,
+        reason: leave.reason,
+        status: leave.status,
+        createdAt: leave.createdAt
+      }]);
+    }
+    if (text.startsWith('update leave_requests set status=$1')) {
+      const leave = leaveRequests.find(item =>
+        item.id === Number(params[3]) &&
+        item.companyId === Number(params[4]) &&
+        item.status === 'pending'
+      );
+      if (!leave) return result([]);
+      leave.status = params[0];
+      leave.reviewNote = params[1];
+      leave.reviewedBy = Number(params[2]);
+      leave.reviewedAt = new Date().toISOString();
+      return result([{
+        id: leave.id,
+        userId: leave.userId,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        leaveType: leave.leaveType,
+        reason: leave.reason,
+        status: leave.status,
+        reviewNote: leave.reviewNote,
+        reviewedAt: leave.reviewedAt
+      }]);
+    }
+    if (text.startsWith("update leave_requests set status='cancelled'")) {
+      const leave = leaveRequests.find(item =>
+        item.id === Number(params[0]) &&
+        item.companyId === Number(params[1]) &&
+        item.userId === Number(params[2]) &&
+        item.status === 'pending'
+      );
+      if (!leave) return result([]);
+      leave.status = 'cancelled';
+      return result([{ id: leave.id }]);
+    }
+    if (text.startsWith('select l.id,l.user_id as "userid"')) {
+      const filtered = leaveRequests.filter(leave =>
+        leave.companyId === Number(params[0]) &&
+        (params.length === 1 || leave.userId === Number(params[1]))
+      ).sort((left, right) => {
+        if ((left.status === 'pending') !== (right.status === 'pending')) return left.status === 'pending' ? -1 : 1;
+        return right.id - left.id;
+      }).slice(0, 200);
+      return result(filtered.map(leave => ({
+        id: leave.id,
+        userId: leave.userId,
+        employeeName: users.find(user => user.id === leave.userId)?.firstName || 'Former employee',
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        leaveType: leave.leaveType,
+        reason: leave.reason,
+        status: leave.status,
+        reviewNote: leave.reviewNote,
+        reviewedAt: leave.reviewedAt,
+        reviewerName: users.find(user => user.id === leave.reviewedBy)?.firstName || null,
+        createdAt: leave.createdAt
+      })));
+    }
     if (text.startsWith('select count(*)::int as "totaltasks"')) {
       const reportTasks = tasks.filter(task => {
         const createdDate = String(task.createdAt).slice(0, 10);
@@ -451,12 +582,18 @@ beforeEach(() => {
   tasks = [];
   comments = [];
   notifications = [];
+  auditEvents = [];
+  leaveRequests = [];
   invitations = [];
   passwordResets = [];
   nextTaskId = 1;
   nextCommentId = 1;
   nextInvitationId = 1;
+  nextLeaveId = 1;
+  failAuditWrites = false;
   installQueryMock();
+  mocks.sendInvitationEmail.mockReset();
+  mocks.sendInvitationEmail.mockResolvedValue(undefined);
   mocks.sendTaskAssignedEmail.mockReset();
   mocks.sendTaskAssignedEmail.mockResolvedValue(undefined);
   mocks.sendTaskUpdateEmail.mockReset();
@@ -465,9 +602,10 @@ beforeEach(() => {
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
   if (['begin', 'commit', 'rollback'].includes(text)) return result([]);
-  if (text.startsWith('select id,user_id from password_resets')) {
+  if (text.startsWith('select p.id,p.user_id,u.company_id from password_resets')) {
     const reset = passwordResets.find(item => item.tokenHash === params[0] && !item.usedAt);
-    return result(reset ? [{ id: passwordResets.indexOf(reset) + 1, user_id: reset.userId }] : []);
+    const user = reset && users.find(item => item.id === reset.userId);
+    return result(reset && user ? [{ id: passwordResets.indexOf(reset) + 1, user_id: reset.userId, company_id: user.companyId }] : []);
   }
   if (text.startsWith('select * from invitations where token_hash=')) {
     const invitation = invitations.find(item => item.tokenHash === params[0] && !item.acceptedAt && item.expiresAt > new Date());
@@ -745,6 +883,226 @@ describe('authenticated API workflows', () => {
       .expect(403);
   });
 
+  it('bulk-creates secure invitations with per-row validation and duplicate handling', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+
+    const response = await request(app).post('/api/invitations/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({
+        employees: [
+          { row: 2, firstName: '  New Teammate  ', email: 'New.Person@example.test', department: 'Operations' },
+          { row: 3, firstName: 'Duplicate Row', email: 'new.person@example.test', department: 'Operations' },
+          { row: 4, firstName: 'Known User', email: 'employee@example.test', department: 'Support' },
+          { row: 5, firstName: 'Invalid Email', email: 'not-an-email', department: 'Support' },
+          { row: 6, firstName: 'Default Department', email: 'another.person@example.test' }
+        ]
+      })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      totalCount: 5,
+      invitedCount: 2,
+      failedCount: 3,
+      emailSentCount: 2
+    });
+    expect(response.body.results).toMatchObject([
+      { row: 2, email: 'new.person@example.test', status: 'invited', emailStatus: 'sent' },
+      { row: 3, email: 'new.person@example.test', status: 'failed' },
+      { row: 4, email: 'employee@example.test', status: 'failed', error: 'This email already belongs to an account' },
+      { row: 5, status: 'failed' },
+      { row: 6, email: 'another.person@example.test', status: 'invited' }
+    ]);
+    expect(response.body.results[0].inviteUrl).toMatch(/^https:\/\/employee-ms\.test\/invite\/[a-f0-9]{64}$/);
+    expect(invitations).toHaveLength(2);
+    expect(invitations.every(invitation => invitation.companyId === company.id)).toBe(true);
+    expect(mocks.sendInvitationEmail).toHaveBeenCalledTimes(2);
+
+    await request(app).post('/api/invitations/bulk')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ employees: [{ firstName: 'Not Admin', email: 'not-admin@example.test' }] })
+      .expect(403);
+    await request(app).post('/api/invitations/bulk')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ employees: Array.from({ length: 101 }, (_, index) => ({ firstName: `Employee ${index}`, email: `person${index}@example.test` })) })
+      .expect(400);
+  });
+
+  it('keeps audit records private to workspace admins and omits credentials and invitation tokens', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+
+    await request(app).post('/api/invitations')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ firstName: 'New Teammate', email: 'new.person@example.test', department: 'Operations' })
+      .expect(201);
+    await request(app).post('/api/tasks')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({
+        taskTitle: 'Audited task',
+        taskDescription: 'This task should be recorded in the audit trail.',
+        taskDate: '2099-12-31',
+        category: 'Operations',
+        assignedTo: 2,
+        priority: 'high'
+      })
+      .expect(201);
+    auditEvents.push({
+      id: auditEvents.length + 1,
+      companyId: 2,
+      actorId: 99,
+      action: 'employee.access_deactivated',
+      entityType: 'user',
+      entityId: '4',
+      details: {},
+      requestId: 'other-company-request',
+      createdAt: new Date().toISOString()
+    });
+
+    const visible = await request(app).get('/api/audit-events')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .expect(200);
+    expect(visible.body.map(event => event.action)).toEqual([
+      'task.created',
+      'invitation.created'
+    ]);
+    expect(visible.body.every(event => event.actorName === 'Admin')).toBe(true);
+    expect(JSON.stringify(visible.body)).not.toContain('invite/');
+    expect(JSON.stringify(visible.body)).not.toContain('password');
+    await request(app).get('/api/audit-events')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .expect(403);
+    await request(app).get('/api/audit-events').expect(401);
+  });
+
+  it('does not undo a successful task write when audit storage is unavailable', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    failAuditWrites = true;
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await request(app).post('/api/tasks')
+        .set('Authorization', `Bearer ${adminLogin.body.token}`)
+        .send({
+          taskTitle: 'Task survives audit issue',
+          taskDescription: 'The task write should succeed independently.',
+          taskDate: '2099-12-31',
+          category: 'Operations',
+          assignedTo: 2,
+          priority: 'medium'
+        })
+        .expect(201);
+      expect(response.body.taskTitle).toBe('Task survives audit issue');
+      expect(tasks).toHaveLength(1);
+      expect(logError).toHaveBeenCalledWith('Audit event write failed:', expect.objectContaining({
+        action: 'task.created'
+      }));
+    } finally {
+      logError.mockRestore();
+    }
+  });
+
+  it('lets employees request and cancel leave while admins review within their workspace', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const secondEmployeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'second@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+
+    await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ startDate: '2026-12-01', endDate: '2026-12-02', leaveType: 'vacation', reason: 'Family trip' })
+      .expect(403);
+
+    const requested = await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ startDate: '2026-12-01', endDate: '2026-12-02', leaveType: 'vacation', reason: 'Family trip' })
+      .expect(201);
+    expect(requested.body).toMatchObject({
+      userId: 2,
+      employeeName: 'Employee',
+      status: 'pending',
+      leaveType: 'vacation'
+    });
+    await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ startDate: '2026-12-02', endDate: '2026-12-04', leaveType: 'personal', reason: 'Overlapping dates' })
+      .expect(409);
+    await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ startDate: '2026-12-05', endDate: '2026-12-04', leaveType: 'personal', reason: 'Invalid date range' })
+      .expect(400);
+
+    const ownRequests = await request(app).get('/api/leave-requests')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .expect(200);
+    expect(ownRequests.body).toMatchObject([{ id: requested.body.id, employeeName: 'Employee' }]);
+    expect(ownRequests.body).toHaveLength(1);
+    await request(app).delete(`/api/leave-requests/${requested.body.id}`)
+      .set('Authorization', `Bearer ${secondEmployeeLogin.body.token}`)
+      .expect(404);
+    await request(app).delete(`/api/leave-requests/${requested.body.id}`)
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .expect(204);
+
+    const pending = await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ startDate: '2026-12-10', endDate: '2026-12-12', leaveType: 'sick', reason: 'Medical leave' })
+      .expect(201);
+    const adminRequests = await request(app).get('/api/leave-requests')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .expect(200);
+    expect(adminRequests.body).toMatchObject([
+      { id: pending.body.id, employeeName: 'Employee', status: 'pending' },
+      { id: requested.body.id, status: 'cancelled' }
+    ]);
+
+    const reviewed = await request(app).patch(`/api/leave-requests/${pending.body.id}/review`)
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ status: 'approved', reviewNote: 'Approved. Please coordinate coverage.' })
+      .expect(200);
+    expect(reviewed.body).toMatchObject({
+      id: pending.body.id,
+      status: 'approved',
+      reviewNote: 'Approved. Please coordinate coverage.'
+    });
+    await request(app).patch(`/api/leave-requests/${pending.body.id}/review`)
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .send({ status: 'rejected' })
+      .expect(404);
+    await request(app).patch(`/api/leave-requests/${pending.body.id}/review`)
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .send({ status: 'rejected' })
+      .expect(403);
+    expect(auditEvents.map(event => event.action)).toEqual([
+      'leave.requested',
+      'leave.cancelled',
+      'leave.requested',
+      'leave.approved'
+    ]);
+  });
+
   it('rejects unauthorized and cross-employee task access', async () => {
     const employee = await request(app).post('/api/auth/login').send({
       email: 'employee@example.test',
@@ -922,7 +1280,7 @@ describe('password reset API flow', () => {
     const clientQuery = mocks.clientQuery.mockImplementation(async sql => {
       const text = normalize(sql);
       if (text === 'begin' || text === 'rollback') return result([]);
-      if (text.startsWith('select id,user_id from password_resets')) return result([]);
+      if (text.startsWith('select p.id,p.user_id,u.company_id from password_resets')) return result([]);
       throw new Error(`Unexpected transaction SQL in API test: ${text}`);
     });
 

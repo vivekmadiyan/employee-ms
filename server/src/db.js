@@ -24,6 +24,8 @@ export async function initialiseDatabase() {
     CREATE TABLE IF NOT EXISTS password_resets (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, token_hash TEXT NOT NULL UNIQUE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS notifications (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL, type TEXT NOT NULL CHECK (type IN ('assigned', 'status', 'comment', 'due', 'overdue')), message TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE, read_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS task_comments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS audit_events (id BIGSERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT, details JSONB NOT NULL DEFAULT '{}'::jsonb, request_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS leave_requests (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, start_date DATE NOT NULL, end_date DATE NOT NULL, leave_type TEXT NOT NULL CHECK (leave_type IN ('vacation','sick','personal','other')), reason TEXT NOT NULL CHECK (char_length(reason) BETWEEN 2 AND 500), status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled')), reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL, reviewed_at TIMESTAMPTZ, review_note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CHECK (end_date >= start_date));
     CREATE TABLE IF NOT EXISTS workspace_activity (company_id INTEGER PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
     CREATE OR REPLACE FUNCTION bump_workspace_activity() RETURNS trigger AS $$
     DECLARE
@@ -49,6 +51,8 @@ export async function initialiseDatabase() {
     CREATE TRIGGER invitations_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON invitations FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
     DROP TRIGGER IF EXISTS task_comments_workspace_activity ON task_comments;
     CREATE TRIGGER task_comments_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON task_comments FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
+    DROP TRIGGER IF EXISTS leave_requests_workspace_activity ON leave_requests;
+    CREATE TRIGGER leave_requests_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON leave_requests FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
     INSERT INTO workspace_activity(company_id) SELECT id FROM companies ON CONFLICT(company_id) DO NOTHING;
     CREATE INDEX IF NOT EXISTS users_company_id_idx ON users(company_id);
     CREATE INDEX IF NOT EXISTS tasks_company_id_idx ON tasks(company_id);
@@ -57,5 +61,8 @@ export async function initialiseDatabase() {
     CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id);
     CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS task_comments_task_created_idx ON task_comments(task_id, created_at);
+    CREATE INDEX IF NOT EXISTS audit_events_company_created_idx ON audit_events(company_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS leave_requests_company_created_idx ON leave_requests(company_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS leave_requests_user_status_idx ON leave_requests(user_id, status, start_date);
   `);
 }
