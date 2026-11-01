@@ -1,8 +1,9 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
-import { FaArrowsRotate, FaCopy, FaFileArrowDown, FaUserGroup, FaPenToSquare } from 'react-icons/fa6';
-import { getInvitationsApi, resendInvitationApi, revokeInvitationApi, updateEmployeeApi, updateEmployeeStatusApi } from '../../api';
+import { FaArrowsRotate, FaCopy, FaFileArrowDown, FaUserGroup, FaPenToSquare, FaClipboardCheck } from 'react-icons/fa6';
+import { createEmployeeOnboardingApi, getInvitationsApi, resendInvitationApi, revokeInvitationApi, updateEmployeeApi, updateEmployeeStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { HelpIcon } from './Tooltip';
+import PdfExportButton from './PdfExportButton';
 
 const statusClass = status => ({
   pending: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200/50',
@@ -11,6 +12,7 @@ const statusClass = status => ({
 }[status] || 'bg-slate-100 text-slate-600');
 
 export default function TeamManagement() {
+  const teamReportRef = React.useRef(null);
   const { userData, refresh } = useContext(AuthContext);
   const [invitations, setInvitations] = useState([]);
   const [inviteError, setInviteError] = useState('');
@@ -80,6 +82,25 @@ export default function TeamManagement() {
         await refresh();
       } catch (refreshError) {
         setEmployeeError(`Access was updated, but the team list could not refresh: ${refreshError.message}`);
+      }
+    } catch (error) {
+      setEmployeeError(error.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const createOnboarding = async employee => {
+    setBusyId(employee.id);
+    setEmployeeError('');
+    setMessage('');
+    try {
+      const result = await createEmployeeOnboardingApi(employee.id);
+      setMessage(`Created ${result.tasksCreated} onboarding tasks for ${employee.firstName}.`);
+      try {
+        await refresh();
+      } catch (refreshError) {
+        setEmployeeError(`Onboarding tasks were created, but the team list could not refresh: ${refreshError.message}`);
       }
     } catch (error) {
       setEmployeeError(error.message);
@@ -208,11 +229,12 @@ export default function TeamManagement() {
       {copyMessage && <p role="status" className="mx-5 mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800 sm:mx-6">{copyMessage}</p>}
 
       {/* Team Members Table */}
-      <div className="p-5 sm:p-6">
+      <div ref={teamReportRef} className="p-5 sm:p-6">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
             Team Members <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">{userData?.length || 0}</span>
           </h3>
+          <PdfExportButton targetRef={teamReportRef} title="Export roster PDF" />
         </div>
 
         {!userData?.length ? (
@@ -228,7 +250,7 @@ export default function TeamManagement() {
                   <th scope="col" className="px-4 py-3">Department</th>
                   <th scope="col" className="px-4 py-3 text-center">Open Tasks</th>
                   <th scope="col" className="px-4 py-3 text-center">Status</th>
-                  <th scope="col" className="px-4 py-3 text-right">Actions</th>
+                  <th scope="col" className="print-export-control px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
@@ -293,8 +315,23 @@ export default function TeamManagement() {
                           {employee.active ? 'Active' : 'Inactive'}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 text-right">
+                      <td className="print-export-control px-4 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-2.5">
+                          {employee.active && !employee.onboardingCreated && (
+                            <button
+                              type="button"
+                              onClick={() => createOnboarding(employee)}
+                              disabled={busyId === employee.id}
+                              aria-label={`Create onboarding checklist for ${employee.firstName}`}
+                              className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                            >
+                              <FaClipboardCheck aria-hidden="true" className="text-[10px]" />
+                              <span>Onboard</span>
+                            </button>
+                          )}
+                          {employee.onboardingCreated && (
+                            <span className="text-[10px] font-semibold text-emerald-700">Checklist created</span>
+                          )}
                           {editId === employee.id ? (
                             <>
                               <button 

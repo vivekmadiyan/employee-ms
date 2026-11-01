@@ -7,6 +7,8 @@ const Login = ({ onBack, onForgotPassword }) => {
   const { setSession } = useContext(AuthContext);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -16,8 +18,12 @@ const Login = ({ onBack, onForgotPassword }) => {
     setBusy(true);
 
     try {
-      const data = await loginApi(email, password);
-      setSession(data.user, data.token);
+      const data = await loginApi(email, password, mfaRequired ? mfaCode : undefined);
+      if (data.mfaRequired) {
+        setMfaRequired(true);
+      } else {
+        setSession(data.user, data.token);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -43,7 +49,7 @@ const Login = ({ onBack, onForgotPassword }) => {
               <span>Employee<span className="brand-accent">MS</span></span>
             </div>
             <h2 className="text-xl font-bold tracking-tight text-slate-900">Welcome back</h2>
-            <p className="auth-subtitle text-xs text-slate-500 mt-1">Sign in to access your company workspace.</p>
+            <p className="auth-subtitle text-xs text-slate-500 mt-1">{mfaRequired ? 'Enter the code from your authenticator app or a recovery code.' : 'Sign in to access your company workspace.'}</p>
           </div>
 
           {error && (
@@ -100,12 +106,30 @@ const Login = ({ onBack, onForgotPassword }) => {
               </div>
             </div>
 
+            {mfaRequired && (
+              <div>
+                <label htmlFor="mfa-code" className="mb-1 block text-xs font-bold text-slate-700">Authenticator or recovery code</label>
+                <input
+                  id="mfa-code"
+                  name="mfaCode"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                  value={mfaCode}
+                  onChange={event => setMfaCode(event.target.value)}
+                  placeholder="6-digit code"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm tracking-widest text-slate-900 placeholder:text-xs placeholder:tracking-normal focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+            )}
+
             <button 
               type="submit" 
               className="submit-btn mt-2 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 py-2.5 text-xs font-bold text-white shadow-sm shadow-indigo-600/25 hover:from-indigo-500 hover:to-indigo-600 disabled:opacity-60 transition-all" 
               disabled={busy}
             >
-              {busy ? 'Signing in…' : 'Sign In to Workspace'}
+              {busy ? 'Signing in…' : mfaRequired ? 'Verify and Sign In' : 'Sign In to Workspace'}
             </button>
           </form>
         </div>

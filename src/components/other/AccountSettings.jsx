@@ -1,8 +1,8 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FaGear, FaLock, FaXmark } from 'react-icons/fa6';
+import { FaGear, FaLock, FaShieldHalved, FaXmark } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
-import { updateProfileApi } from '../../api';
+import { disableMfaApi, enableMfaApi, getMfaStatusApi, setupMfaApi, updateProfileApi } from '../../api';
 
 export default function AccountSettings({ onClose }) {
   const { currentUser, updateCurrentUser } = useContext(AuthContext);
@@ -11,6 +11,18 @@ export default function AccountSettings({ onClose }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [mfaStatus, setMfaStatus] = useState(null);
+  const [mfaPassword, setMfaPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaSecret, setMfaSecret] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState([]);
+  const [mfaError, setMfaError] = useState('');
+  const [mfaMessage, setMfaMessage] = useState('');
+  const [mfaBusy, setMfaBusy] = useState(false);
+
+  useEffect(() => {
+    getMfaStatusApi().then(setMfaStatus).catch(error => setMfaError(error.message));
+  }, []);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -66,6 +78,59 @@ export default function AccountSettings({ onClose }) {
       setBusy(false);
     }
   };
+  const setupMfa = async event => {
+    event.preventDefault();
+    setMfaBusy(true);
+    setMfaError('');
+    setMfaMessage('');
+    try {
+      const result = await setupMfaApi(mfaPassword);
+      setMfaSecret(result.secret);
+      setMfaPassword('');
+      setMfaCode('');
+      setMfaStatus(current => ({ ...current, setupPending: true }));
+      setMfaMessage('Add this key to your authenticator app, then enter its current 6-digit code.');
+    } catch (requestError) {
+      setMfaError(requestError.message);
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+  const enableMfa = async event => {
+    event.preventDefault();
+    setMfaBusy(true);
+    setMfaError('');
+    try {
+      const result = await enableMfaApi(mfaCode);
+      setRecoveryCodes(result.recoveryCodes);
+      setMfaSecret('');
+      setMfaCode('');
+      setMfaStatus(await getMfaStatusApi());
+      setMfaMessage('MFA is enabled. Save these recovery codes now; they will not be shown again.');
+    } catch (requestError) {
+      setMfaError(requestError.message);
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+  const disableMfa = async event => {
+    event.preventDefault();
+    setMfaBusy(true);
+    setMfaError('');
+    setMfaMessage('');
+    try {
+      await disableMfaApi({ currentPassword: mfaPassword, code: mfaCode });
+      setMfaStatus(await getMfaStatusApi());
+      setMfaPassword('');
+      setMfaCode('');
+      setRecoveryCodes([]);
+      setMfaMessage('Multi-factor authentication has been disabled.');
+    } catch (requestError) {
+      setMfaError(requestError.message);
+    } finally {
+      setMfaBusy(false);
+    }
+  };
 
   return createPortal(
     <div 
@@ -103,6 +168,72 @@ export default function AccountSettings({ onClose }) {
 
         {error && <p role="alert" className="mt-4 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
         {message && <p role="status" className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800">{message}</p>}
+
+        <section className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+          <div className="flex items-center gap-2 text-slate-800">
+            <FaShieldHalved className="text-sm text-indigo-600" />
+            <h3 className="text-xs font-bold">Authenticator multi-factor authentication</h3>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+            {mfaStatus?.enabled
+              ? `Enabled. ${mfaStatus.recoveryCodesRemaining} recovery codes remain.`
+              : 'Add a second sign-in step using an authenticator app.'}
+          </p>
+          {mfaError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-2 text-xs text-rose-700">{mfaError}</p>}
+          {mfaMessage && <p role="status" className="mt-3 rounded-lg bg-emerald-50 p-2 text-xs text-emerald-800">{mfaMessage}</p>}
+          {mfaSecret && (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+              <p className="text-[11px] font-semibold text-slate-700">Enter this setup key in your authenticator app</p>
+              <code className="mt-2 block break-all rounded bg-slate-50 p-2 text-xs tracking-wider text-slate-900">{mfaSecret}</code>
+              <p className="mt-2 text-[10px] text-slate-500">Keep this key private. Confirm below before closing this window.</p>
+            </div>
+          )}
+          {recoveryCodes.length > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-[11px] font-bold text-amber-900">One-time recovery codes</p>
+              <div className="mt-2 grid grid-cols-2 gap-1 font-mono text-[11px] text-amber-950">
+                {recoveryCodes.map(code => <span key={code}>{code}</span>)}
+              </div>
+            </div>
+          )}
+          {mfaStatus && (
+            <form onSubmit={mfaStatus.enabled ? disableMfa : mfaSecret ? enableMfa : setupMfa} className="mt-3 space-y-2.5">
+              {(!mfaSecret || mfaStatus.enabled) && (
+                <label className="block text-[11px] font-medium text-slate-700">
+                  Current password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={mfaPassword}
+                    onChange={event => setMfaPassword(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                  />
+                </label>
+              )}
+              {(mfaSecret || mfaStatus.enabled) && (
+                <label className="block text-[11px] font-medium text-slate-700">
+                  {mfaStatus.enabled ? 'Authenticator or recovery code' : '6-digit authenticator code'}
+                  <input
+                    required
+                    inputMode="text"
+                    autoComplete="one-time-code"
+                    value={mfaCode}
+                    onChange={event => setMfaCode(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                  />
+                </label>
+              )}
+              <button
+                type="submit"
+                disabled={mfaBusy}
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60"
+              >
+                {mfaBusy ? 'Please wait…' : mfaStatus.enabled ? 'Disable MFA' : mfaSecret ? 'Confirm and enable MFA' : 'Set up MFA'}
+              </button>
+            </form>
+          )}
+        </section>
 
         <form onSubmit={submit} className="mt-5 space-y-4">
           <div>

@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./db.js', () => ({
   query: mocks.query,
-  pool: { connect: mocks.connect },
+  pool: { connect: mocks.connect, totalCount: 2, idleCount: 1, waitingCount: 0 },
   initialiseDatabase: vi.fn()
 }));
 vi.mock('./email.js', () => ({
@@ -31,8 +31,10 @@ process.env.CLIENT_URL = 'https://employee-ms.test';
 process.env.ALLOWED_ORIGINS = 'https://employee-ms.test';
 process.env.BREVO_API_KEY = 'test-brevo-key';
 process.env.BREVO_SENDER_EMAIL = 'no-reply@example.test';
+process.env.METRICS_TOKEN = 'test-metrics-token-that-is-at-least-32-chars';
 
 const { app } = await import('./server.js');
+const { createTotpCode, decryptSecret, decryptTotpSecret } = await import('./mfa.js');
 
 const company = { id: 1, name: 'Test Workspace', slug: 'test-workspace', industry: 'General', size: '1-10', active: true };
 let users;
@@ -43,6 +45,8 @@ let auditEvents;
 let leaveRequests;
 let invitations;
 let passwordResets;
+let slackWebhookEncrypted;
+let onboardingEmployees;
 let baseUsers;
 let nextTaskId;
 let nextCommentId;
@@ -79,6 +83,83 @@ function installQueryMock() {
         requestId: params[6],
         createdAt: new Date().toISOString()
       });
+      return result([]);
+    }
+    if (text.startsWith('select slack_webhook_encrypted is not null as configured from company_integrations')) {
+      return result(slackWebhookEncrypted ? [{ configured: true }] : [{ configured: false }]);
+    }
+    if (text.startsWith('select slack_webhook_encrypted as encrypted from company_integrations')) {
+      return result(slackWebhookEncrypted ? [{ encrypted: slackWebhookEncrypted }] : []);
+    }
+    if (text.startsWith('insert into company_integrations(')) {
+      slackWebhookEncrypted = params[1];
+      return result([]);
+    }
+    if (text.startsWith('update company_integrations set slack_webhook_encrypted=null')) {
+      slackWebhookEncrypted = null;
+      return result([]);
+    }
+    if (text.startsWith('select employee_id as "employeeid" from employee_onboarding')) {
+      return result([...onboardingEmployees].map(employeeId => ({ employeeId })));
+    }
+    if (text.startsWith('select mfa_secret as "mfasecret",mfa_enabled as "mfaenabled"')) {
+      const user = users.find(item => item.id === Number(params[0]));
+      return result(user ? [{
+        mfaSecret: user.mfaSecret || null,
+        mfaEnabled: Boolean(user.mfaEnabled),
+        mfaRecoveryCodes: user.mfaRecoveryCodes || []
+      }] : []);
+    }
+    if (text.startsWith('select mfa_enabled as enabled,mfa_secret is not null')) {
+      const user = users.find(item => item.id === Number(params[0]));
+      return result(user ? [{
+        enabled: Boolean(user.mfaEnabled),
+        setupPending: Boolean(user.mfaSecret) && !user.mfaEnabled,
+        recoveryCodesRemaining: (user.mfaRecoveryCodes || []).length
+      }] : []);
+    }
+    if (text.startsWith('select password_hash as "passwordhash",mfa_enabled as "mfaenabled"')) {
+      const user = users.find(item => item.id === Number(params[0]));
+      return result(user ? [{ passwordHash: user.passwordHash, mfaEnabled: Boolean(user.mfaEnabled) }] : []);
+    }
+    if (text.startsWith('select mfa_secret as secret,mfa_enabled as enabled')) {
+      const user = users.find(item => item.id === Number(params[0]));
+      return result(user ? [{ secret: user.mfaSecret || null, enabled: Boolean(user.mfaEnabled) }] : []);
+    }
+    if (text.startsWith('select password_hash as "passwordhash",mfa_secret as secret')) {
+      const user = users.find(item => item.id === Number(params[0]));
+      return result(user ? [{
+        passwordHash: user.passwordHash,
+        secret: user.mfaSecret || null,
+        enabled: Boolean(user.mfaEnabled),
+        recoveryCodes: user.mfaRecoveryCodes || []
+      }] : []);
+    }
+    if (text.startsWith('update users set mfa_secret=$1')) {
+      const user = users.find(item => item.id === Number(params[1]));
+      if (user) user.mfaSecret = params[0];
+      return result([]);
+    }
+    if (text.startsWith('update users set mfa_recovery_codes=array_remove')) {
+      const user = users.find(item => item.id === Number(params[1]));
+      if (user) user.mfaRecoveryCodes = (user.mfaRecoveryCodes || []).filter(hash => hash !== params[0]);
+      return result([]);
+    }
+    if (text.startsWith('update users set mfa_enabled=true')) {
+      const user = users.find(item => item.id === Number(params[1]));
+      if (user) {
+        user.mfaEnabled = true;
+        user.mfaRecoveryCodes = params[0];
+      }
+      return result([]);
+    }
+    if (text.startsWith('update users set mfa_enabled=false')) {
+      const user = users.find(item => item.id === Number(params[0]));
+      if (user) {
+        user.mfaEnabled = false;
+        user.mfaSecret = null;
+        user.mfaRecoveryCodes = [];
+      }
       return result([]);
     }
     if (text.startsWith('select a.id,a.actor_user_id as "actorid"')) {
@@ -571,9 +652,9 @@ function installQueryMock() {
 beforeAll(async () => {
   const passwordHash = await bcrypt.hash('correct-horse-battery-123', 4);
   baseUsers = [
-    { id: 1, companyId: 1, firstName: 'Admin', email: 'admin@example.test', passwordHash, role: 'admin', department: 'Management', active: true },
-    { id: 2, companyId: 1, firstName: 'Employee', email: 'employee@example.test', passwordHash, role: 'employee', department: 'Operations', active: true },
-    { id: 3, companyId: 1, firstName: 'Second Employee', email: 'second@example.test', passwordHash, role: 'employee', department: 'Research', active: true }
+    { id: 1, companyId: 1, firstName: 'Admin', email: 'admin@example.test', passwordHash, role: 'admin', department: 'Management', active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] },
+    { id: 2, companyId: 1, firstName: 'Employee', email: 'employee@example.test', passwordHash, role: 'employee', department: 'Operations', active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] },
+    { id: 3, companyId: 1, firstName: 'Second Employee', email: 'second@example.test', passwordHash, role: 'employee', department: 'Research', active: true, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] }
   ];
 });
 
@@ -586,6 +667,8 @@ beforeEach(() => {
   leaveRequests = [];
   invitations = [];
   passwordResets = [];
+  slackWebhookEncrypted = null;
+  onboardingEmployees = new Set();
   nextTaskId = 1;
   nextCommentId = 1;
   nextInvitationId = 1;
@@ -602,6 +685,35 @@ beforeEach(() => {
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
   if (['begin', 'commit', 'rollback'].includes(text)) return result([]);
+  if (text.startsWith('select id,first_name as "firstname",email from users where id=$1 and company_id=$2 and role=\'employee\' and active=true')) {
+    const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.role === 'employee' && item.active);
+    return result(user ? [{ id: user.id, firstName: user.firstName, email: user.email }] : []);
+  }
+  if (text.startsWith('insert into employee_onboarding(')) {
+    const employeeId = Number(params[1]);
+    if (onboardingEmployees.has(employeeId)) return result([]);
+    onboardingEmployees.add(employeeId);
+    return result([{ id: onboardingEmployees.size }]);
+  }
+  if (text.startsWith('insert into tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)')) {
+    const task = {
+      id: nextTaskId++,
+      companyId: Number(params[0]),
+      taskTitle: params[1],
+      taskDescription: params[2],
+      taskDate: params[3],
+      category: 'Onboarding',
+      assignedTo: Number(params[4]),
+      createdBy: Number(params[5]),
+      priority: 'medium',
+      status: 'new',
+      archivedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    tasks.push(task);
+    return result([taskFields(task)]);
+  }
   if (text.startsWith('select p.id,p.user_id,u.company_id from password_resets')) {
     const reset = passwordResets.find(item => item.tokenHash === params[0] && !item.usedAt);
     const user = reset && users.find(item => item.id === reset.userId);
@@ -657,6 +769,169 @@ beforeEach(() => {
 });
 
 describe('authenticated API workflows', () => {
+  it('exposes low-cardinality Prometheus metrics only with a configured secret', async () => {
+    await request(app).get('/api/metrics').expect(404);
+    const metrics = await request(app).get('/api/metrics')
+      .set('Authorization', 'Bearer wrong-token')
+      .expect(404);
+    expect(metrics.text).not.toContain('employeems_http_requests_total');
+
+    const authorized = await request(app).get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.METRICS_TOKEN}`)
+      .expect(200)
+      .expect('Content-Type', /text\/plain/);
+    expect(authorized.text).toContain('employeems_http_requests_total');
+    expect(authorized.text).toContain('employeems_database_pool_connections{state="idle"} 1');
+    expect(authorized.text).not.toContain('/api/');
+  });
+
+  it('creates a one-time onboarding checklist from assigned, trackable tasks', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const token = login.body.token;
+
+    const created = await request(app).post('/api/employees/2/onboarding')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+    expect(created.body.tasksCreated).toBe(5);
+    expect(tasks).toHaveLength(5);
+    expect(tasks.every(task => task.category === 'Onboarding' && task.assignedTo === 2)).toBe(true);
+    expect(notifications).toHaveLength(5);
+
+    await request(app).post('/api/employees/2/onboarding')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(409);
+    expect(tasks).toHaveLength(5);
+
+    const employees = await request(app).get('/api/employees')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(employees.body.find(employee => employee.id === 2).onboardingCreated).toBe(true);
+  });
+
+  it('secures workspace Slack settings and sends task-assignment notifications', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const adminToken = adminLogin.body.token;
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => 'ok' });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await request(app).get('/api/integrations/slack')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200, { configured: false });
+      await request(app).get('/api/integrations/slack')
+        .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+        .expect(403);
+      await request(app).post('/api/integrations/slack')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ webhookUrl: 'https://example.test/services/T1/B1/token' })
+        .expect(400);
+
+      const webhookUrl = 'https://hooks.slack.com/services/T111/B222/secretToken123';
+      await request(app).post('/api/integrations/slack')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ webhookUrl })
+        .expect(200, { configured: true });
+      expect(slackWebhookEncrypted).not.toBe(webhookUrl);
+      expect(decryptSecret(slackWebhookEncrypted)).toBe(webhookUrl);
+
+      await request(app).post('/api/tasks')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          taskTitle: 'Review <launch> & confirm',
+          taskDescription: 'Complete the project handoff.',
+          taskDate: '2099-12-31',
+          category: 'Operations',
+          assignedTo: 2,
+          priority: 'high'
+        }).expect(201);
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      expect(fetchMock.mock.calls[0][0]).toBe(webhookUrl);
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).text).toContain('&lt;launch&gt; &amp; confirm');
+
+      await request(app).delete('/api/integrations/slack')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200, { configured: false });
+      expect(slackWebhookEncrypted).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('enables authenticator MFA, requires it at login, consumes recovery codes once, and can disable it', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const token = login.body.token;
+
+    await request(app).get('/api/auth/mfa')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200, { enabled: false, setupPending: false, recoveryCodesRemaining: 0 });
+
+    const setup = await request(app).post('/api/auth/mfa/setup')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'correct-horse-battery-123' })
+      .expect(200);
+    expect(setup.body.secret).toMatch(/^[A-Z2-7]+$/);
+    expect(setup.body.otpauthUri).toContain(setup.body.secret);
+    expect(users[0].mfaSecret).not.toBe(setup.body.secret);
+
+    const setupCode = createTotpCode(setup.body.secret);
+    const enabled = await request(app).post('/api/auth/mfa/enable')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: setupCode })
+      .expect(200);
+    expect(enabled.body.recoveryCodes).toHaveLength(10);
+    expect(users[0].mfaEnabled).toBe(true);
+
+    const challenge = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    expect(challenge.body).toEqual({ mfaRequired: true });
+
+    await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123',
+      mfaCode: '000000'
+    }).expect(401);
+
+    const verified = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123',
+      mfaCode: createTotpCode(decryptTotpSecret(users[0].mfaSecret))
+    }).expect(200);
+    expect(verified.body.token).toBeTruthy();
+
+    const recoveryCode = enabled.body.recoveryCodes[0];
+    await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123',
+      mfaCode: recoveryCode
+    }).expect(200);
+    await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123',
+      mfaCode: recoveryCode
+    }).expect(401);
+
+    await request(app).post('/api/auth/mfa/disable')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'correct-horse-battery-123', code: createTotpCode(decryptTotpSecret(users[0].mfaSecret)) })
+      .expect(200, { enabled: false });
+    expect(users[0].mfaSecret).toBeNull();
+    expect(users[0].mfaEnabled).toBe(false);
+  });
+
   it('creates a task, lets its owner accept it, discuss it, and complete it', async () => {
     const adminLogin = await request(app).post('/api/auth/login').send({
       email: 'admin@example.test',

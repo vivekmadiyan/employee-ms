@@ -4,6 +4,7 @@ import AcceptTask from './AcceptTask';
 import NewTask from './NewTask';
 import CompleteTask from './CompleteTask';
 import FailedTask from './FailedTask';
+import CalendarExportButton from '../other/CalendarExportButton';
 
 const TaskList = ({ data }) => {
   const [filter, setFilter] = useState('all');
@@ -41,7 +42,9 @@ const TaskList = ({ data }) => {
           <p className="text-xs text-slate-500">Manage deliverables and mark progress.</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <CalendarExportButton tasks={filteredTasks} />
+          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
           {[
             { id: 'all', label: 'All', count: tasks.length },
             { id: 'active', label: 'In Progress', count: tasks.filter(t => t.active).length },
@@ -67,6 +70,7 @@ const TaskList = ({ data }) => {
               </span>
             </button>
           ))}
+          </div>
         </div>
       </div>
 

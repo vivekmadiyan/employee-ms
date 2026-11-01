@@ -24,8 +24,15 @@ export const api = async (path, options = {}) => {
   return data;
 };
 
-export const loginApi = (email, password) => api('/auth/login', {method:'POST', body:JSON.stringify({email,password})});
+export const loginApi = (email, password, mfaCode) => api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(mfaCode ? { mfaCode } : {}) }) });
 export const updateProfileApi = payload => api('/auth/me', { method: 'PATCH', body: JSON.stringify(payload) });
+export const getMfaStatusApi = () => api('/auth/mfa');
+export const setupMfaApi = currentPassword => api('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ currentPassword }) });
+export const enableMfaApi = code => api('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
+export const disableMfaApi = payload => api('/auth/mfa/disable', { method: 'POST', body: JSON.stringify(payload) });
+export const getSlackIntegrationApi = () => api('/integrations/slack');
+export const saveSlackIntegrationApi = webhookUrl => api('/integrations/slack', { method: 'POST', body: JSON.stringify({ webhookUrl }) });
+export const removeSlackIntegrationApi = () => api('/integrations/slack', { method: 'DELETE', body: '{}' });
 export const requestPasswordResetApi = email => api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
 export const resetPasswordApi = (token, password) => api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
 export const getEmployeeDashboard = () => api('/dashboard/employee');
@@ -49,6 +56,7 @@ export const registerCompanyApi = (payload) => api('/onboarding/register-company
 export const createEmployeeApi = (payload) => api('/employees', {method:'POST', body:JSON.stringify(payload)});
 export const updateEmployeeApi = (id, payload) => api(`/employees/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const updateEmployeeStatusApi = (id, active) => api(`/employees/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) });
+export const createEmployeeOnboardingApi = id => api(`/employees/${id}/onboarding`, { method: 'POST', body: '{}' });
 
 export const createInvitationApi = (payload) => api('/invitations', {method:'POST', body:JSON.stringify(payload)});
 export const createBulkInvitationsApi = employees => api('/invitations/bulk', { method: 'POST', body: JSON.stringify({ employees }) });

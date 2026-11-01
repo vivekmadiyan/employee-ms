@@ -12,16 +12,37 @@ import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { auth, adminOnly } from './middleware/auth.js';
 import { sendInvitationEmail, sendPasswordResetEmail, sendTaskAssignedEmail, sendTaskUpdateEmail } from './email.js';
+import {
+  createRecoveryCodes,
+  decryptSecret,
+  decryptTotpSecret,
+  encryptSecret,
+  encryptTotpSecret,
+  findRecoveryCodeHash,
+  generateTotpSecret,
+  hashRecoveryCode,
+  verifyTotpCode
+} from './mfa.js';
 
 const app = express();
 if (config.TRUST_PROXY) app.set('trust proxy', 1);
 app.disable('x-powered-by');
+const httpMetrics = { requests: 0, serverErrors: 0, durationSeconds: 0 };
 app.use((req, res, next) => { req.id = crypto.randomUUID(); res.setHeader('X-Request-Id', req.id); next(); });
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
 app.use(cors({ origin(origin, callback) { if (!origin || allowedOrigins.has(origin)) return callback(null, true); return callback(new Error('Origin not allowed by CORS')); }, methods: ['GET', 'POST', 'PATCH', 'DELETE'], allowedHeaders: ['Authorization', 'Content-Type'], maxAge: 86400 }));
 app.use(express.json({ limit: '1mb' }));
 const skipRateLimitForTests = () => config.NODE_ENV === 'test';
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many requests. Please try again later.' } }));
+app.use((req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    httpMetrics.requests += 1;
+    if (res.statusCode >= 500) httpMetrics.serverErrors += 1;
+    httpMetrics.durationSeconds += Number(process.hrtime.bigint() - startedAt) / 1e9;
+  });
+  next();
+});
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many attempts. Please try again later.' } });
 const onboardingLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many account requests. Please try again later.' } });
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many password reset requests. Please try again later.' } });
@@ -123,6 +144,42 @@ const emailTaskUpdate = async (task, recipientIds, actorId, actorName, updateTyp
     return 'failed';
   }
 };
+const notifySlackTaskAssigned = async (task, recipient, req) => {
+  try {
+    const integration = (await query(
+      'SELECT slack_webhook_encrypted AS encrypted FROM company_integrations WHERE company_id=$1',
+      [req.company.id]
+    )).rows[0];
+    if (!integration?.encrypted) return;
+
+    const webhookUrl = decryptSecret(integration.encrypted);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: `Task assigned to ${recipient.firstName}: ${task.taskTitle} (due ${task.taskDate})`
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        }),
+        redirect: 'error',
+        signal: controller.signal
+      });
+      if (!response.ok || (await response.text()) !== 'ok') {
+        throw new Error(`Slack webhook returned HTTP ${response.status}`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    console.error('Slack task notification failed:', {
+      requestId: req.id,
+      taskId: task.id,
+      message: error.message
+    });
+  }
+};
 const createEmployeeInvitation = async (values, req) => {
   if (await findUser(values.email)) {
     const error = new Error('This email already belongs to an account');
@@ -212,7 +269,7 @@ const password = z.string().min(10, 'Password must be at least 10 characters').m
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
   .refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Date is invalid');
 const schemas = {
-  login: z.object({ email, password: z.string().min(1).max(128) }),
+  login: z.object({ email, password: z.string().min(1).max(128), mfaCode: z.string().trim().max(64).optional() }),
   register: z.object({ companyName: z.string().trim().min(2).max(120), industry: z.string().trim().min(2).max(80).default('General'), size: z.enum(['1-10', '11-50', '51-200', '201-500', '500+']).default('1-10'), firstName: z.string().trim().min(2).max(80), email, password }),
   employee: z.object({ firstName: z.string().trim().min(2).max(80), email, password, department: z.string().trim().min(2).max(80).default('General') }),
   invitation: z.object({ firstName: z.string().trim().min(2).max(80), email, department: z.string().trim().min(2).max(80).default('General') }),
@@ -221,6 +278,28 @@ const schemas = {
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
 app.get('/api/health/live', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/health', async (req, res) => { try { await query('SELECT 1'); res.json({ status: 'ok', database: true }); } catch { res.status(503).json({ status: 'error', database: false }); } });
+app.get('/api/metrics', (req, res) => {
+  if (!config.METRICS_TOKEN) return res.sendStatus(404);
+  const expected = Buffer.from(`Bearer ${config.METRICS_TOKEN}`);
+  const supplied = Buffer.from(req.get('authorization') || '');
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return res.sendStatus(404);
+  res.type('text/plain; version=0.0.4; charset=utf-8').send([
+    '# HELP employeems_http_requests_total Total HTTP requests handled.',
+    '# TYPE employeems_http_requests_total counter',
+    `employeems_http_requests_total ${httpMetrics.requests}`,
+    '# HELP employeems_http_server_errors_total Total HTTP responses with a 5xx status.',
+    '# TYPE employeems_http_server_errors_total counter',
+    `employeems_http_server_errors_total ${httpMetrics.serverErrors}`,
+    '# HELP employeems_http_request_duration_seconds_sum Cumulative HTTP request duration.',
+    '# TYPE employeems_http_request_duration_seconds_sum counter',
+    `employeems_http_request_duration_seconds_sum ${httpMetrics.durationSeconds}`,
+    '# HELP employeems_database_pool_connections Current PostgreSQL pool connections by state.',
+    '# TYPE employeems_database_pool_connections gauge',
+    `employeems_database_pool_connections{state="total"} ${pool.totalCount}`,
+    `employeems_database_pool_connections{state="idle"} ${pool.idleCount}`,
+    `employeems_database_pool_connections{state="waiting"} ${pool.waitingCount}`
+  ].join('\n') + '\n');
+});
 
 app.post('/api/onboarding/register-company', onboardingLimiter, async (req, res, next) => {
   let values; try { values = body(schemas.register, req.body); } catch (error) { return next(error); }
@@ -233,8 +312,163 @@ app.post('/api/onboarding/register-company', onboardingLimiter, async (req, res,
   try { await client.query('BEGIN'); const company = (await client.query('INSERT INTO companies(name,slug,industry,size) VALUES($1,$2,$3,$4) RETURNING id,name,slug,industry,size', [companyName.trim(), slug, industry.trim(), size])).rows[0]; const passwordHash = await bcrypt.hash(password, 12); const admin = (await client.query(`INSERT INTO users(company_id,first_name,email,password_hash,role,department) VALUES($1,$2,$3,$4,'admin','Management') RETURNING ${userFields}`, [company.id, firstName.trim(), normalizedEmail, passwordHash])).rows[0]; await client.query('COMMIT'); res.status(201).json({ token: sign(admin), user: { ...safeUser(admin), companyName: company.name }, company: companyDto(company) }); } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ message: 'Could not create company' }); } finally { client.release(); }
 });
 
-app.post('/api/auth/login', authLimiter, async (req, res, next) => { try { const values = body(schemas.login, req.body); const user = await findUser(values.email); if (!user || !user.active || !(await bcrypt.compare(values.password, user.passwordHash))) return res.status(401).json({ message: 'Invalid email or password' }); const company = (await query('SELECT id,name,slug,industry,size,active FROM companies WHERE id=$1', [user.companyId])).rows[0]; if (!company?.active) return res.status(403).json({ message: 'Your company workspace is inactive' }); res.json({ token: sign(user), user: { ...safeUser(user), companyName: company.name }, company: companyDto(company) }); } catch (error) { next(error); } });
+app.post('/api/auth/login', authLimiter, async (req, res, next) => {
+  try {
+    const values = body(schemas.login, req.body);
+    const user = await findUser(values.email);
+    if (!user || !user.active || !(await bcrypt.compare(values.password, user.passwordHash))) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const company = (await query('SELECT id,name,slug,industry,size,active FROM companies WHERE id=$1', [user.companyId])).rows[0];
+    if (!company?.active) return res.status(403).json({ message: 'Your company workspace is inactive' });
+
+    const mfa = (await query(
+      'SELECT mfa_secret AS "mfaSecret",mfa_enabled AS "mfaEnabled",mfa_recovery_codes AS "mfaRecoveryCodes" FROM users WHERE id=$1',
+      [user.id]
+    )).rows[0];
+    if (mfa?.mfaEnabled) {
+      if (!values.mfaCode) return res.json({ mfaRequired: true });
+      let accepted = false;
+      if (mfa.mfaSecret) accepted = verifyTotpCode(decryptTotpSecret(mfa.mfaSecret), values.mfaCode);
+      if (!accepted) {
+        const recoveryHash = findRecoveryCodeHash(values.mfaCode, mfa.mfaRecoveryCodes);
+        if (!recoveryHash) return res.status(401).json({ message: 'Invalid authenticator or recovery code' });
+        await query(
+          'UPDATE users SET mfa_recovery_codes=array_remove(mfa_recovery_codes,$1),updated_at=NOW() WHERE id=$2',
+          [recoveryHash, user.id]
+        );
+        await recordAuditEvent(user.companyId, user.id, req, 'account.mfa_recovery_code_used', 'user', user.id);
+      }
+    }
+
+    res.json({ token: sign(user), user: { ...safeUser(user), companyName: company.name }, company: companyDto(company) });
+  } catch (error) {
+    next(error);
+  }
+});
 app.get('/api/auth/me', auth, (req, res) => res.json({ user: safeUser(req.user), company: companyDto(req.company) }));
+app.get('/api/auth/mfa', auth, async (req, res, next) => {
+  try {
+    const result = await query('SELECT mfa_enabled AS enabled,mfa_secret IS NOT NULL AND mfa_enabled=false AS "setupPending",cardinality(mfa_recovery_codes) AS "recoveryCodesRemaining" FROM users WHERE id=$1', [req.user.id]);
+    res.json(result.rows[0] || { enabled: false, setupPending: false, recoveryCodesRemaining: 0 });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/auth/mfa/setup', auth, async (req, res, next) => {
+  try {
+    const values = body(z.object({ currentPassword: z.string().min(1).max(128) }), req.body);
+    const account = (await query('SELECT password_hash AS "passwordHash",mfa_enabled AS "mfaEnabled" FROM users WHERE id=$1', [req.user.id])).rows[0];
+    if (!account || !await bcrypt.compare(values.currentPassword, account.passwordHash)) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+    if (account.mfaEnabled) return res.status(409).json({ message: 'Multi-factor authentication is already enabled' });
+
+    const secret = generateTotpSecret();
+    await query('UPDATE users SET mfa_secret=$1,updated_at=NOW() WHERE id=$2', [encryptTotpSecret(secret), req.user.id]);
+    await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_setup_started', 'user', req.user.id);
+    const label = encodeURIComponent(`${req.company.name}:${req.user.email}`);
+    const issuer = encodeURIComponent(req.company.name);
+    res.json({
+      secret,
+      otpauthUri: `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/auth/mfa/enable', auth, async (req, res, next) => {
+  try {
+    const { code } = body(z.object({ code: z.string().trim().length(6) }), req.body);
+    const account = (await query('SELECT mfa_secret AS secret,mfa_enabled AS enabled FROM users WHERE id=$1', [req.user.id])).rows[0];
+    if (!account?.secret || account.enabled) return res.status(409).json({ message: 'Start multi-factor authentication setup before enabling it' });
+    if (!verifyTotpCode(decryptTotpSecret(account.secret), code)) {
+      return res.status(400).json({ message: 'That authenticator code is invalid or expired' });
+    }
+
+    const recoveryCodes = createRecoveryCodes();
+    await query(
+      'UPDATE users SET mfa_enabled=true,mfa_recovery_codes=$1,updated_at=NOW() WHERE id=$2',
+      [recoveryCodes.map(hashRecoveryCode), req.user.id]
+    );
+    await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_enabled', 'user', req.user.id);
+    res.json({ enabled: true, recoveryCodes });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/auth/mfa/disable', auth, async (req, res, next) => {
+  try {
+    const values = body(z.object({ currentPassword: z.string().min(1).max(128), code: z.string().trim().max(64) }), req.body);
+    const account = (await query(
+      'SELECT password_hash AS "passwordHash",mfa_secret AS secret,mfa_enabled AS enabled,mfa_recovery_codes AS "recoveryCodes" FROM users WHERE id=$1',
+      [req.user.id]
+    )).rows[0];
+    if (!account || !await bcrypt.compare(values.currentPassword, account.passwordHash)) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+    if (!account.enabled || !account.secret) return res.status(409).json({ message: 'Multi-factor authentication is not enabled' });
+    let accepted = verifyTotpCode(decryptTotpSecret(account.secret), values.code);
+    if (!accepted) accepted = Boolean(findRecoveryCodeHash(values.code, account.recoveryCodes));
+    if (!accepted) return res.status(400).json({ message: 'Invalid authenticator or recovery code' });
+    await query('UPDATE users SET mfa_enabled=false,mfa_secret=NULL,mfa_recovery_codes=\'{}\',updated_at=NOW() WHERE id=$1', [req.user.id]);
+    await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_disabled', 'user', req.user.id);
+    res.json({ enabled: false });
+  } catch (error) {
+    next(error);
+  }
+});
+app.get('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
+  try {
+    const result = await query(
+      'SELECT slack_webhook_encrypted IS NOT NULL AS configured FROM company_integrations WHERE company_id=$1',
+      [req.company.id]
+    );
+    res.json({ configured: Boolean(result.rows[0]?.configured) });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
+  try {
+    const { webhookUrl } = body(z.object({ webhookUrl: z.string().url().max(512) }), req.body);
+    const parsedUrl = new URL(webhookUrl);
+    if (
+      parsedUrl.protocol !== 'https:' ||
+      parsedUrl.hostname !== 'hooks.slack.com' ||
+      parsedUrl.username ||
+      parsedUrl.password ||
+      parsedUrl.search ||
+      parsedUrl.hash ||
+      !/^\/services\/[A-Z0-9]+\/[A-Z0-9]+\/[A-Z0-9]+$/i.test(parsedUrl.pathname)
+    ) {
+      return res.status(400).json({ message: 'Enter a valid HTTPS Slack incoming webhook URL' });
+    }
+    await query(
+      `INSERT INTO company_integrations(company_id,slack_webhook_encrypted,updated_by,updated_at)
+       VALUES($1,$2,$3,NOW())
+       ON CONFLICT(company_id) DO UPDATE SET slack_webhook_encrypted=EXCLUDED.slack_webhook_encrypted,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,
+      [req.company.id, encryptSecret(webhookUrl), req.user.id]
+    );
+    await recordAuditEvent(req.company.id, req.user.id, req, 'integration.slack_configured', 'integration', 'slack');
+    res.json({ configured: true });
+  } catch (error) {
+    next(error);
+  }
+});
+app.delete('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
+  try {
+    await query(
+      'UPDATE company_integrations SET slack_webhook_encrypted=NULL,updated_by=$1,updated_at=NOW() WHERE company_id=$2',
+      [req.user.id, req.company.id]
+    );
+    await recordAuditEvent(req.company.id, req.user.id, req, 'integration.slack_removed', 'integration', 'slack');
+    res.json({ configured: false });
+  } catch (error) {
+    next(error);
+  }
+});
 app.patch('/api/auth/me', auth, async (req, res, next) => {
   try {
     const values = body(z.object({
@@ -342,7 +576,7 @@ app.post('/api/auth/reset-password', resetLimiter, async (req, res, next) => {
 });
 app.get('/api/company/me', auth, (req, res) => res.json(companyDto(req.company)));
 
-app.get('/api/employees', auth, adminOnly, async (req, res) => { const users = (await query(`SELECT ${userFields} FROM users WHERE company_id=$1 AND role='employee' ORDER BY active DESC, first_name`, [req.company.id])).rows; const tasks = (await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, [req.company.id])).rows; res.json(users.map(u => { const own = tasks.filter(t => t.assignedTo === u.id); return { ...safeUser(u), tasks: own.map(serializeTask), taskCounts: counts(own) }; })); });
+app.get('/api/employees', auth, adminOnly, async (req, res) => { const users = (await query(`SELECT ${userFields} FROM users WHERE company_id=$1 AND role='employee' ORDER BY active DESC, first_name`, [req.company.id])).rows; const tasks = (await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, [req.company.id])).rows; const onboarding = new Set((await query('SELECT employee_id AS "employeeId" FROM employee_onboarding WHERE company_id=$1', [req.company.id])).rows.map(item => item.employeeId)); res.json(users.map(u => { const own = tasks.filter(t => t.assignedTo === u.id); return { ...safeUser(u), onboardingCreated: onboarding.has(u.id), tasks: own.map(serializeTask), taskCounts: counts(own) }; })); });
 app.post('/api/employees', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(schemas.employee, req.body);
@@ -401,6 +635,79 @@ app.patch('/api/employees/:id', auth, adminOnly, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+app.post('/api/employees/:id/onboarding', auth, adminOnly, async (req, res, next) => {
+  const checklist = [
+    { title: 'Complete your employee profile', description: 'Review your name, work email, department, and account settings.' },
+    { title: 'Set up your work tools', description: 'Confirm access to the applications and communication tools needed for your role.' },
+    { title: 'Review company policies', description: 'Read the policies and guidance shared by your manager.' },
+    { title: 'Meet your teammates', description: 'Schedule introductions with your manager and immediate teammates.' },
+    { title: 'Align on your first-week goals', description: 'Review your role expectations and agree on initial priorities with your manager.' }
+  ];
+  const employeeId = Number(req.params.id);
+  if (!Number.isSafeInteger(employeeId) || employeeId < 1) return res.status(400).json({ message: 'Employee ID is invalid' });
+  const client = await pool.connect();
+  let createdTasks = [];
+  let employee;
+  try {
+    await client.query('BEGIN');
+    employee = (await client.query(
+      `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
+      [employeeId, req.company.id]
+    )).rows[0];
+    if (!employee) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Active employee not found in this workspace' });
+    }
+
+    const plan = (await client.query(
+      'INSERT INTO employee_onboarding(company_id,employee_id,created_by) VALUES($1,$2,$3) ON CONFLICT(employee_id) DO NOTHING RETURNING id',
+      [req.company.id, employeeId, req.user.id]
+    )).rows[0];
+    if (!plan) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'An onboarding checklist has already been created for this employee' });
+    }
+
+    const createdAt = new Date();
+    createdTasks = await Promise.all(checklist.map(async (item, index) => {
+      const taskDate = new Date(createdAt);
+      taskDate.setUTCDate(taskDate.getUTCDate() + [0, 1, 3, 5, 7][index]);
+      const dueDate = taskDate.toISOString().slice(0, 10);
+      return (await client.query(
+        `INSERT INTO tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)
+         VALUES($1,$2,$3,$4,'Onboarding',$5,$6,'medium') RETURNING ${taskFields}`,
+        [req.company.id, item.title, item.description, dueDate, employeeId, req.user.id]
+      )).rows[0];
+    }));
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Onboarding checklist rollback failed:', { requestId: req.id, message: rollbackError.message });
+    }
+    return next(error);
+  } finally {
+    client.release();
+  }
+
+  await recordAuditEvent(req.company.id, req.user.id, req, 'employee.onboarding_created', 'user', employeeId, {
+    taskCount: createdTasks.length
+  });
+  await Promise.all(createdTasks.map(async task => {
+    try {
+      await notifyUser(employeeId, task.id, req.user.id, 'assigned', `New task assigned: ${task.taskTitle}`, `assigned:${task.id}:${employeeId}`);
+    } catch (error) {
+      console.error('Onboarding task notification failed:', { requestId: req.id, taskId: task.id, message: error.message });
+    }
+  }));
+  const emailResults = await Promise.all(createdTasks.map(task => emailTaskAssignment(task, employee, req.user.firstName, req)));
+  createdTasks.forEach(task => { void notifySlackTaskAssigned(task, employee, req); });
+  res.status(201).json({
+    tasksCreated: createdTasks.length,
+    emailStatuses: emailResults.map(result => result.emailStatus)
+  });
 });
 
 app.post('/api/invitations', auth, adminOnly, async (req, res, next) => {
@@ -842,6 +1149,7 @@ app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
       });
     }
     const email = await emailTaskAssignment(task, employee, req.user.firstName, req);
+    void notifySlackTaskAssigned(task, employee, req);
     res.status(201).json({ ...serializeTask(task), ...email });
   } catch (error) {
     next(error);
@@ -882,6 +1190,7 @@ app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
         console.error('Task reassignment notification failed:', { requestId: req.id, taskId: task.id, message: error.message });
       }
       Object.assign(response, await emailTaskAssignment(task, employee, req.user.firstName, req));
+      void notifySlackTaskAssigned(task, employee, req);
     }
     if (previousTaskDate !== task.taskDate) {
       const emailStatus = await emailTaskUpdate(

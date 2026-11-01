@@ -3,6 +3,7 @@ import { FaBoxArchive, FaMagnifyingGlass, FaRotateLeft, FaFilter, FaPenToSquare 
 import { archiveTaskApi, bulkUpdateTasksApi, getTasksApi, updateTaskApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import TaskComments from './TaskComments';
+import CalendarExportButton from './CalendarExportButton';
 
 const statusNames = { new: 'New', active: 'In progress', completed: 'Completed', failed: 'Needs attention' };
 const statusStyles = {
@@ -176,15 +177,18 @@ export default function TaskManagement() {
           <h2 className="dashboard-card-heading mt-1 text-slate-900">Task Management</h2>
           <p className="mt-0.5 text-xs text-slate-500">Filter, edit assignments, prioritize, and manage task lifecycle.</p>
         </div>
-        <label className="inline-flex items-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 cursor-pointer sm:self-auto">
-          <input 
-            type="checkbox" 
-            checked={includeArchived} 
-            onChange={event => { setSelectedIds(new Set()); setIncludeArchived(event.target.checked); }} 
-            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
-          />
-          <span>Show archived</span>
-        </label>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <CalendarExportButton tasks={tasks} />
+          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={event => { setSelectedIds(new Set()); setIncludeArchived(event.target.checked); }}
+              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span>Show archived</span>
+          </label>
+        </div>
       </div>
 
       {/* Filter Toolbar */}

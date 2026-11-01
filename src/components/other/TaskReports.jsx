@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FaChartColumn, FaDownload } from 'react-icons/fa6';
 import { getTaskReportApi } from '../../api';
+import PdfExportButton from './PdfExportButton';
 
 const localDate = date => {
   const year = date.getFullYear();
@@ -48,6 +49,7 @@ function Breakdown({ title, rows, labelFor, total, tone = 'bg-indigo-500' }) {
 }
 
 export default function TaskReports() {
+  const reportRef = useRef(null);
   const [range, setRange] = useState(defaultRange);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -127,7 +129,7 @@ export default function TaskReports() {
     : 0;
 
   return (
-    <section className="dashboard-section space-y-4" aria-labelledby="task-reports-heading">
+    <section ref={reportRef} className="dashboard-section space-y-4" aria-labelledby="task-reports-heading">
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-6">
         <div>
           <div className="flex items-center gap-1.5 text-indigo-600">
@@ -137,7 +139,7 @@ export default function TaskReports() {
           <h2 id="task-reports-heading" className="mt-1 text-base sm:text-lg font-bold tracking-tight text-slate-900">Task Performance Reports</h2>
           <p className="mt-0.5 text-xs text-slate-500">Outcomes and velocity for deliverables created within the selected date window.</p>
         </div>
-        <div className="flex flex-wrap items-end gap-2.5">
+        <div className="print-export-control flex flex-wrap items-end gap-2.5">
           <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
             From
             <input 
@@ -169,6 +171,7 @@ export default function TaskReports() {
             <FaDownload aria-hidden="true" className="text-xs text-slate-400" /> 
             <span>Export CSV</span>
           </button>
+          <PdfExportButton targetRef={reportRef} />
         </div>
       </div>
 

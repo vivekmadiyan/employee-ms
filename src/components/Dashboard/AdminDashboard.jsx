@@ -5,6 +5,7 @@ import {
   FaChartPie, 
   FaListCheck, 
   FaPlus, 
+  FaPlug,
   FaShieldHalved, 
   FaUserPlus, 
   FaUsers 
@@ -20,6 +21,7 @@ import TaskReports from '../other/TaskReports';
 import BulkInviteEmployees from '../other/BulkInviteEmployees';
 import AuditTrail from '../other/AuditTrail';
 import LeaveManagement from '../other/LeaveManagement';
+import SlackIntegration from '../other/SlackIntegration';
 
 const AdminDashboard = (props) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
@@ -40,6 +42,7 @@ const AdminDashboard = (props) => {
     { id: 'leaves', label: 'Leave Requests', icon: FaCalendarDay },
     { id: 'reports', label: 'Reports', icon: FaChartLine },
     { id: 'audit', label: 'Audit Trail', icon: FaShieldHalved },
+    { id: 'integrations', label: 'Integrations', icon: FaPlug },
   ];
 
   return (
@@ -253,6 +256,12 @@ const AdminDashboard = (props) => {
             )}
 
             {/* AUDIT TRAIL TAB */}
+            {activeTab === 'integrations' && (
+              <div className="space-y-6 animate-fade-in">
+                <SlackIntegration />
+              </div>
+            )}
+
             {activeTab === 'audit' && (
               <div className="space-y-6 animate-fade-in">
                 <AuditTrail />

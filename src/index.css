@@ -2,6 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  body.pdf-exporting {
+    background: #fff !important;
+  }
+
+  body.pdf-exporting * {
+    visibility: hidden !important;
+  }
+
+  body.pdf-exporting .pdf-export-target,
+  body.pdf-exporting .pdf-export-target * {
+    visibility: visible !important;
+  }
+
+  body.pdf-exporting .pdf-export-target {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.pdf-exporting .print-export-control {
+    display: none !important;
+  }
+}
+
 @layer base {
   html, body, #root {
     min-height: 100%;

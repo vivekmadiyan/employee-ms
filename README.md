@@ -114,10 +114,13 @@ Admins can review task status, priority, category, overdue work, and assignee wo
 ## Security notes
 Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected APIs, and employees can only modify tasks assigned to them. For production, use HTTPS, a strong JWT secret, secure cookie-based refresh tokens, rate limiting, request validation, and managed PostgreSQL credentials.
 
-Admins can review a company-scoped audit trail of account, employee, invitation, and task changes. Audit records omit passwords, reset tokens, and invitation tokens; audit storage errors are logged without undoing completed workflows.
+Admins can review a company-scoped audit trail of account, employee, invitation, integration, and task changes. Audit records omit passwords, reset tokens, and invitation tokens; audit storage errors are logged without undoing completed workflows.
 
 Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Admins can review requests for their workspace. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
 
+Users can optionally enable authenticator-app MFA from Account Settings. TOTP secrets are encrypted in PostgreSQL, login requires a current authenticator code, and ten single-use recovery codes are shown once. Slack incoming webhook URLs are also encrypted and restricted to Slack's HTTPS webhook host. Set a stable `MFA_ENCRYPTION_KEY` (at least 32 characters) in the API environment; if omitted, the API derives the encryption key from `JWT_SECRET`, so rotating the JWT secret will require MFA re-enrollment for users without recovery codes and reconfiguration of Slack.
+
+Admins can create a one-time onboarding checklist for each active employee. It creates five assigned tasks with staggered due dates, reuses the normal task status/comment/notification workflows, and prevents duplicate checklists.
 
 ## Multi-company / SaaS-ready architecture
 This version is designed so multiple companies can use the same application while keeping their data isolated. Each company gets a workspace, the first registered user becomes that company's admin, and employees/tasks are scoped by `companyId`. Admins can create employee accounts and assign tasks only within their own company.
@@ -130,9 +133,8 @@ This version is designed so multiple companies can use the same application whil
 5. Create and assign tasks to employees in that workspace.
 
 ### Important production next steps
-- Add MFA, audit logs, and company plan limits if commercialized.
-- Add billing/subscription if the product is commercialized.
-- Configure monitoring, backups, and HTTPS for the chosen hosting providers; rehearse a database restore.
+- Add company plan limits and billing if commercialized.
+- Configure production monitoring, backups, and HTTPS for the chosen hosting providers; rehearse a database restore.
 - Deploy the frontend, API, and PostgreSQL using production environment variables.
 
 
@@ -150,22 +152,34 @@ Set these optional values in `server/.env` or the backend hosting environment:
 
 The invitation link is generated from `CLIENT_URL` and never grants access to another company. Render's free service blocks SMTP ports, so transactional email is sent over HTTPS through Brevo.
 
-## 12. Additional / Remaining Features
+### No-cost monitoring
 
-- **Dark Mode / Theming** – Provide a UI toggle for light‑ and dark‑theme with persisted user preference (CSS variables or Tailwind dark mode).
-- **Real‑Time Push Notifications** – Use WebSockets or Server‑Sent Events to push task updates, assignment alerts, and comment notifications instantly.
-- **Export to PDF** – Generate PDF reports for tasks, audit logs, and team metrics (e.g., via `react-pdf` or server‑side PDF generation).
-- **Calendar Sync (Google / Outlook)** – One‑click export of task due dates to external calendars using OAuth2 APIs.
-- **Accessibility (A11y)** – Add ARIA roles, keyboard navigation, focus management, and color‑contrast compliance throughout the UI.
-- **Internationalization (i18n)** – Integrate `react-i18next` (or similar) to support multiple languages and locale‑specific date/number formatting.
-- **Admin CSV Export of Users** – Export all employee records (ID, name, email, role, status) as CSV from the admin dashboard.
-- **Audit Trail Search & Filter** – Add a search bar and filters (action type, user, date range) to the Audit Trail view.
-- **Multi‑Factor Authentication (MFA)** – Optional TOTP or email‑code verification for admin logins (e.g., via `speakeasy`).
-- **API Rate Limiting & Throttling** – Protect backend endpoints against abuse (per‑IP / per‑user limits, configurable thresholds).
-- **Custom Email Templates** – UI for admins to edit subject/body of invitation, task‑assignment, and password‑reset emails.
-- **Performance Monitoring Dashboard** – Integrate a monitoring solution (Grafana, Prometheus, or a hosted SaaS) to view API latency, error rates, and resource usage.
-- **Branding / Theming Customization** – Allow workspace owners to set primary brand colors, upload a logo, and customize the app's look‑and‑feel.
-- **Mobile‑First Enhancements** – Optimize touch targets, add swipe gestures for task actions, and ensure responsive layouts on small screens.
-- **Data Retention Policies** – Settings to purge audit logs or archived tasks after configurable periods (e.g., 30 days, 90 days).
-- **Help Center / Tooltip System** – Contextual help icons with hover tooltips and a searchable knowledge‑base modal.
-- **Feature Flags** – Infrastructure (e.g., LaunchDarkly‑style) to enable/disable beta features per workspace or user role.
+The API exposes `/api/health/live`, `/api/health`, and Prometheus-formatted `/api/metrics`. Configure a random `METRICS_TOKEN` of at least 32 characters in the API environment and scrape `/api/metrics` with `Authorization: Bearer <token>`. Metrics have no user, company, or URL labels; no hosted monitoring account is required.
+
+## 12. Feature checklist
+
+### Implemented
+- Dark mode with a persisted theme preference.
+- Live workspace updates and notification delivery using authenticated Server-Sent Events.
+- Admin task reports with CSV export and employee-directory CSV export.
+- Print-ready task reports, audit activity, and team rosters that can be saved as PDF through the browser print dialog.
+- Company-scoped audit events with search and filters.
+- Optional authenticator-app MFA with encrypted TOTP secrets and single-use recovery codes.
+- Workspace-configurable Slack notifications for task assignments and reassignments.
+- One-time employee onboarding checklists based on assigned, trackable tasks.
+- Token-protected Prometheus metrics for HTTP request/error totals, latency, and PostgreSQL pool usage.
+- API rate limits, responsive/mobile layouts, task comments, leave management, contextual tooltips, and task calendar export.
+
+Calendar export downloads an `.ics` file for the tasks currently visible to the user. Import it into Google Calendar, Outlook, or Apple Calendar. Automatic OAuth-based synchronization and ongoing calendar updates are not implemented.
+
+### Remaining
+- Full accessibility audit and remediation against WCAG, including assistive-technology testing.
+- Internationalization and locale-aware formatting.
+- Workspace-editable email templates and branding.
+- Hosted monitoring dashboards and operational alerting (the API includes Prometheus metrics and health endpoints).
+- Configurable data-retention policies and feature flags.
+- Searchable help center beyond the existing contextual tooltips.
+- Company plan limits and billing if the product is commercialized.
+- OAuth-based two-way calendar synchronization.
+
+Monitoring, database backups/restore rehearsals, HTTPS, and production provider configuration also require deployment-level setup; application code alone cannot complete them.

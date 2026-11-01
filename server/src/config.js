@@ -7,6 +7,8 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(5000),
   DATABASE_URL: z.string().url(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters long'),
+  MFA_ENCRYPTION_KEY: z.string().min(32).optional(),
+  METRICS_TOKEN: z.string().min(32).optional(),
   CLIENT_URL: z.string().url().default('http://localhost:5173'),
   ALLOWED_ORIGINS: z.string().optional(),
   PGSSL: booleanFromEnv,

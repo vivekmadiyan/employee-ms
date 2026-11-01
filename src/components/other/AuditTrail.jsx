@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaClockRotateLeft, FaMagnifyingGlass, FaShieldHalved, FaXmark } from 'react-icons/fa6';
 import { getAuditEventsApi } from '../../api';
 import { HelpIcon } from './Tooltip';
+import PdfExportButton from './PdfExportButton';
 
 const actionLabels = {
   'account.profile_updated': 'Updated account profile',
@@ -58,6 +59,7 @@ const describeDetails = details => {
 };
 
 export default function AuditTrail() {
+  const auditRef = useRef(null);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -118,7 +120,7 @@ export default function AuditTrail() {
   const hasFilters = search || categoryFilter || dateFilter;
 
   return (
-    <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm" aria-labelledby="audit-trail-heading">
+    <section ref={auditRef} className="dashboard-card overflow-hidden rounded-2xl shadow-sm" aria-labelledby="audit-trail-heading">
       <div className="flex items-center gap-3 border-b border-slate-100 p-5 sm:p-6 bg-white">
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-slate-700">
           <FaClockRotateLeft className="text-base" aria-hidden="true" />
@@ -130,10 +132,11 @@ export default function AuditTrail() {
           </div>
           <p className="mt-0.5 text-xs text-slate-500">Immutable ledger of account, invitation, workflow, and access changes.</p>
         </div>
+        <PdfExportButton targetRef={auditRef} title="Export PDF" />
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/50 p-4 sm:flex-row sm:items-center sm:gap-3 sm:p-5">
+      <div className="print-export-control flex flex-col gap-2 border-b border-slate-100 bg-slate-50/50 p-4 sm:flex-row sm:items-center sm:gap-3 sm:p-5">
         {/* Search */}
         <div className="relative flex-1">
           <FaMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400" aria-hidden="true" />
