@@ -6,6 +6,7 @@ import AllTask from '../other/AllTask';
 import InviteEmployee from '../other/InviteEmployee';
 import TaskManagement from '../other/TaskManagement';
 import TeamManagement from '../other/TeamManagement';
+import TaskReports from '../other/TaskReports';
 
 const AdminDashboard = (props) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
@@ -65,6 +66,7 @@ const AdminDashboard = (props) => {
         </div>
         {userData !== null && (
           <div className="mt-6 space-y-6">
+            <TaskReports />
             <TaskManagement />
             <TeamManagement />
           </div>

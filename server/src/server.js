@@ -138,12 +138,14 @@ const companyDto = c => ({ id: c.id, name: c.name, slug: c.slug, industry: c.ind
 const findUser = async (email) => (await query(`SELECT ${userFields}, password_hash AS "passwordHash" FROM users WHERE email = $1`, [email])).rows[0];
 const email = z.string().trim().email().max(254).transform(value => value.toLowerCase());
 const password = z.string().min(10, 'Password must be at least 10 characters').max(128);
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
+  .refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Date is invalid');
 const schemas = {
   login: z.object({ email, password: z.string().min(1).max(128) }),
   register: z.object({ companyName: z.string().trim().min(2).max(120), industry: z.string().trim().min(2).max(80).default('General'), size: z.enum(['1-10', '11-50', '51-200', '201-500', '500+']).default('1-10'), firstName: z.string().trim().min(2).max(80), email, password }),
   employee: z.object({ firstName: z.string().trim().min(2).max(80), email, password, department: z.string().trim().min(2).max(80).default('General') }),
   invitation: z.object({ firstName: z.string().trim().min(2).max(80), email, department: z.string().trim().min(2).max(80).default('General') }),
-  task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Task date must be YYYY-MM-DD').refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Task date is invalid'), category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
+  task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: isoDate, category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
 app.get('/api/health/live', (req, res) => res.json({ status: 'ok' }));
@@ -773,6 +775,62 @@ app.post('/api/tasks/:id/comments', auth, async (req, res, next) => {
       req
     );
     res.status(201).json({ ...comment, userId: req.user.id, firstName: req.user.firstName, emailStatus });
+  } catch (error) {
+    next(error);
+  }
+});
+app.get('/api/reports/tasks', auth, adminOnly, async (req, res, next) => {
+  try {
+    const values = body(z.object({
+      from: isoDate,
+      to: isoDate
+    }).refine(range => range.from <= range.to, {
+      message: 'Start date must be on or before end date',
+      path: ['from']
+    }), req.query);
+    const params = [req.company.id, values.from, values.to];
+    const dateScope = 't.company_id=$1 AND t.archived_at IS NULL AND t.created_at >= $2::date AND t.created_at < ($3::date + INTERVAL \'1 day\')';
+    const [summary, statuses, priorities, categories, assignees] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::int AS "totalTasks",
+           COUNT(*) FILTER (WHERE t.status='new')::int AS "newTasks",
+           COUNT(*) FILTER (WHERE t.status='active')::int AS "activeTasks",
+           COUNT(*) FILTER (WHERE t.status='completed')::int AS "completedTasks",
+           COUNT(*) FILTER (WHERE t.status='failed')::int AS "failedTasks",
+           COUNT(*) FILTER (WHERE t.status IN ('new','active') AND t.task_date<CURRENT_DATE::text)::int AS "overdueTasks"
+         FROM tasks t WHERE ${dateScope}`,
+        params
+      ),
+      query(
+        `SELECT t.status,COUNT(*)::int AS count FROM tasks t WHERE ${dateScope} GROUP BY t.status`,
+        params
+      ),
+      query(
+        `SELECT t.priority,COUNT(*)::int AS count FROM tasks t WHERE ${dateScope} GROUP BY t.priority`,
+        params
+      ),
+      query(
+        `SELECT t.category,COUNT(*)::int AS count FROM tasks t WHERE ${dateScope} GROUP BY t.category ORDER BY count DESC,t.category ASC LIMIT 10`,
+        params
+      ),
+      query(
+        `SELECT t.assigned_to AS "assigneeId",COALESCE(u.first_name,'Former employee') AS "assigneeName",
+           COALESCE(u.active,false) AS active,COUNT(*)::int AS "totalTasks",
+           COUNT(*) FILTER (WHERE t.status='completed')::int AS "completedTasks",
+           COUNT(*) FILTER (WHERE t.status IN ('new','active') AND t.task_date<CURRENT_DATE::text)::int AS "overdueTasks"
+         FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to AND u.company_id=t.company_id
+         WHERE ${dateScope} GROUP BY t.assigned_to,u.first_name,u.active ORDER BY "totalTasks" DESC,"assigneeName" ASC`,
+        params
+      )
+    ]);
+    res.json({
+      range: values,
+      summary: summary.rows[0],
+      statusBreakdown: statuses.rows,
+      priorityBreakdown: priorities.rows,
+      categoryBreakdown: categories.rows,
+      assigneeBreakdown: assignees.rows
+    });
   } catch (error) {
     next(error);
   }

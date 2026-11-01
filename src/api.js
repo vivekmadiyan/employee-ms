@@ -31,6 +31,10 @@ export const resetPasswordApi = (token, password) => api('/auth/reset-password',
 export const getEmployeeDashboard = () => api('/dashboard/employee');
 export const getEmployees = () => api('/employees');
 export const getAdminDashboard = () => api('/dashboard/admin');
+export const getTaskReportApi = filters => {
+  const search = new URLSearchParams(filters);
+  return api(`/reports/tasks?${search.toString()}`);
+};
 export const getTasksApi = (filters = {}) => {
   const search = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '' && value !== undefined && value !== null));
   const query = search.toString();

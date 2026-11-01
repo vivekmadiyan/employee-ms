@@ -62,6 +62,84 @@ const normalize = sql => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 function installQueryMock() {
   mocks.query.mockImplementation(async (sql, params = []) => {
     const text = normalize(sql);
+    if (text.startsWith('select count(*)::int as "totaltasks"')) {
+      const reportTasks = tasks.filter(task => {
+        const createdDate = String(task.createdAt).slice(0, 10);
+        return task.companyId === Number(params[0]) &&
+          !task.archivedAt &&
+          createdDate >= params[1] &&
+          createdDate <= params[2];
+      });
+      return result([{
+        totalTasks: reportTasks.length,
+        newTasks: reportTasks.filter(task => task.status === 'new').length,
+        activeTasks: reportTasks.filter(task => task.status === 'active').length,
+        completedTasks: reportTasks.filter(task => task.status === 'completed').length,
+        failedTasks: reportTasks.filter(task => task.status === 'failed').length,
+        overdueTasks: reportTasks.filter(task =>
+          ['new', 'active'].includes(task.status) &&
+          task.taskDate < new Date().toISOString().slice(0, 10)
+        ).length
+      }]);
+    }
+    if (text.startsWith('select t.status,count(*)::int as count from tasks t')) {
+      const reportTasks = tasks.filter(task =>
+        task.companyId === Number(params[0]) &&
+        !task.archivedAt &&
+        String(task.createdAt).slice(0, 10) >= params[1] &&
+        String(task.createdAt).slice(0, 10) <= params[2]
+      );
+      const groups = new Map();
+      reportTasks.forEach(task => groups.set(task.status, (groups.get(task.status) || 0) + 1));
+      return result([...groups].map(([status, count]) => ({ status, count })));
+    }
+    if (text.startsWith('select t.priority,count(*)::int as count from tasks t')) {
+      const reportTasks = tasks.filter(task =>
+        task.companyId === Number(params[0]) &&
+        !task.archivedAt &&
+        String(task.createdAt).slice(0, 10) >= params[1] &&
+        String(task.createdAt).slice(0, 10) <= params[2]
+      );
+      const groups = new Map();
+      reportTasks.forEach(task => groups.set(task.priority, (groups.get(task.priority) || 0) + 1));
+      return result([...groups].map(([priority, count]) => ({ priority, count })));
+    }
+    if (text.startsWith('select t.category,count(*)::int as count from tasks t')) {
+      const reportTasks = tasks.filter(task =>
+        task.companyId === Number(params[0]) &&
+        !task.archivedAt &&
+        String(task.createdAt).slice(0, 10) >= params[1] &&
+        String(task.createdAt).slice(0, 10) <= params[2]
+      );
+      const groups = new Map();
+      reportTasks.forEach(task => groups.set(task.category, (groups.get(task.category) || 0) + 1));
+      return result([...groups].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count).slice(0, 10));
+    }
+    if (text.startsWith('select t.assigned_to as "assigneeid"')) {
+      const reportTasks = tasks.filter(task =>
+        task.companyId === Number(params[0]) &&
+        !task.archivedAt &&
+        String(task.createdAt).slice(0, 10) >= params[1] &&
+        String(task.createdAt).slice(0, 10) <= params[2]
+      );
+      const groups = new Map();
+      reportTasks.forEach(task => {
+        const group = groups.get(task.assignedTo) || { totalTasks: 0, completedTasks: 0, overdueTasks: 0 };
+        group.totalTasks += 1;
+        if (task.status === 'completed') group.completedTasks += 1;
+        if (['new', 'active'].includes(task.status) && task.taskDate < new Date().toISOString().slice(0, 10)) group.overdueTasks += 1;
+        groups.set(task.assignedTo, group);
+      });
+      return result([...groups].map(([assigneeId, counts]) => {
+        const assignee = users.find(user => user.id === assigneeId && user.companyId === Number(params[0]));
+        return {
+          assigneeId,
+          assigneeName: assignee?.firstName || 'Former employee',
+          active: assignee?.active || false,
+          ...counts
+        };
+      }).sort((a, b) => b.totalTasks - a.totalTasks));
+    }
     if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, active, password_hash as "passwordhash" from users where email')) {
       const user = users.find(item => item.email === params[0]);
       return result(user ? [{ ...userFields(user), passwordHash: user.passwordHash }] : []);
@@ -611,6 +689,59 @@ describe('authenticated API workflows', () => {
     await request(app).post('/api/tasks/bulk')
       .set('Authorization', `Bearer ${employeeLogin.body.token}`)
       .send({ taskIds: [101], action: 'archive' })
+      .expect(403);
+  });
+
+  it('returns tenant-scoped task reports for the requested creation period', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    tasks = [
+      { id: 201, companyId: 1, taskTitle: 'Overdue task', createdAt: '2026-10-10T12:00:00Z', taskDate: '2026-10-20', category: 'Operations', assignedTo: 2, status: 'active', priority: 'high', archivedAt: null },
+      { id: 202, companyId: 1, taskTitle: 'Completed task', createdAt: '2026-10-20T12:00:00Z', taskDate: '2099-12-31', category: 'Research', assignedTo: 3, status: 'completed', priority: 'low', archivedAt: null },
+      { id: 203, companyId: 2, taskTitle: 'Other workspace task', createdAt: '2026-10-12T12:00:00Z', taskDate: '2026-10-15', category: 'Operations', assignedTo: 2, status: 'active', priority: 'high', archivedAt: null },
+      { id: 204, companyId: 1, taskTitle: 'Outside report range', createdAt: '2026-09-30T12:00:00Z', taskDate: '2099-12-31', category: 'Research', assignedTo: 2, status: 'new', priority: 'medium', archivedAt: null },
+      { id: 205, companyId: 1, taskTitle: 'Archived task', createdAt: '2026-10-15T12:00:00Z', taskDate: '2026-10-20', category: 'Operations', assignedTo: 2, status: 'active', priority: 'high', archivedAt: '2026-10-16T00:00:00Z' }
+    ];
+
+    const report = await request(app).get('/api/reports/tasks?from=2026-10-01&to=2026-10-31')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .expect(200);
+    expect(report.body.range).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(report.body.summary).toMatchObject({
+      totalTasks: 2,
+      newTasks: 0,
+      activeTasks: 1,
+      completedTasks: 1,
+      failedTasks: 0,
+      overdueTasks: 1
+    });
+    expect(report.body.statusBreakdown).toEqual([
+      { status: 'active', count: 1 },
+      { status: 'completed', count: 1 }
+    ]);
+    expect(report.body.categoryBreakdown).toEqual([
+      { category: 'Operations', count: 1 },
+      { category: 'Research', count: 1 }
+    ]);
+    expect(report.body.assigneeBreakdown).toMatchObject([
+      { assigneeId: 2, assigneeName: 'Employee', totalTasks: 1, overdueTasks: 1 },
+      { assigneeId: 3, assigneeName: 'Second Employee', totalTasks: 1, completedTasks: 1 }
+    ]);
+
+    await request(app).get('/api/reports/tasks?from=2026-02-30&to=2026-03-01')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .expect(400);
+    await request(app).get('/api/reports/tasks?from=2026-11-01&to=2026-10-01')
+      .set('Authorization', `Bearer ${adminLogin.body.token}`)
+      .expect(400);
+    await request(app).get('/api/reports/tasks?from=2026-10-01&to=2026-10-31')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
       .expect(403);
   });
 

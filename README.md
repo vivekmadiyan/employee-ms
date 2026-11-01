@@ -90,6 +90,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `POST /api/tasks/bulk` (admin; archive, restore, or set priority for up to 100 task IDs)
 - `PATCH /api/tasks/:id/status`
 - `GET` and `POST /api/tasks/:id/comments`
+- `GET /api/reports/tasks?from=YYYY-MM-DD&to=YYYY-MM-DD` (admin)
 - `GET /api/notifications` and notification read endpoints
 - `GET /api/dashboard/admin` (admin)
 - `GET /api/dashboard/employee`
@@ -101,6 +102,10 @@ The API validates environment variables and request bodies, scopes all tenant da
 - Team management supports employee profile edits, safe access deactivation/reactivation, invitation status, resend, and revoke.
 - Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream refreshes notifications, dashboards, task lists, team/invitation data, and open discussions across signed-in devices within a few seconds.
 - Users can update their profile and password or request a time-limited password-reset email.
+
+## V2 task reporting
+
+Admins can review task status, priority, category, overdue work, and assignee workload for a selected task-creation date range, with CSV export. Reports are scoped to the current company and exclude archived tasks.
 
 ## Security notes
 Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected APIs, and employees can only modify tasks assigned to them. For production, use HTTPS, a strong JWT secret, secure cookie-based refresh tokens, rate limiting, request validation, and managed PostgreSQL credentials.
