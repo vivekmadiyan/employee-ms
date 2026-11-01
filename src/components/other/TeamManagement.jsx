@@ -1,7 +1,8 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
-import { FaArrowsRotate, FaCopy, FaUserGroup, FaPenToSquare } from 'react-icons/fa6';
+import { FaArrowsRotate, FaCopy, FaFileArrowDown, FaUserGroup, FaPenToSquare } from 'react-icons/fa6';
 import { getInvitationsApi, resendInvitationApi, revokeInvitationApi, updateEmployeeApi, updateEmployeeStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
+import { HelpIcon } from './Tooltip';
 
 const statusClass = status => ({
   pending: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200/50',
@@ -138,6 +139,32 @@ export default function TeamManagement() {
     }
   };
 
+
+  const exportCsv = () => {
+    if (!userData?.length) return;
+    const headers = ['ID', 'Name', 'Email', 'Department', 'Role', 'Status', 'Open Tasks', 'Completed Tasks'];
+    const rows = userData.map(e => [
+      e.id,
+      e.firstName,
+      e.email,
+      e.department || 'General',
+      e.role || 'employee',
+      e.active ? 'Active' : 'Inactive',
+      (e.taskCounts?.newTask || 0) + (e.taskCounts?.active || 0),
+      e.taskCounts?.completed || 0,
+    ]);
+    const csv = [headers, ...rows]
+      .map(row => row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(','))
+      .join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'employees-' + new Date().toISOString().slice(0, 10) + '.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6 bg-white">
@@ -146,18 +173,34 @@ export default function TeamManagement() {
             <FaUserGroup aria-hidden="true" className="text-base" />
           </span>
           <div>
-            <h2 className="dashboard-card-heading text-slate-900">People & Workspace Access</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="dashboard-card-heading text-slate-900">People & Workspace Access</h2>
+              <HelpIcon text="Manage employee profiles, deactivate access, and track pending invitations." />
+            </div>
             <p className="mt-0.5 text-xs text-slate-500">Manage teammate profiles, roles, and pending invitations.</p>
           </div>
         </div>
-        <button 
-          type="button" 
-          onClick={() => { setEmployeeError(''); refresh().catch(error => setEmployeeError(error.message)); loadInvitations(); }} 
-          className="inline-flex items-center justify-center gap-1.5 self-start rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors sm:self-auto"
-        >
-          <FaArrowsRotate aria-hidden="true" className="text-xs text-slate-400" />
-          <span>Refresh</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {userData?.length > 0 && (
+            <button
+              type="button"
+              onClick={exportCsv}
+              aria-label="Export employees as CSV"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
+            >
+              <FaFileArrowDown aria-hidden="true" className="text-xs text-slate-400" />
+              <span>Export CSV</span>
+            </button>
+          )}
+          <button 
+            type="button" 
+            onClick={() => { setEmployeeError(''); refresh().catch(error => setEmployeeError(error.message)); loadInvitations(); }} 
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
+          >
+            <FaArrowsRotate aria-hidden="true" className="text-xs text-slate-400" />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {message && <p role="status" className="mx-5 mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800 sm:mx-6">{message}</p>}

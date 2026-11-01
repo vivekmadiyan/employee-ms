@@ -1,11 +1,13 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { FaArrowRightFromBracket, FaBell, FaBuilding, FaGear, FaLayerGroup } from 'react-icons/fa6';
+import { FaArrowRightFromBracket, FaBell, FaBuilding, FaGear, FaLayerGroup, FaMoon, FaSun } from 'react-icons/fa6';
 import { getNotificationsApi, markAllNotificationsReadApi, markNotificationReadApi, subscribeNotificationsApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
+import { useTheme } from '../../context/ThemeContext';
 import AccountSettings from './AccountSettings';
 
 const Header = ({ changeUser, data }) => {
   const { currentUser } = useContext(AuthContext);
+  const { darkMode, toggleDark } = useTheme();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationError, setNotificationError] = useState('');
@@ -205,6 +207,16 @@ const Header = ({ changeUser, data }) => {
             className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
           >
             <FaGear className="text-sm" aria-hidden="true" />
+          </button>
+
+          {/* Dark Mode Toggle */}
+          <button
+            type="button"
+            onClick={toggleDark}
+            aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            {darkMode ? <FaSun className="text-sm text-amber-500" aria-hidden="true" /> : <FaMoon className="text-sm" aria-hidden="true" />}
           </button>
 
           {/* User Initials Avatar */}
