@@ -37,6 +37,7 @@ export const requestPasswordResetApi = email => api('/auth/forgot-password', { m
 export const resetPasswordApi = (token, password) => api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
 export const getEmployeeDashboard = () => api('/dashboard/employee');
 export const getEmployees = () => api('/employees');
+export const getDirectReportsApi = () => api('/team/direct-reports');
 export const getAdminDashboard = () => api('/dashboard/admin');
 export const getTaskReportApi = filters => {
   const search = new URLSearchParams(filters);

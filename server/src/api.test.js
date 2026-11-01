@@ -95,6 +95,19 @@ function installQueryMock() {
       });
       return result([]);
     }
+    if (text.startsWith('select id,first_name as "firstname",email,department,job_title as "jobtitle",team from users where company_id=$1 and manager_id=$2')) {
+      return result(users
+        .filter(user => user.companyId === Number(params[0]) && user.managerId === Number(params[1]) && user.role === 'employee' && user.active)
+        .sort((left, right) => (left.team || '').localeCompare(right.team || '') || left.firstName.localeCompare(right.firstName))
+        .map(user => ({
+          id: user.id,
+          firstName: user.firstName,
+          email: user.email,
+          department: user.department,
+          jobTitle: user.jobTitle || '',
+          team: user.team || 'General'
+        })));
+    }
     if (text.startsWith('select slack_webhook_encrypted is not null as configured from company_integrations')) {
       return result(slackWebhookEncrypted ? [{ configured: true }] : [{ configured: false }]);
     }
@@ -294,7 +307,14 @@ function installQueryMock() {
       const leave = leaveRequests.find(item =>
         item.id === Number(params[3]) &&
         item.companyId === Number(params[4]) &&
-        item.status === 'pending'
+        item.status === 'pending' &&
+        (params[5] == null || users.some(user =>
+          user.id === item.userId &&
+          user.companyId === item.companyId &&
+          user.managerId === Number(params[5]) &&
+          user.role === 'employee' &&
+          user.active
+        ))
       );
       if (!leave) return result([]);
       leave.status = params[0];
@@ -327,7 +347,9 @@ function installQueryMock() {
     if (text.startsWith('select l.id,l.user_id as "userid"')) {
       const filtered = leaveRequests.filter(leave =>
         leave.companyId === Number(params[0]) &&
-        (params.length === 1 || leave.userId === Number(params[1]))
+        (params.length === 1 || leave.userId === Number(params[1]) ||
+          users.some(user => user.id === leave.userId && user.companyId === leave.companyId &&
+            user.managerId === Number(params[1]) && user.role === 'employee' && user.active))
       ).sort((left, right) => {
         if ((left.status === 'pending') !== (right.status === 'pending')) return left.status === 'pending' ? -1 : 1;
         return right.id - left.id;
@@ -506,6 +528,13 @@ function installQueryMock() {
         cursor = users.find(user => user.id === cursor.managerId && user.companyId === Number(params[0]));
       }
       return result([{ createsCycle }]);
+    }
+    if (text.startsWith('select id,first_name as "firstname",email from users where company_id=$1 and active=true') && text.includes("role='admin' or id=(select manager_id")) {
+      const report = users.find(user => user.id === Number(params[1]) && user.companyId === Number(params[0]));
+      return result(users
+        .filter(user => user.companyId === Number(params[0]) && user.active &&
+          (user.role === 'admin' || user.id === report?.managerId))
+        .map(user => ({ id: user.id, firstName: user.firstName, email: user.email })));
     }
     if (text.startsWith('select id,first_name as "firstname",email from users where company_id=$1 and role=\'admin\' and active=true')) {
       return result(users
@@ -1615,13 +1644,105 @@ describe('authenticated API workflows', () => {
     await request(app).patch(`/api/leave-requests/${pending.body.id}/review`)
       .set('Authorization', `Bearer ${employeeLogin.body.token}`)
       .send({ status: 'rejected' })
-      .expect(403);
+      .expect(404);
     expect(auditEvents.map(event => event.action)).toEqual([
       'leave.requested',
       'leave.cancelled',
       'leave.requested',
       'leave.approved'
     ]);
+  });
+
+  it('limits managers to their active direct reports and allows scoped leave review', async () => {
+    users.find(user => user.id === 3).managerId = 2;
+    const managerLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const reportLogin = await request(app).post('/api/auth/login').send({
+      email: 'second@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const managerToken = managerLogin.body.token;
+    const reportToken = reportLogin.body.token;
+
+    await request(app).get('/api/team/direct-reports')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200, [{
+        id: 3,
+        firstName: 'Second Employee',
+        email: 'second@example.test',
+        department: 'Research',
+        jobTitle: '',
+        team: 'General'
+      }]);
+    users.find(user => user.id === 3).active = false;
+    await request(app).get('/api/team/direct-reports')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200, []);
+    users.find(user => user.id === 3).active = true;
+    await request(app).get('/api/employees')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(403);
+    await request(app).get('/api/invitations')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(403);
+    await request(app).patch('/api/employees/3')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ firstName: 'Changed', department: 'Research' })
+      .expect(403);
+
+    const teamRequest = await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${reportToken}`)
+      .send({ startDate: '2026-12-10', endDate: '2026-12-11', leaveType: 'vacation', reason: 'Family trip' })
+      .expect(201);
+    expect(mocks.sendLeaveRequestEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.sendLeaveRequestEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'employee@example.test',
+      recipientName: 'Employee'
+    }));
+
+    await request(app).get('/api/leave-requests')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200)
+      .then(response => expect(response.body).toMatchObject([
+        { id: teamRequest.body.id, userId: 3, employeeName: 'Second Employee', status: 'pending' }
+      ]));
+    await request(app).patch(`/api/leave-requests/${teamRequest.body.id}/review`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ status: 'approved', reviewNote: 'Approved by your manager.' })
+      .expect(200)
+      .then(response => expect(response.body).toMatchObject({
+        status: 'approved',
+        reviewNote: 'Approved by your manager.'
+      }));
+
+    const pendingReportRequest = await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${reportToken}`)
+      .send({ startDate: '2026-12-15', endDate: '2026-12-15', leaveType: 'personal', reason: 'Appointment' })
+      .expect(201);
+    users.find(user => user.id === 3).managerId = null;
+    await request(app).get('/api/leave-requests')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200, []);
+    await request(app).patch(`/api/leave-requests/${pendingReportRequest.body.id}/review`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ status: 'approved' })
+      .expect(404);
+    users.find(user => user.id === 3).managerId = 2;
+    await request(app).patch(`/api/leave-requests/${pendingReportRequest.body.id}/review`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ status: 'approved' })
+      .expect(200);
+
+    const managerOwnRequest = await request(app).post('/api/leave-requests')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ startDate: '2026-12-20', endDate: '2026-12-20', leaveType: 'personal', reason: 'Personal appointment' })
+      .expect(201);
+    await request(app).patch(`/api/leave-requests/${managerOwnRequest.body.id}/review`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ status: 'approved' })
+      .expect(404);
   });
 
   it('configures annual leave allowances, enforces reserved balances, and shares private approved absences', async () => {

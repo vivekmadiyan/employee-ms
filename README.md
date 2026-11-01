@@ -208,6 +208,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, plus backend syn
 
 ### Implemented
 - Employee profiles include job title, employment type, and hire date, available during direct and CSV invitations and editable/exportable from team management.
+- Hybrid team management keeps company structure, invitations, employee access, and policy changes admin-controlled. An employee becomes a manager through assigned active direct reports (not a separate elevated role); managers can view only those reports and review only their leave requests, while admins retain workspace-wide oversight.
 - Team structure includes named teams, manager/reporting-line assignments, team-filtered directory, and a browsable org chart.
 - Leave request emails go to active workspace admins; approval emails go to the employee, with delivery status surfaced in the workflow.
 - Admin-configurable annual leave allowances, employee leave balances, and a shared calendar of approved absences.

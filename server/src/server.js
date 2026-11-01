@@ -210,18 +210,19 @@ const emailTaskUpdate = async (task, recipientIds, actorId, actorName, updateTyp
 const emailLeaveRequest = async (leave, employeeName, req) => {
   if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) return 'not_configured';
   try {
-    const admins = (await query(
+    const reviewers = (await query(
       `SELECT id,first_name AS "firstName",email FROM users
-       WHERE company_id=$1 AND role='admin' AND active=true`,
-      [req.company.id]
+       WHERE company_id=$1 AND active=true
+         AND (role='admin' OR id=(SELECT manager_id FROM users WHERE id=$2 AND company_id=$1))`,
+      [req.company.id, leave.userId]
     )).rows;
-    if (!admins.length) return 'no_recipients';
-    const results = await Promise.allSettled(admins.map(admin => sendLeaveRequestEmail({
+    if (!reviewers.length) return 'no_recipients';
+    const results = await Promise.allSettled(reviewers.map(reviewer => sendLeaveRequestEmail({
       apiKey: config.BREVO_API_KEY,
       senderEmail: config.BREVO_SENDER_EMAIL,
       senderName: config.BREVO_SENDER_NAME,
-      recipientEmail: admin.email,
-      recipientName: admin.firstName,
+      recipientEmail: reviewer.email,
+      recipientName: reviewer.firstName,
       companyName: req.company.name,
       employeeName,
       leave
@@ -752,6 +753,20 @@ app.post('/api/auth/reset-password', resetLimiter, async (req, res, next) => {
 app.get('/api/company/me', auth, (req, res) => res.json(companyDto(req.company)));
 
 app.get('/api/employees', auth, adminOnly, async (req, res) => { const users = (await query(`SELECT ${userFields} FROM users WHERE company_id=$1 AND role='employee' ORDER BY active DESC, first_name`, [req.company.id])).rows; const tasks = (await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, [req.company.id])).rows; const onboarding = new Set((await query('SELECT employee_id AS "employeeId" FROM employee_onboarding WHERE company_id=$1', [req.company.id])).rows.map(item => item.employeeId)); res.json(users.map(u => { const own = tasks.filter(t => t.assignedTo === u.id); return { ...safeUser(u), onboardingCreated: onboarding.has(u.id), tasks: own.map(serializeTask), taskCounts: counts(own) }; })); });
+app.get('/api/team/direct-reports', auth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'employee') return res.status(403).json({ message: 'Only employees can view their direct reports' });
+    const { rows } = await query(
+      `SELECT id,first_name AS "firstName",email,department,job_title AS "jobTitle",team
+       FROM users WHERE company_id=$1 AND manager_id=$2 AND role='employee' AND active=true
+       ORDER BY team,first_name`,
+      [req.company.id, req.user.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
 app.post('/api/employees', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(schemas.employee, req.body);
@@ -1085,7 +1100,10 @@ app.get('/api/leave-requests', auth, async (req, res, next) => {
     let scope = 'l.company_id=$1';
     if (req.user.role === 'employee') {
       params.push(req.user.id);
-      scope += ' AND l.user_id=$2';
+      scope += ` AND (l.user_id=$2 OR EXISTS (
+        SELECT 1 FROM users reports WHERE reports.id=l.user_id AND reports.company_id=l.company_id
+          AND reports.manager_id=$2 AND reports.role='employee' AND reports.active=true
+      ))`;
     }
     const { rows } = await query(
       `SELECT l.id,l.user_id AS "userId",u.first_name AS "employeeName",l.start_date::text AS "startDate",
@@ -1290,8 +1308,9 @@ app.post('/api/leave-requests', auth, async (req, res, next) => {
     client?.release();
   }
 });
-app.patch('/api/leave-requests/:id/review', auth, adminOnly, async (req, res, next) => {
+app.patch('/api/leave-requests/:id/review', auth, async (req, res, next) => {
   try {
+    if (!['admin', 'employee'].includes(req.user.role)) return res.status(403).json({ message: 'You do not have permission to review leave requests' });
     const values = body(z.object({
       status: z.enum(['approved', 'rejected']),
       reviewNote: z.string().trim().max(500).optional().default('')
@@ -1299,9 +1318,13 @@ app.patch('/api/leave-requests/:id/review', auth, adminOnly, async (req, res, ne
     const leave = (await query(
       `UPDATE leave_requests SET status=$1,review_note=$2,reviewed_by=$3,reviewed_at=NOW(),updated_at=NOW()
        WHERE id=$4 AND company_id=$5 AND status='pending'
+         AND ($6::int IS NULL OR EXISTS (
+           SELECT 1 FROM users reports WHERE reports.id=leave_requests.user_id AND reports.company_id=$5
+             AND reports.manager_id=$6 AND reports.role='employee' AND reports.active=true
+         ))
        RETURNING id,user_id AS "userId",start_date::text AS "startDate",end_date::text AS "endDate",
          leave_type AS "leaveType",reason,status,review_note AS "reviewNote",reviewed_at AS "reviewedAt"`,
-      [values.status, values.reviewNote, req.user.id, req.params.id, req.company.id]
+      [values.status, values.reviewNote, req.user.id, req.params.id, req.company.id, req.user.role === 'admin' ? null : req.user.id]
     )).rows[0];
     if (!leave) return res.status(404).json({ message: 'Pending leave request not found' });
     await recordAuditEvent(req.company.id, req.user.id, req, `leave.${values.status}`, 'leave_request', leave.id, {

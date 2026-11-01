@@ -48,9 +48,10 @@ const emailStatusMessage = status => ({
   failed: 'Email could not be sent; the request is still available in the workspace.'
 }[status] || '');
 
-export default function LeaveManagement() {
+export default function LeaveManagement({ isManager = false }) {
   const { currentUser } = useContext(AuthContext);
   const isAdmin = currentUser?.role === 'admin';
+  const canReview = isAdmin || isManager;
   const [requests, setRequests] = useState([]);
   const [policyDraft, setPolicyDraft] = useState(emptyPolicies);
   const [balance, setBalance] = useState([]);
@@ -200,10 +201,10 @@ export default function LeaveManagement() {
         </span>
         <div>
           <h2 id="leave-management-heading" className="dashboard-card-heading text-slate-900">
-            {isAdmin ? 'Team Leave Management' : 'Time Off & Leave Requests'}
+            {isAdmin ? 'Workspace Leave Management' : isManager ? 'Team Leave Management' : 'Time Off & Leave Requests'}
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            {isAdmin ? 'Review and manage time-off requests from workspace teammates.' : 'Submit leave requests and monitor manager approval status.'}
+            {isAdmin ? 'Review workspace requests and manage leave allowances.' : isManager ? 'Review leave requests from your direct reports; HR retains control of company policy.' : 'Submit leave requests and monitor manager approval status.'}
           </p>
         </div>
       </div>
@@ -398,7 +399,7 @@ export default function LeaveManagement() {
             <article key={leave.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 hover:bg-slate-50/50 transition-colors">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  {isAdmin && (
+                  {canReview && (
                     <span className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700">
                       {leave.employeeName}
                     </span>
@@ -425,7 +426,7 @@ export default function LeaveManagement() {
               </div>
 
               <div className="flex shrink-0 gap-2">
-                {isAdmin && leave.status === 'pending' && (
+                {canReview && leave.userId !== currentUser?.id && leave.status === 'pending' && (
                   <>
                     <button 
                       type="button" 
@@ -447,7 +448,7 @@ export default function LeaveManagement() {
                     </button>
                   </>
                 )}
-                {!isAdmin && leave.status === 'pending' && (
+                {leave.userId === currentUser?.id && leave.status === 'pending' && (
                   <button 
                     type="button" 
                     onClick={() => cancelRequest(leave)} 
@@ -463,7 +464,7 @@ export default function LeaveManagement() {
         </div>
       ) : !error ? (
         <p className="p-10 text-center text-xs text-slate-400">
-          {isAdmin ? 'No leave requests have been submitted yet.' : 'You have no submitted leave requests.'}
+          {canReview ? 'No direct-report leave requests are waiting or recorded.' : 'You have no submitted leave requests.'}
         </p>
       ) : null}
     </section>

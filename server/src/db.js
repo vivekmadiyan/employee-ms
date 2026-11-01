@@ -73,6 +73,7 @@ export async function initialiseDatabase() {
     CREATE TRIGGER leave_policies_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON company_leave_policies FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
     INSERT INTO workspace_activity(company_id) SELECT id FROM companies ON CONFLICT(company_id) DO NOTHING;
     CREATE INDEX IF NOT EXISTS users_company_id_idx ON users(company_id);
+    CREATE INDEX IF NOT EXISTS users_active_manager_idx ON users(company_id, manager_id, id) WHERE role='employee' AND active=true;
     CREATE INDEX IF NOT EXISTS tasks_company_id_idx ON tasks(company_id);
     CREATE INDEX IF NOT EXISTS tasks_active_company_due_idx ON tasks(company_id, task_date) WHERE archived_at IS NULL;
     CREATE INDEX IF NOT EXISTS invitations_company_id_idx ON invitations(company_id);
