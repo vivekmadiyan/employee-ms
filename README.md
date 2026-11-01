@@ -149,3 +149,23 @@ Set these optional values in `server/.env` or the backend hosting environment:
 - `BREVO_SENDER_NAME`
 
 The invitation link is generated from `CLIENT_URL` and never grants access to another company. Render's free service blocks SMTP ports, so transactional email is sent over HTTPS through Brevo.
+
+## 12. Additional / Remaining Features
+
+- **Dark Mode / Theming** – Provide a UI toggle for light‑ and dark‑theme with persisted user preference (CSS variables or Tailwind dark mode).
+- **Real‑Time Push Notifications** – Use WebSockets or Server‑Sent Events to push task updates, assignment alerts, and comment notifications instantly.
+- **Export to PDF** – Generate PDF reports for tasks, audit logs, and team metrics (e.g., via `react-pdf` or server‑side PDF generation).
+- **Calendar Sync (Google / Outlook)** – One‑click export of task due dates to external calendars using OAuth2 APIs.
+- **Accessibility (A11y)** – Add ARIA roles, keyboard navigation, focus management, and color‑contrast compliance throughout the UI.
+- **Internationalization (i18n)** – Integrate `react-i18next` (or similar) to support multiple languages and locale‑specific date/number formatting.
+- **Admin CSV Export of Users** – Export all employee records (ID, name, email, role, status) as CSV from the admin dashboard.
+- **Audit Trail Search & Filter** – Add a search bar and filters (action type, user, date range) to the Audit Trail view.
+- **Multi‑Factor Authentication (MFA)** – Optional TOTP or email‑code verification for admin logins (e.g., via `speakeasy`).
+- **API Rate Limiting & Throttling** – Protect backend endpoints against abuse (per‑IP / per‑user limits, configurable thresholds).
+- **Custom Email Templates** – UI for admins to edit subject/body of invitation, task‑assignment, and password‑reset emails.
+- **Performance Monitoring Dashboard** – Integrate a monitoring solution (Grafana, Prometheus, or a hosted SaaS) to view API latency, error rates, and resource usage.
+- **Branding / Theming Customization** – Allow workspace owners to set primary brand colors, upload a logo, and customize the app's look‑and‑feel.
+- **Mobile‑First Enhancements** – Optimize touch targets, add swipe gestures for task actions, and ensure responsive layouts on small screens.
+- **Data Retention Policies** – Settings to purge audit logs or archived tasks after configurable periods (e.g., 30 days, 90 days).
+- **Help Center / Tooltip System** – Contextual help icons with hover tooltips and a searchable knowledge‑base modal.
+- **Feature Flags** – Infrastructure (e.g., LaunchDarkly‑style) to enable/disable beta features per workspace or user role.
