@@ -74,3 +74,4 @@ export function HelpIcon({ text, position = 'top', className = '' }) {
     </Tooltip>
   );
 }
+
