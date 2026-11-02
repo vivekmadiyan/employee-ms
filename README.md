@@ -67,6 +67,17 @@ Do not expose PostgreSQL port `5432` publicly. Configure HTTPS at the edge, rest
 - Run `npm run check` and `npm --prefix server audit --omit=dev` in CI for every release.
 - Use a separate production database and a least-privilege database role.
 
+## Browser end-to-end tests
+
+The browser suite requires an empty, dedicated PostgreSQL database on the local machine. It refuses database URLs whose host is not `localhost` or a loopback address; never point it at production or a shared database.
+
+```powershell
+$env:EMS_E2E_DATABASE_URL = 'postgres://ems_e2e:ems_e2e_only@127.0.0.1:5432/ems_e2e'
+npm run test:e2e
+```
+
+GitHub Actions provisions its own ephemeral PostgreSQL service and Chromium browser for this suite.
+
 ## Security baseline
 
 The API validates environment variables and request bodies, scopes all tenant data by company, uses parameterized PostgreSQL queries, bcrypt password hashes, short-lived signed JWTs, strict CORS, Helmet headers, request size limits, rate limits for sensitive public flows, and request IDs for operational debugging. These controls address common authentication, object authorization, resource-consumption, and misconfiguration risks highlighted by the [OWASP API Security Top 10](https://owasp.org/www-project-api-security/).
@@ -238,14 +249,14 @@ npm --prefix server test
 npm --prefix server audit --omit=dev
 ```
 
-GitHub Actions runs the frontend lint/build and calendar tests, plus backend syntax checks and API/email/MFA tests on pushes to `main` and pull requests. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
+GitHub Actions runs the frontend lint/build and calendar tests, backend syntax checks and API/email/MFA tests, and a Chromium end-to-end workflow against an ephemeral PostgreSQL 16 service. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
 
 ### V2 release-readiness gaps
 
-- **P0 — Real-database/browser end-to-end coverage:** current API workflow tests mock PostgreSQL queries; CI does not provision PostgreSQL or run browser-based workflows. The deployed API health and Vercel-origin CORS preflight were smoke-tested, but registration-to-invitation-to-leave workflows were not exercised against a real database in this environment.
+- **P0 — Real-database/browser end-to-end coverage:** CI now exercises registration, invitation acceptance, manager reporting lines, employee authorization, and manager leave approval in Chromium against an isolated PostgreSQL service. The registration form also has an automated WCAG 2.1 A/AA scan. Run locally only with `EMS_E2E_DATABASE_URL` set to a dedicated PostgreSQL database on `localhost`; remote database hosts are rejected.
 - **P0 — Recovery rehearsal:** production database backup, restore, and rollback of schema changes need an owner-run rehearsal against the actual hosting provider.
 - **P1 — Production observability:** health and Prometheus metrics exist, but hosted dashboards, alert routing, and an incident runbook are not configured by the application.
-- **P1 — Accessibility assurance:** run a WCAG-focused keyboard and assistive-technology audit before making an accessibility conformance claim.
+- **P1 — Accessibility assurance:** the registration form has an automated WCAG 2.1 A/AA scan; continue with manual keyboard and assistive-technology checks across all workflows before making an accessibility conformance claim.
 - **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, documents, and offboarding are not implemented.
 - **Scope-dependent:** recruiting, payroll, benefits, billing, and advanced talent modules require customer and jurisdiction choices before implementation.
 
@@ -281,4 +292,4 @@ Calendar export downloads an `.ics` file for the tasks currently visible to the 
 - Company plan limits and billing if the product is commercialized.
 - OAuth-based two-way calendar synchronization.
 
-Monitoring, database backups/restore rehearsals, HTTPS, and production provider configuration also require deployment-level setup; application code alone cannot complete them.
+Monitoring, database backups/restore rehearsals, HTTPS, and production provider configuration also require deployment-level setup; application code alone cannot complete them. See [production operations](./docs/production-operations.md) for a recovery and alerting runbook.

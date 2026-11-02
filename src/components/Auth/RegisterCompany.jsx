@@ -148,7 +148,7 @@ const RegisterCompany = ({ onBack, onLogin }) => {
                 placeholder="At least 10 characters" 
                 className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
               />
-              <p className="mt-1 text-[11px] text-slate-400">Must be at least 10 characters.</p>
+              <p className="mt-1 text-[11px] text-slate-500">Must be at least 10 characters.</p>
             </div>
 
             <button 

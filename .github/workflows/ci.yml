@@ -25,3 +25,30 @@ jobs:
       - run: npm ci
       - run: node --check src/server.js
       - run: npm test
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ems_e2e
+          POSTGRES_PASSWORD: ems_e2e_only
+          POSTGRES_DB: ems_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ems_e2e -d ems_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm --prefix server ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env:
+          CI: true
+          EMS_E2E_DATABASE_URL: postgres://ems_e2e:ems_e2e_only@127.0.0.1:5432/ems_e2e
