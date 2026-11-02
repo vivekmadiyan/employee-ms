@@ -3,6 +3,7 @@ import {
   FaCalendarDay, 
   FaChartLine, 
   FaChartPie, 
+  FaClipboardCheck,
   FaListCheck, 
   FaPlus, 
   FaPlug,
@@ -22,6 +23,7 @@ import BulkInviteEmployees from '../other/BulkInviteEmployees';
 import AuditTrail from '../other/AuditTrail';
 import LeaveManagement from '../other/LeaveManagement';
 import SlackIntegration from '../other/SlackIntegration';
+import OffboardingManagement from '../other/OffboardingManagement';
 
 const AdminDashboard = (props) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
@@ -39,6 +41,7 @@ const AdminDashboard = (props) => {
     { id: 'overview', label: 'Overview', icon: FaChartPie },
     { id: 'tasks', label: 'Task Hub', icon: FaListCheck, count: inProgressTasks + newTasks },
     { id: 'team', label: 'Team & Invites', icon: FaUsers, count: totalEmployees },
+    { id: 'offboarding', label: 'Offboarding', icon: FaClipboardCheck },
     { id: 'leaves', label: 'Leave Requests', icon: FaCalendarDay },
     { id: 'reports', label: 'Reports', icon: FaChartLine },
     { id: 'audit', label: 'Audit Trail', icon: FaShieldHalved },
@@ -48,6 +51,7 @@ const AdminDashboard = (props) => {
     overview: ['Workspace Overview', 'A clear view of your team, priorities, and day-to-day operations.'],
     tasks: ['Task Hub', 'Create, assign, and keep work moving across your workspace.'],
     team: ['Team & Invites', 'Manage your people, reporting lines, and onboarding.'],
+    offboarding: ['Offboarding', 'Coordinate employee transitions with a clear, auditable checklist.'],
     leaves: ['Leave Requests', 'Review time off while keeping your team’s calendar in view.'],
     reports: ['Reports', 'Understand delivery trends and team workload.'],
     audit: ['Audit Trail', 'Review important changes made across your workspace.'],
@@ -242,6 +246,12 @@ const AdminDashboard = (props) => {
                   <BulkInviteEmployees />
                 </div>
                 <TeamManagement />
+              </div>
+            )}
+
+            {activeTab === 'offboarding' && (
+              <div className="space-y-6 animate-fade-in">
+                <OffboardingManagement />
               </div>
             )}
 

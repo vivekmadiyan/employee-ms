@@ -42,6 +42,8 @@ export async function initialiseDatabase() {
     CREATE TABLE IF NOT EXISTS company_leave_policies (company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, leave_type TEXT NOT NULL CHECK (leave_type IN ('vacation','sick','personal','other')), annual_allowance_days INTEGER CHECK (annual_allowance_days BETWEEN 0 AND 365), updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(company_id,leave_type));
     CREATE TABLE IF NOT EXISTS company_integrations (company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE, slack_webhook_encrypted TEXT, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS employee_onboarding (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, employee_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS employee_offboardings (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, employee_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, last_working_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress','completed')), created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS employee_offboarding_items (id SERIAL PRIMARY KEY, offboarding_id INTEGER NOT NULL REFERENCES employee_offboardings(id) ON DELETE CASCADE, item_key TEXT NOT NULL, title TEXT NOT NULL, position INTEGER NOT NULL, completed BOOLEAN NOT NULL DEFAULT FALSE, completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL, completed_at TIMESTAMPTZ, UNIQUE(offboarding_id,item_key));
     CREATE TABLE IF NOT EXISTS workspace_activity (company_id INTEGER PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
     CREATE OR REPLACE FUNCTION bump_workspace_activity() RETURNS trigger AS $$
     DECLARE
@@ -71,6 +73,8 @@ export async function initialiseDatabase() {
     CREATE TRIGGER leave_requests_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON leave_requests FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
     DROP TRIGGER IF EXISTS leave_policies_workspace_activity ON company_leave_policies;
     CREATE TRIGGER leave_policies_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON company_leave_policies FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
+    DROP TRIGGER IF EXISTS offboardings_workspace_activity ON employee_offboardings;
+    CREATE TRIGGER offboardings_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON employee_offboardings FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
     INSERT INTO workspace_activity(company_id) SELECT id FROM companies ON CONFLICT(company_id) DO NOTHING;
     CREATE INDEX IF NOT EXISTS users_company_id_idx ON users(company_id);
     CREATE INDEX IF NOT EXISTS users_active_manager_idx ON users(company_id, manager_id, id) WHERE role='employee' AND active=true;

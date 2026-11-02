@@ -55,6 +55,13 @@ const onboardingLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standa
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false, skip: skipRateLimitForTests, message: { message: 'Too many password reset requests. Please try again later.' } });
 const userFields = 'id, company_id AS "companyId", first_name AS "firstName", email, role, department, job_title AS "jobTitle", employment_type AS "employmentType", hire_date::text AS "hireDate", team, manager_id AS "managerId", active';
 const leaveTypes = ['vacation', 'sick', 'personal', 'other'];
+const offboardingChecklist = [
+  { key: 'handover', title: 'Complete role and knowledge handover' },
+  { key: 'responsibilities', title: 'Reassign active tasks and responsibilities' },
+  { key: 'property', title: 'Recover company equipment and property' },
+  { key: 'access', title: 'Revoke company-system access' },
+  { key: 'records', title: 'Complete required exit records' }
+];
 const leaveYearDays = (startDate, endDate, year) => {
   const yearStart = Date.UTC(year, 0, 1);
   const yearEnd = Date.UTC(year + 1, 0, 1) - 86400000;
@@ -920,6 +927,191 @@ app.post('/api/employees/:id/onboarding', auth, adminOnly, async (req, res, next
     tasksCreated: createdTasks.length,
     emailStatuses: emailResults.map(result => result.emailStatus)
   });
+});
+
+app.get('/api/offboardings', auth, adminOnly, async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT o.id,o.employee_id AS "employeeId",u.first_name AS "firstName",u.email,
+         o.last_working_date::text AS "lastWorkingDate",o.status,
+         i.id AS "itemId",i.item_key AS "itemKey",i.title AS "itemTitle",
+         i.position AS "itemPosition",i.completed AS "itemCompleted",
+         i.completed_at AS "itemCompletedAt"
+       FROM employee_offboardings o
+       JOIN users u ON u.id=o.employee_id AND u.company_id=o.company_id
+       LEFT JOIN employee_offboarding_items i ON i.offboarding_id=o.id
+       WHERE o.company_id=$1
+       ORDER BY o.created_at DESC,i.position`,
+      [req.company.id]
+    );
+    const offboardings = new Map();
+    for (const row of rows) {
+      if (!offboardings.has(row.id)) {
+        offboardings.set(row.id, {
+          id: row.id,
+          employeeId: row.employeeId,
+          firstName: row.firstName,
+          email: row.email,
+          lastWorkingDate: row.lastWorkingDate,
+          status: row.status,
+          items: []
+        });
+      }
+      if (row.itemId) {
+        offboardings.get(row.id).items.push({
+          id: row.itemId,
+          key: row.itemKey,
+          title: row.itemTitle,
+          completed: row.itemCompleted,
+          completedAt: row.itemCompletedAt
+        });
+      }
+    }
+    res.json([...offboardings.values()]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, next) => {
+  let values;
+  try {
+    values = body(z.object({ lastWorkingDate: isoDate }).strict(), req.body);
+  } catch (error) {
+    return next(error);
+  }
+  const employeeId = Number(req.params.id);
+  if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
+    return res.status(400).json({ message: 'Employee ID is invalid' });
+  }
+
+  const client = await pool.connect();
+  let offboarding;
+  try {
+    await client.query('BEGIN');
+    const employee = (await client.query(
+      `SELECT id,first_name AS "firstName",email FROM users
+       WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true FOR UPDATE`,
+      [employeeId, req.company.id]
+    )).rows[0];
+    if (!employee) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Active employee not found in this workspace' });
+    }
+
+    const existing = (await client.query(
+      'SELECT id FROM employee_offboardings WHERE company_id=$1 AND employee_id=$2',
+      [req.company.id, employeeId]
+    )).rows[0];
+    if (existing) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'An offboarding checklist already exists for this employee' });
+    }
+
+    offboarding = (await client.query(
+      `INSERT INTO employee_offboardings(company_id,employee_id,last_working_date,created_by)
+       VALUES($1,$2,$3,$4)
+       RETURNING id,employee_id AS "employeeId",last_working_date::text AS "lastWorkingDate",status`,
+      [req.company.id, employeeId, values.lastWorkingDate, req.user.id]
+    )).rows[0];
+    offboarding.firstName = employee.firstName;
+    offboarding.email = employee.email;
+    offboarding.items = await Promise.all(offboardingChecklist.map(async (item, position) => (
+      (await client.query(
+        `INSERT INTO employee_offboarding_items(offboarding_id,item_key,title,position)
+         VALUES($1,$2,$3,$4)
+         RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt"`,
+        [offboarding.id, item.key, item.title, position]
+      )).rows[0]
+    )));
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Offboarding checklist rollback failed:', { requestId: req.id, message: rollbackError.message });
+    }
+    return next(error);
+  } finally {
+    client.release();
+  }
+
+  await recordAuditEvent(req.company.id, req.user.id, req, 'employee.offboarding_created', 'user', employeeId, {
+    offboardingId: offboarding.id,
+    lastWorkingDate: offboarding.lastWorkingDate
+  });
+  res.status(201).json(offboarding);
+});
+
+app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, res, next) => {
+  let values;
+  try {
+    values = body(z.object({ completed: z.boolean() }).strict(), req.body);
+  } catch (error) {
+    return next(error);
+  }
+  const offboardingId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  if (![offboardingId, itemId].every(value => Number.isSafeInteger(value) && value > 0)) {
+    return res.status(400).json({ message: 'Offboarding checklist item is invalid' });
+  }
+
+  const client = await pool.connect();
+  let item;
+  let status;
+  try {
+    await client.query('BEGIN');
+    const offboarding = (await client.query(
+      `SELECT id,status FROM employee_offboardings
+       WHERE id=$1 AND company_id=$2 FOR UPDATE`,
+      [offboardingId, req.company.id]
+    )).rows[0];
+    if (!offboarding) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Offboarding checklist not found' });
+    }
+    if (offboarding.status !== 'in_progress') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Completed offboarding checklists cannot be changed' });
+    }
+
+    item = (await client.query(
+      `UPDATE employee_offboarding_items SET completed=$1,
+         completed_by=CASE WHEN $1 THEN $4 ELSE NULL END,
+         completed_at=CASE WHEN $1 THEN NOW() ELSE NULL END
+       WHERE id=$2 AND offboarding_id=$3
+       RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt"`,
+      [values.completed, itemId, offboardingId, req.user.id]
+    )).rows[0];
+    if (!item) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Offboarding checklist item not found' });
+    }
+    const remaining = (await client.query(
+      'SELECT COUNT(*)::int AS count FROM employee_offboarding_items WHERE offboarding_id=$1 AND completed=false',
+      [offboardingId]
+    )).rows[0].count;
+    status = remaining === 0 ? 'completed' : 'in_progress';
+    await client.query(
+      'UPDATE employee_offboardings SET status=$1,updated_at=NOW() WHERE id=$2 AND company_id=$3',
+      [status, offboardingId, req.company.id]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Offboarding checklist update rollback failed:', { requestId: req.id, message: rollbackError.message });
+    }
+    return next(error);
+  } finally {
+    client.release();
+  }
+
+  await recordAuditEvent(req.company.id, req.user.id, req, values.completed ? 'employee.offboarding_item_completed' : 'employee.offboarding_item_reopened', 'offboarding_item', item.id, {
+    offboardingId
+  });
+  res.json({ offboardingId, status, item });
 });
 
 app.post('/api/invitations', auth, adminOnly, async (req, res, next) => {

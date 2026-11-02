@@ -137,7 +137,7 @@ Status means: **Available** = implemented in EmployeeMS; **Basic** = a useful fi
 | Onboarding | Reusable workflows, forms/documents, assigned tasks, progress tracking | One-time checklist per active employee, implemented as trackable tasks | **Basic** — no configurable templates, forms, document collection, or e-signatures |
 | Leave and time off | Configurable policies, balance visibility, approval chains, holidays, accrual, scheduling | Requests, manager/admin review, email, annual calendar-day caps, balances, approved-absence calendar | **Basic** — no accrual, workday/holiday rules, carryover, or multi-stage approvals |
 | Employee documents | Private records, acknowledgements, secure retrieval, retention, signatures | No employee document repository | **Gap** |
-| Offboarding and lifecycle | Exit workflow, clearance, task ownership, access revocation, retained history | Admin can deactivate access; no complete exit checklist or lifecycle reporting | **Basic** |
+| Offboarding and lifecycle | Exit workflow, clearance, task ownership, access revocation, retained history | Admin-managed dated checklist with handover, task reassignment, property recovery, access revocation, and exit records; checklist completion does not deactivate the account | **Basic** — no per-item owners, plan revisions, or lifecycle reporting |
 | Attendance, shifts, and timesheets | Clock-in/out, schedules, breaks, approvals, labor rules | Not implemented | **Gap** — prioritize only for hourly/shift-based customers |
 | Recruiting and hiring | Candidate pipeline, requisitions, interview/hiring workflows | Invitations begin after a hiring decision; no applicant tracking | **Gap** — segment-dependent |
 | Performance and growth | Goals, review cycles, feedback, skills, learning | Task progress and comments, but no performance reviews, goals, or learning plans | **Gap** — segment-dependent |
@@ -158,7 +158,7 @@ Priorities target a usable, productive small-company HRIS first. “P0” items 
 - [x] Admin-owned organization changes with manager access limited to active direct reports.
 - [x] Employee leave requests and manager/admin-scoped decisions.
 - [x] Task assignment, team collaboration, notifications, and operational task reports.
-- [ ] Run browser-based end-to-end workflows against an isolated real PostgreSQL database in CI.
+- [x] Run browser-based end-to-end workflows against an isolated real PostgreSQL database in CI.
 - [ ] Rehearse production backup restore and schema rollback; document the recovery owner and recovery objectives.
 - [ ] Complete accessibility and keyboard checks on employee, manager, and admin workflows; fix critical barriers.
 - [ ] Add production monitoring, alert routing, and an incident runbook; verify email delivery and failure handling.
@@ -167,7 +167,8 @@ Priorities target a usable, productive small-company HRIS first. “P0” items 
 
 - [ ] Add secure employee document storage, permission rules, acknowledgements, audit trail, and retention/deletion controls. Keep private files out of the public frontend build.
 - [ ] Add reusable onboarding templates, owners, due dates, progress, and reminders; retain the existing task checklist integration.
-- [ ] Add offboarding checklists, accountable owners, access-revocation steps, exit dates, and preserved employment history.
+- [x] Add a dated admin-owned offboarding checklist with task handover, property, system access, and exit-record steps; account deactivation remains an explicit separate action.
+- [ ] Add per-item owners, plan revisions, and employee lifecycle reporting for onboarding/offboarding.
 - [ ] Expand leave policies with accrual, working-day calculations, company holidays, carryover, and configurable approval rules. Do not silently reinterpret existing calendar-day policies.
 - [ ] Add HR reporting for headcount, team/department changes, active/inactive employees, onboarding/offboarding, and leave usage.
 - [ ] Improve manager workflows with a clear pending-approval queue, team absence planning, and auditable actions while keeping private HR data restricted.
@@ -249,7 +250,7 @@ npm --prefix server test
 npm --prefix server audit --omit=dev
 ```
 
-GitHub Actions runs the frontend lint/build and calendar tests, backend syntax checks and API/email/MFA tests, and a Chromium end-to-end workflow against an ephemeral PostgreSQL 16 service. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
+GitHub Actions runs the frontend lint/build and calendar tests, backend syntax checks and API/email/MFA tests, and Chromium end-to-end workflows for registration, invitations, manager reporting, leave approval, and offboarding against an ephemeral PostgreSQL 16 service. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
 
 ### V2 release-readiness gaps
 
@@ -257,7 +258,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - **P0 — Recovery rehearsal:** production database backup, restore, and rollback of schema changes need an owner-run rehearsal against the actual hosting provider.
 - **P1 — Production observability:** health and Prometheus metrics exist, but hosted dashboards, alert routing, and an incident runbook are not configured by the application.
 - **P1 — Accessibility assurance:** the registration form has an automated WCAG 2.1 A/AA scan; continue with manual keyboard and assistive-technology checks across all workflows before making an accessibility conformance claim.
-- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, documents, and offboarding are not implemented.
+- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, and advanced offboarding ownership/reporting remain.
 - **Scope-dependent:** recruiting, payroll, benefits, billing, and advanced talent modules require customer and jurisdiction choices before implementation.
 
 ### Implemented
@@ -274,6 +275,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - Optional authenticator-app MFA with encrypted TOTP secrets and single-use recovery codes.
 - Workspace-configurable Slack notifications for task assignments and reassignments.
 - One-time employee onboarding checklists based on assigned, trackable tasks.
+- Admin-managed, date-based offboarding checklists with auditable item completion; completing a plan never silently disables the employee account.
 - Token-protected Prometheus metrics for HTTP request/error totals, latency, and PostgreSQL pool usage.
 - API rate limits, responsive/mobile layouts, task comments, leave management, contextual tooltips, and task calendar export.
 
@@ -282,7 +284,7 @@ Calendar export downloads an `.ics` file for the tasks currently visible to the 
 ### Remaining
 - Secure employee document storage and acknowledgement workflows.
 - Accrual-aware leave policies, working-day/holiday calculations, and carryover rules.
-- Auditable offboarding checklists and employee-lifecycle reporting.
+- Offboarding checklist owners, plan revisions, and employee-lifecycle reporting.
 - Full accessibility audit and remediation against WCAG, including assistive-technology testing.
 - Internationalization and locale-aware formatting.
 - Workspace-editable email templates and branding.

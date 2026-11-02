@@ -108,6 +108,10 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     headers: { Authorization: `Bearer ${manager.token}` }
   });
   expect(managerAdminResponse.status()).toBe(403);
+  const managerOffboardingResponse = await page.request.get(`${apiUrl}/offboardings`, {
+    headers: { Authorization: `Bearer ${manager.token}` }
+  });
+  expect(managerOffboardingResponse.status()).toBe(403);
 
   await page.getByRole('button', { name: /My team/ }).waitFor();
   await page.getByRole('button', { name: /My team/ }).click();
@@ -126,4 +130,57 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   });
   expect(savedRequest.ok()).toBeTruthy();
   expect((await savedRequest.json()).find(item => item.id === leaveRequest.id)?.status).toBe('approved');
+
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Sign in to workspace' }).click();
+  await page.getByLabel('Work Email').fill(adminEmail);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign In to Workspace' }).click();
+  await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
+  await page.getByRole('button', { name: 'Offboarding' }).click();
+  await expect(page.getByRole('heading', { name: 'Employee offboarding' })).toBeVisible();
+  await page.getByLabel('Active employee').selectOption(String(employeeSession.user.id));
+  const lastWorkingDate = new Date();
+  lastWorkingDate.setDate(lastWorkingDate.getDate() + 30);
+  await page.getByLabel('Last working date').fill(lastWorkingDate.toISOString().slice(0, 10));
+  await page.getByRole('button', { name: 'Start checklist' }).click();
+  const offboarding = page.getByRole('article', { name: 'E2E Teammate offboarding' });
+  await expect(offboarding).toBeVisible();
+  const updatedAdminSession = await readSession(page);
+  const offboardingResponse = await page.request.get(`${apiUrl}/offboardings`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
+  });
+  expect(offboardingResponse.ok()).toBeTruthy();
+  const plan = (await offboardingResponse.json()).find(item => item.employeeId === employeeSession.user.id);
+  expect(plan).toMatchObject({
+    status: 'in_progress',
+    lastWorkingDate: lastWorkingDate.toISOString().slice(0, 10)
+  });
+  expect(plan.items).toHaveLength(5);
+  const duplicatePlan = await page.request.post(`${apiUrl}/employees/${employeeSession.user.id}/offboarding`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` },
+    data: { lastWorkingDate: lastWorkingDate.toISOString().slice(0, 10) }
+  });
+  expect(duplicatePlan.status()).toBe(409);
+
+  for (const item of [
+    'Complete role and knowledge handover',
+    'Reassign active tasks and responsibilities',
+    'Recover company equipment and property',
+    'Revoke company-system access',
+    'Complete required exit records'
+  ]) {
+    await offboarding.getByLabel(item).check();
+  }
+  await expect(offboarding.getByText('completed', { exact: true })).toBeVisible();
+  const reopenItem = await page.request.patch(`${apiUrl}/offboardings/${plan.id}/items/${plan.items[0].id}`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` },
+    data: { completed: false }
+  });
+  expect(reopenItem.status()).toBe(409);
+  const employees = await page.request.get(`${apiUrl}/employees`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
+  });
+  expect((await employees.json()).find(employee => employee.id === employeeSession.user.id)?.active).toBe(true);
 });
