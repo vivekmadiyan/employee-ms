@@ -112,6 +112,10 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     headers: { Authorization: `Bearer ${manager.token}` }
   });
   expect(managerOffboardingResponse.status()).toBe(403);
+  const managerWorkforceReport = await page.request.get(`${apiUrl}/reports/workforce`, {
+    headers: { Authorization: `Bearer ${manager.token}` }
+  });
+  expect(managerWorkforceReport.status()).toBe(403);
 
   await page.getByRole('button', { name: /My team/ }).waitFor();
   await page.getByRole('button', { name: /My team/ }).click();
@@ -140,6 +144,13 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
   await page.getByRole('button', { name: 'Offboarding' }).click();
   await expect(page.getByRole('heading', { name: 'Employee offboarding' })).toBeVisible();
+  const offboardingAccessibility = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  expect(
+    offboardingAccessibility.violations,
+    offboardingAccessibility.violations.map(({ id, help }) => `${id}: ${help}`).join('\n')
+  ).toEqual([]);
   await page.getByLabel('Active employee').selectOption(String(employeeSession.user.id));
   const lastWorkingDate = new Date();
   lastWorkingDate.setDate(lastWorkingDate.getDate() + 30);
@@ -185,4 +196,16 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
   });
   expect((await employees.json()).find(employee => employee.id === employeeSession.user.id)?.active).toBe(true);
+
+  const workforceResponse = await page.request.get(`${apiUrl}/reports/workforce`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
+  });
+  expect(workforceResponse.ok()).toBeTruthy();
+  const workforceReport = await workforceResponse.json();
+  expect(workforceReport.headcount).toMatchObject({ total: 2, activeEmployees: 2, inactiveEmployees: 0 });
+  expect(workforceReport.offboardingPlans).toContainEqual({ status: 'completed', count: 1 });
+  await page.getByRole('button', { name: 'Reports' }).click();
+  await expect(page.getByRole('heading', { name: 'Workforce overview' })).toBeVisible();
+  await expect(page.getByText('Active accounts')).toBeVisible();
+  await expect(page.getByText('Offboarding plans')).toBeVisible();
 });

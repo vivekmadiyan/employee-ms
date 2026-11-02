@@ -87,5 +87,6 @@ export async function initialiseDatabase() {
     CREATE INDEX IF NOT EXISTS audit_events_company_created_idx ON audit_events(company_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS leave_requests_company_created_idx ON leave_requests(company_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS leave_requests_user_status_idx ON leave_requests(user_id, status, start_date);
+    CREATE INDEX IF NOT EXISTS employee_offboardings_company_created_idx ON employee_offboardings(company_id, created_at DESC);
   `);
 }

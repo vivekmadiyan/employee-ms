@@ -2067,6 +2067,56 @@ app.get('/api/reports/tasks', auth, adminOnly, async (req, res, next) => {
     next(error);
   }
 });
+app.get('/api/reports/workforce', auth, adminOnly, async (req, res, next) => {
+  try {
+    const companyId = req.company.id;
+    const [headcount, departments, onboarding, offboarding, leave] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE active=true)::int AS "activeEmployees",
+           COUNT(*) FILTER (WHERE active=false)::int AS "inactiveEmployees"
+         FROM users WHERE company_id=$1 AND role='employee'`,
+        [companyId]
+      ),
+      query(
+        `SELECT department,COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE active=true)::int AS active,
+           COUNT(*) FILTER (WHERE active=false)::int AS inactive
+         FROM users WHERE company_id=$1 AND role='employee'
+         GROUP BY department ORDER BY total DESC,department`,
+        [companyId]
+      ),
+      query(
+        `SELECT t.status,COUNT(*)::int AS count
+         FROM employee_onboarding o
+         JOIN tasks t ON t.company_id=o.company_id AND t.assigned_to=o.employee_id AND t.category='Onboarding'
+         WHERE o.company_id=$1 AND t.archived_at IS NULL
+         GROUP BY t.status ORDER BY t.status`,
+        [companyId]
+      ),
+      query(
+        `SELECT status,COUNT(*)::int AS count FROM employee_offboardings
+         WHERE company_id=$1 GROUP BY status ORDER BY status`,
+        [companyId]
+      ),
+      query(
+        `SELECT status,COUNT(*)::int AS count FROM leave_requests
+         WHERE company_id=$1 AND created_at >= NOW() - INTERVAL '12 months'
+         GROUP BY status ORDER BY status`,
+        [companyId]
+      )
+    ]);
+    res.json({
+      headcount: headcount.rows[0],
+      departments: departments.rows,
+      onboardingTasks: onboarding.rows,
+      offboardingPlans: offboarding.rows,
+      leaveRequestsLast12Months: leave.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 app.get('/api/dashboard/admin', auth, adminOnly, async (req, res) => { const [employees, tasks] = await Promise.all([query("SELECT COUNT(*)::int AS count FROM users WHERE company_id=$1 AND role='employee' AND active=true", [req.company.id]), query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, [req.company.id])]); const list = tasks.rows; res.json({ company: { name: req.company.name, slug: req.company.slug }, employees: employees.rows[0].count, totalTasks: list.length, newTasks: counts(list).newTask, activeTasks: counts(list).active, completedTasks: counts(list).completed, failedTasks: counts(list).failed }); });
 app.get('/api/dashboard/employee', auth, async (req, res) => { if (req.user.role !== 'employee') return res.status(403).json({ message: 'Employee dashboard is only available to employees' }); const { rows } = await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND assigned_to=$2 AND archived_at IS NULL ORDER BY created_at DESC`, [req.company.id, req.user.id]); res.json({ user: safeUser(req.user), company: { name: req.company.name, slug: req.company.slug }, tasks: rows.map(serializeTask), taskCounts: counts(rows) }); });
 

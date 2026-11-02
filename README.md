@@ -143,7 +143,7 @@ Status means: **Available** = implemented in EmployeeMS; **Basic** = a useful fi
 | Performance and growth | Goals, review cycles, feedback, skills, learning | Task progress and comments, but no performance reviews, goals, or learning plans | **Gap** — segment-dependent |
 | Payroll, benefits, and compensation | Payroll, enrollment, compensation planning, local compliance | Not implemented | **Gap** — jurisdiction-sensitive; do not build without a defined market and compliance plan |
 | Tasks and collaboration | Assignments, progress, comments, notifications, operational reporting | Task assignment, status, comments, bulk operations, notifications, calendar export, Slack, email, and reports | **Available** — a product strength |
-| Reporting and analytics | Headcount, lifecycle, leave, and configurable workforce insights | Task reports and employee roster export | **Basic** — HR headcount, lifecycle, and leave analytics are missing |
+| Reporting and analytics | Headcount, lifecycle, leave, and configurable workforce insights | Task reports, employee roster export, and company-scoped headcount, department, onboarding, offboarding, and leave totals | **Basic** — no trend analysis, configurable reports, or lifecycle exports |
 | Security and administration | Fine-grained access, audit, MFA/SSO, retention, compliance controls | Company-scoped APIs, admin/employee roles, scoped manager checks, audit events, optional TOTP MFA, rate limits | **Basic** — no SSO/SCIM, configurable retention, or completed independent security/compliance review |
 | Integrations and automation | Broad app integrations, automated workflows, connected HR data | Slack task notifications, transactional email, live updates, task/calendar exports | **Basic** — no public API/webhooks, OAuth calendar sync, or configurable workflow engine |
 | Product usability and accessibility | Responsive employee experience, accessible workflows, localization, help | Responsive role-based UI, dark mode, contextual help, account self-service | **Basic** — accessibility audit and localization are outstanding |
@@ -169,6 +169,7 @@ Priorities target a usable, productive small-company HRIS first. “P0” items 
 - [ ] Add reusable onboarding templates, owners, due dates, progress, and reminders; retain the existing task checklist integration.
 - [x] Add a dated admin-owned offboarding checklist with task handover, property, system access, and exit-record steps; account deactivation remains an explicit separate action.
 - [ ] Add per-item owners, plan revisions, and employee lifecycle reporting for onboarding/offboarding.
+- [x] Add an admin-only workforce summary for active/inactive headcount, departments, onboarding tasks, offboarding plans, and the last 12 months of leave requests.
 - [ ] Expand leave policies with accrual, working-day calculations, company holidays, carryover, and configurable approval rules. Do not silently reinterpret existing calendar-day policies.
 - [ ] Add HR reporting for headcount, team/department changes, active/inactive employees, onboarding/offboarding, and leave usage.
 - [ ] Improve manager workflows with a clear pending-approval queue, team absence planning, and auditable actions while keeping private HR data restricted.
@@ -258,7 +259,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - **P0 — Recovery rehearsal:** production database backup, restore, and rollback of schema changes need an owner-run rehearsal against the actual hosting provider.
 - **P1 — Production observability:** health and Prometheus metrics exist, but hosted dashboards, alert routing, and an incident runbook are not configured by the application.
 - **P1 — Accessibility assurance:** the registration form has an automated WCAG 2.1 A/AA scan; continue with manual keyboard and assistive-technology checks across all workflows before making an accessibility conformance claim.
-- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, and advanced offboarding ownership/reporting remain.
+- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, per-item offboarding ownership, and lifecycle reporting exports remain.
 - **Scope-dependent:** recruiting, payroll, benefits, billing, and advanced talent modules require customer and jurisdiction choices before implementation.
 
 ### Implemented
@@ -276,6 +277,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - Workspace-configurable Slack notifications for task assignments and reassignments.
 - One-time employee onboarding checklists based on assigned, trackable tasks.
 - Admin-managed, date-based offboarding checklists with auditable item completion; completing a plan never silently disables the employee account.
+- Company-scoped workforce summaries for headcount, department activity, onboarding/offboarding status, and leave requests from the last 12 months.
 - Token-protected Prometheus metrics for HTTP request/error totals, latency, and PostgreSQL pool usage.
 - API rate limits, responsive/mobile layouts, task comments, leave management, contextual tooltips, and task calendar export.
 

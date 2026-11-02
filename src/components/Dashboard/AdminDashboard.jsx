@@ -24,6 +24,7 @@ import AuditTrail from '../other/AuditTrail';
 import LeaveManagement from '../other/LeaveManagement';
 import SlackIntegration from '../other/SlackIntegration';
 import OffboardingManagement from '../other/OffboardingManagement';
+import WorkforceReports from '../other/WorkforceReports';
 
 const AdminDashboard = (props) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
@@ -265,6 +266,7 @@ const AdminDashboard = (props) => {
             {/* REPORTS TAB */}
             {activeTab === 'reports' && (
               <div className="space-y-6 animate-fade-in">
+                <WorkforceReports />
                 <TaskReports />
               </div>
             )}
