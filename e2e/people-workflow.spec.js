@@ -226,7 +226,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     'Revoke company-system access',
     'Complete required exit records'
   ]) {
-    const checkbox = offboarding.getByLabel(item);
+    const checkbox = offboarding.getByLabel(item, { exact: true });
     await checkbox.click();
     await expect(checkbox).toBeChecked();
   }
