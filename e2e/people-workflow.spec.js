@@ -201,7 +201,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   const revisedDate = new Date(lastWorkingDate);
   revisedDate.setDate(revisedDate.getDate() + 1);
   const revisedDateValue = revisedDate.toISOString().slice(0, 10);
-  await offboarding.getByLabel('Last working date for E2E Teammate').fill(revisedDateValue);
+  await offboarding.getByLabel('Last working date for E2E Teammate', { exact: true }).fill(revisedDateValue);
   await offboarding.getByRole('button', { name: 'Save last working date for E2E Teammate' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Offboarding plan revision 3' })).toBeVisible();
   const revisedPlanResponse = await page.request.get(`${apiUrl}/offboardings`, {
