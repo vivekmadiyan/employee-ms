@@ -206,6 +206,6 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   expect(workforceReport.offboardingPlans).toContainEqual({ status: 'completed', count: 1 });
   await page.getByRole('button', { name: 'Reports' }).click();
   await expect(page.getByRole('heading', { name: 'Workforce overview' })).toBeVisible();
-  await expect(page.getByText('Active accounts')).toBeVisible();
+  await expect(page.getByText('Active accounts', { exact: true })).toBeVisible();
   await expect(page.getByText('Offboarding plans')).toBeVisible();
 });
