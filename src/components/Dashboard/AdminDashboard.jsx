@@ -110,7 +110,7 @@ const AdminDashboard = (props) => {
               </span>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900">{activeEmployees}</p>
-            <p className="mt-1 text-[11px] text-slate-400">{totalEmployees} total registered</p>
+            <p className="mt-1 text-[11px] text-slate-500">{totalEmployees} total registered</p>
           </div>
 
           <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
@@ -121,7 +121,7 @@ const AdminDashboard = (props) => {
               </span>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900">{inProgressTasks}</p>
-            <p className="mt-1 text-[11px] text-slate-400">{newTasks} new awaiting start</p>
+            <p className="mt-1 text-[11px] text-slate-500">{newTasks} new awaiting start</p>
           </div>
 
           <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
@@ -132,7 +132,7 @@ const AdminDashboard = (props) => {
               </span>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-emerald-600">{completedTasks}</p>
-            <p className="mt-1 text-[11px] text-slate-400">Total deliverables</p>
+            <p className="mt-1 text-[11px] text-slate-500">Total deliverables</p>
           </div>
 
           <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
@@ -145,7 +145,7 @@ const AdminDashboard = (props) => {
             <p className={`mt-2 text-2xl sm:text-3xl font-extrabold ${attentionTasks > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
               {attentionTasks}
             </p>
-            <p className="mt-1 text-[11px] text-slate-400">Blocked or failed</p>
+            <p className="mt-1 text-[11px] text-slate-500">Blocked or failed</p>
           </div>
         </section>
 
