@@ -209,4 +209,14 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await expect(page.getByRole('heading', { name: 'Workforce overview' })).toBeVisible();
   await expect(page.getByText('Active accounts', { exact: true })).toBeVisible();
   await expect(page.getByText('Offboarding plans')).toBeVisible();
+  const workforceOverview = page.getByRole('region', { name: 'Workforce overview' });
+  const workforceDownloadPromise = page.waitForEvent('download');
+  await workforceOverview.getByRole('button', { name: 'Export CSV' }).click();
+  const workforceDownload = await workforceDownloadPromise;
+  expect(workforceDownload.suggestedFilename()).toMatch(/^employeems-workforce-report-\d{4}-\d{2}-\d{2}\.csv$/);
+  const csvStream = await workforceDownload.createReadStream();
+  let workforceCsv = '';
+  for await (const chunk of csvStream) workforceCsv += chunk.toString();
+  expect(workforceCsv).toContain('"Total employees","2"');
+  expect(workforceCsv).toContain('"Offboarding plans","Status","Count"');
 });

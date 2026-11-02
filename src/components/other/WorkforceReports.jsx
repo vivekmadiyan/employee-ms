@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { FaPeopleGroup } from 'react-icons/fa6';
+import { FaDownload, FaPeopleGroup } from 'react-icons/fa6';
 import { getWorkforceReportApi } from '../../api';
 
 const statusLabel = status => ({
@@ -13,6 +13,12 @@ const statusLabel = status => ({
   rejected: 'Declined',
   cancelled: 'Cancelled'
 }[status] || status);
+
+const csvCell = value => {
+  const text = String(value ?? '');
+  const safeText = /^[\t\r\n ]*[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replaceAll('"', '""')}"`;
+};
 
 function SummaryCard({ label, value, tone }) {
   return (
@@ -64,6 +70,39 @@ export default function WorkforceReports() {
     return () => window.removeEventListener('ems:workspace-updated', loadReport);
   }, [loadReport]);
 
+  const downloadCsv = () => {
+    if (!report) return;
+    const reportDate = new Date().toISOString().slice(0, 10);
+    const rows = [
+      ['EmployeeMS workforce report'],
+      ['Generated on', reportDate],
+      [],
+      ['Headcount', 'Employees'],
+      ['Total employees', report.headcount.total],
+      ['Active accounts', report.headcount.activeEmployees],
+      ['Inactive accounts', report.headcount.inactiveEmployees],
+      [],
+      ['Department', 'Active employees', 'Inactive employees'],
+      ...report.departments.map(row => [row.department, row.active, row.inactive]),
+      [],
+      ['Onboarding tasks', 'Status', 'Count'],
+      ...report.onboardingTasks.map(row => [statusLabel(row.status), row.count]),
+      [],
+      ['Offboarding plans', 'Status', 'Count'],
+      ...report.offboardingPlans.map(row => [statusLabel(row.status), row.count]),
+      [],
+      ['Leave requests · last 12 months', 'Status', 'Count'],
+      ...report.leaveRequestsLast12Months.map(row => [statusLabel(row.status), row.count])
+    ];
+    const csv = rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `employeems-workforce-report-${reportDate}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm" aria-labelledby="workforce-report-heading">
       <div className="flex items-center gap-3 border-b border-slate-100 p-5 sm:p-6">
@@ -74,6 +113,15 @@ export default function WorkforceReports() {
           <h2 id="workforce-report-heading" className="dashboard-card-heading text-slate-900">Workforce overview</h2>
           <p className="mt-0.5 text-xs text-slate-500">Company-scoped headcount and people-workflow totals.</p>
         </div>
+        <button
+          type="button"
+          onClick={downloadCsv}
+          disabled={!report || loading}
+          className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-xs transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <FaDownload aria-hidden="true" className="text-xs" />
+          <span>Export CSV</span>
+        </button>
       </div>
 
       {error && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700 sm:mx-6">{error}</p>}
