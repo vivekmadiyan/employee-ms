@@ -89,7 +89,7 @@ export default function OffboardingManagement() {
         </span>
         <div>
           <h2 id="offboarding-heading" className="dashboard-card-heading text-slate-900">Employee offboarding</h2>
-          <p className="mt-0.5 text-xs text-slate-500">Track handover, company property, system access, and exit records.</p>
+          <p className="mt-0.5 text-xs text-slate-600">Track handover, company property, system access, and exit records.</p>
         </div>
       </div>
 
@@ -136,7 +136,7 @@ export default function OffboardingManagement() {
       {loading ? (
         <p role="status" className="p-8 text-center text-xs text-slate-500">Loading offboarding plans…</p>
       ) : offboardings.length === 0 ? (
-        <p className="p-8 text-center text-xs text-slate-500">No offboarding plans have been created.</p>
+        <p className="p-8 text-center text-xs text-slate-600">No offboarding plans have been created.</p>
       ) : (
         <div className="divide-y divide-slate-100">
           {offboardings.map(offboarding => (

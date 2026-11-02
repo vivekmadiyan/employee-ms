@@ -142,6 +142,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign In to Workspace' }).click();
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.getByRole('button', { name: 'Offboarding' }).click();
   await expect(page.getByRole('heading', { name: 'Employee offboarding' })).toBeVisible();
   const offboardingAccessibility = await new AxeBuilder({ page })
