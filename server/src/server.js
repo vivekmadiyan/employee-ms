@@ -1016,14 +1016,16 @@ app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, nex
     )).rows[0];
     offboarding.firstName = employee.firstName;
     offboarding.email = employee.email;
-    offboarding.items = await Promise.all(offboardingChecklist.map(async (item, position) => (
-      (await client.query(
+    offboarding.items = [];
+    for (const [position, item] of offboardingChecklist.entries()) {
+      const createdItem = await client.query(
         `INSERT INTO employee_offboarding_items(offboarding_id,item_key,title,position)
          VALUES($1,$2,$3,$4)
          RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt"`,
         [offboarding.id, item.key, item.title, position]
-      )).rows[0]
-    )));
+      );
+      offboarding.items.push(createdItem.rows[0]);
+    }
     await client.query('COMMIT');
   } catch (error) {
     try {
@@ -1077,7 +1079,7 @@ app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, re
 
     item = (await client.query(
       `UPDATE employee_offboarding_items SET completed=$1,
-         completed_by=CASE WHEN $1 THEN $4 ELSE NULL END,
+         completed_by=CASE WHEN $1 THEN $4::integer ELSE NULL END,
          completed_at=CASE WHEN $1 THEN NOW() ELSE NULL END
        WHERE id=$2 AND offboarding_id=$3
        RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt"`,
