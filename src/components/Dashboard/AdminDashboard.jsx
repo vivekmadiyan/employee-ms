@@ -44,6 +44,15 @@ const AdminDashboard = (props) => {
     { id: 'audit', label: 'Audit Trail', icon: FaShieldHalved },
     { id: 'integrations', label: 'Integrations', icon: FaPlug },
   ];
+  const activeTabDetails = {
+    overview: ['Workspace Overview', 'A clear view of your team, priorities, and day-to-day operations.'],
+    tasks: ['Task Hub', 'Create, assign, and keep work moving across your workspace.'],
+    team: ['Team & Invites', 'Manage your people, reporting lines, and onboarding.'],
+    leaves: ['Leave Requests', 'Review time off while keeping your team’s calendar in view.'],
+    reports: ['Reports', 'Understand delivery trends and team workload.'],
+    audit: ['Audit Trail', 'Review important changes made across your workspace.'],
+    integrations: ['Integrations', 'Connect the tools your team already uses.']
+  }[activeTab];
 
   return (
     <div className="dashboard-shell min-h-screen bg-[#f8fafc]">
@@ -58,12 +67,12 @@ const AdminDashboard = (props) => {
         <div className="dashboard-heading">
           <div>
             <div className="flex items-center gap-2">
-              <h2>Workspace Overview</h2>
+              <h2>{activeTabDetails[0]}</h2>
               <span className="hidden rounded-full border border-indigo-100 bg-indigo-50/70 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-indigo-700 sm:inline-flex">
                 Admin Suite
               </span>
             </div>
-            <p>Monitor team activity, allocate assignments, and keep operations aligned.</p>
+            <p>{activeTabDetails[1]}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -77,7 +86,7 @@ const AdminDashboard = (props) => {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('overview')}
+              onClick={() => setActiveTab('tasks')}
               className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-600/25 transition hover:bg-indigo-700"
             >
               <FaPlus className="text-xs" />
@@ -135,36 +144,31 @@ const AdminDashboard = (props) => {
           </div>
         </section>
 
-        {/* Tab Navigation Pill Bar */}
-        <nav aria-label="Dashboard views" className="mb-6 flex gap-1.5 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white/70 p-1.5 backdrop-blur-md shadow-sm scrollbar-none">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
-                  isActive
-                    ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
-                    : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                }`}
-              >
-                <Icon className={`text-xs ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                <span>{tab.label}</span>
-                {tab.count !== undefined && tab.count > 0 && (
-                  <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold ${
-                    isActive ? 'bg-white/25 text-white' : 'bg-slate-200/70 text-slate-600'
-                  }`}>
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <div className="grid items-start gap-5 lg:grid-cols-[224px_minmax(0,1fr)] lg:gap-7">
+          <nav aria-label="Workspace navigation" className="workspace-nav">
+            <p className="workspace-nav-label">Workspace</p>
+            {tabs.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className="workspace-nav-item"
+                >
+                  <Icon className="shrink-0 text-xs opacity-80" aria-hidden="true" />
+                  <span>{tab.label}</span>
+                  {tab.count !== undefined && tab.count > 0 && (
+                    <span className="workspace-nav-count">{tab.count > 99 ? '99+' : tab.count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
 
+          <div className="min-w-0">
         {/* Tab Content Panels */}
         {userData === null ? (
           <section className="dashboard-card p-10 text-center">
@@ -269,6 +273,8 @@ const AdminDashboard = (props) => {
             )}
           </div>
         )}
+          </div>
+        </div>
       </main>
     </div>
   );

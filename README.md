@@ -84,6 +84,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/employees` (admin)
 - `PATCH /api/employees/:id` and `PATCH /api/employees/:id/status` (admin)
 - Employee records include team and an optional same-workspace employee manager; reporting cycles are rejected.
+- `GET /api/team/direct-reports` (employee; only active direct reports)
 - `GET /api/invitations`, `POST /api/invitations/:id/resend`, and `DELETE /api/invitations/:id` (admin)
 - `POST /api/invitations/bulk` (admin; create up to 100 invitations)
 - `GET /api/tasks`
@@ -95,7 +96,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/reports/tasks?from=YYYY-MM-DD&to=YYYY-MM-DD` (admin)
 - `GET /api/notifications` and notification read endpoints
 - `GET /api/audit-events` (admin; latest 100 company-scoped security events)
-- `GET /api/leave-requests`, `POST /api/leave-requests` (employee), `PATCH /api/leave-requests/:id/review` (admin), `DELETE /api/leave-requests/:id` (employee)
+- `GET /api/leave-requests` (employee's own requests and direct reports' requests), `POST /api/leave-requests` (employee), `PATCH /api/leave-requests/:id/review` (admin or assigned manager for a direct report), `DELETE /api/leave-requests/:id` (employee)
 - `GET /api/leave-policies`, `PUT /api/leave-policies` (admin configures annual allowances)
 - `GET /api/leave-balance?year=YYYY` (signed-in user's approved, pending, and remaining allowance)
 - `GET /api/leave-calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` (approved absences only; up to 93 days)
@@ -111,23 +112,65 @@ The API validates environment variables and request bodies, scopes all tenant da
 - Employees can discuss tasks; notifications cover assignments, status changes, comments, and due/overdue work. New assignments and reassignments send an email through Brevo. An authenticated Server-Sent Events stream refreshes notifications, dashboards, task lists, team/invitation data, and open discussions across signed-in devices within a few seconds.
 - Users can update their profile and password or request a time-limited password-reset email.
 
-## HRIS benchmark and product gaps
+## Feature comparison and product checklist
 
-This is a feature-pattern review of official vendor product pages, not an independent quality assessment or a plan-by-plan comparison:
-[BambooHR](https://www.bamboohr.com/platform/), [Rippling HRIS](https://www.rippling.com/products/hr/hris), [Zoho People](https://www.zoho.com/people/features.html), [OrangeHRM](https://orangehrm.com/), and [Workday HCM](https://www.workday.com/en-us/products/human-capital-management.html). The pages consistently emphasize employee records, onboarding, employee/manager workflows, time off, reporting, and access controls. Broader suites also promote documents and signatures, offboarding, attendance, performance, recruiting, payroll, benefits, and advanced analytics.
+This is a feature-pattern comparison of public vendor pages, not a feature-by-feature certification, plan comparison, or claim that all vendors include every feature in every tier. Scope varies by product, plan, and country. Sources: [BambooHR](https://www.bamboohr.com/), [Rippling HRIS](https://www.rippling.com/products/hr/hris), [Zoho People](https://www.zoho.com/people/features.html), [OrangeHRM](https://orangehrm.com/), and [Workday HCM](https://www.workday.com/en-us/products/human-capital-management.html).
 
-EmployeeMS now supports company-scoped employee records with department, team, manager/reporting line, job title, employment type, hire date, status, profile edits, CSV export, and invitation-time profile capture. The team directory can filter by team and show a reporting-line org chart. Manager assignments are restricted to active employees in the same workspace, with self-reporting and cycles rejected. Existing records default to the General team and no manager; old invitation CSVs remain valid, with optional team and manager-email columns. Leave policies can set annual calendar-day allowances by leave type; pending requests reserve days, and employees can view their balances. The shared calendar shows approved absences without exposing leave reasons or types. The app also has employee onboarding checklists, leave request/approval email, audit events, and task/roster reporting.
+Status means: **Available** = implemented in EmployeeMS; **Basic** = a useful first version exists but lacks the depth, automation, or assurance expected of a mature HRIS; **Gap** = not implemented. Task management is a strength of EmployeeMS, but it is not a substitute for core HR lifecycle capabilities.
 
-### Prioritized gaps
+| Capability | Leading HRIS pattern | EmployeeMS today | Status |
+|---|---|---|---|
+| Employee records and directory | Central employee profiles, searchable workforce records, reporting hierarchy | Company-scoped profiles with department, team, manager, job title, employment type, hire date, status, filtering, CSV export, and org chart | **Available** |
+| Organization and manager experience | HR owns structure and access; managers have scoped team views and approvals | Admin-controlled invites, access, team/reporting changes; managers see active direct reports and review only their leave requests | **Available** |
+| Employee and manager self-service | Employees update permitted profile details; managers complete people workflows | Employees manage their account and tasks/time off; managers get a direct-report view and scoped leave review | **Basic** — no delegated workflow settings or manager task assignment controls |
+| Onboarding | Reusable workflows, forms/documents, assigned tasks, progress tracking | One-time checklist per active employee, implemented as trackable tasks | **Basic** — no configurable templates, forms, document collection, or e-signatures |
+| Leave and time off | Configurable policies, balance visibility, approval chains, holidays, accrual, scheduling | Requests, manager/admin review, email, annual calendar-day caps, balances, approved-absence calendar | **Basic** — no accrual, workday/holiday rules, carryover, or multi-stage approvals |
+| Employee documents | Private records, acknowledgements, secure retrieval, retention, signatures | No employee document repository | **Gap** |
+| Offboarding and lifecycle | Exit workflow, clearance, task ownership, access revocation, retained history | Admin can deactivate access; no complete exit checklist or lifecycle reporting | **Basic** |
+| Attendance, shifts, and timesheets | Clock-in/out, schedules, breaks, approvals, labor rules | Not implemented | **Gap** — prioritize only for hourly/shift-based customers |
+| Recruiting and hiring | Candidate pipeline, requisitions, interview/hiring workflows | Invitations begin after a hiring decision; no applicant tracking | **Gap** — segment-dependent |
+| Performance and growth | Goals, review cycles, feedback, skills, learning | Task progress and comments, but no performance reviews, goals, or learning plans | **Gap** — segment-dependent |
+| Payroll, benefits, and compensation | Payroll, enrollment, compensation planning, local compliance | Not implemented | **Gap** — jurisdiction-sensitive; do not build without a defined market and compliance plan |
+| Tasks and collaboration | Assignments, progress, comments, notifications, operational reporting | Task assignment, status, comments, bulk operations, notifications, calendar export, Slack, email, and reports | **Available** — a product strength |
+| Reporting and analytics | Headcount, lifecycle, leave, and configurable workforce insights | Task reports and employee roster export | **Basic** — HR headcount, lifecycle, and leave analytics are missing |
+| Security and administration | Fine-grained access, audit, MFA/SSO, retention, compliance controls | Company-scoped APIs, admin/employee roles, scoped manager checks, audit events, optional TOTP MFA, rate limits | **Basic** — no SSO/SCIM, configurable retention, or completed independent security/compliance review |
+| Integrations and automation | Broad app integrations, automated workflows, connected HR data | Slack task notifications, transactional email, live updates, task/calendar exports | **Basic** — no public API/webhooks, OAuth calendar sync, or configurable workflow engine |
+| Product usability and accessibility | Responsive employee experience, accessible workflows, localization, help | Responsive role-based UI, dark mode, contextual help, account self-service | **Basic** — accessibility audit and localization are outstanding |
 
-1. **Employee documents and acknowledgements — next core HRIS gap.** Add private, company-scoped document storage with explicit access rules, retention/deletion behavior, and audit events before supporting signed or sensitive documents. Do not store private files in a public static directory.
-2. **Accrual-aware leave policies and holidays.** Current allowances are annual calendar-day caps by leave type, not accrual schedules, working-day calculations, holiday calendars, carryover, or jurisdiction-specific rules.
-3. **Offboarding workflow.** Add an owner-assigned exit checklist, due dates, access deactivation, and an auditable completion trail; preserve employee records and task history when access ends.
-4. **HR reporting.** Current reports focus on tasks and roster exports. Add company-scoped headcount and employee-lifecycle reporting, then leave reporting once leave policies are defined.
-5. **Conditional workforce tools.** Attendance, timesheets, and scheduling should be prioritized only for customers with hourly or shift-based teams.
-6. **Segment-dependent suites.** Recruiting, payroll, benefits, performance/OKRs, and learning are broader modules; payroll/benefits require jurisdiction-specific compliance work and should not be treated as launch blockers for the current small-team HRIS scope.
+### Delivery checklist
 
-This comparison is based on vendor feature descriptions; verify plan, region, and implementation details directly with each vendor before using it for procurement decisions.
+Priorities target a usable, productive small-company HRIS first. “P0” items block a dependable production rollout; “P1” items close core HR gaps; “P2” items depend on validated customer segment and jurisdiction. Checkboxes track completion in the product, not whether an item is commercially available from a vendor.
+
+#### P0 — Make the current product dependable
+
+- [x] Company-scoped employee records, invites, profiles, team membership, and reporting lines.
+- [x] Admin-owned organization changes with manager access limited to active direct reports.
+- [x] Employee leave requests and manager/admin-scoped decisions.
+- [x] Task assignment, team collaboration, notifications, and operational task reports.
+- [ ] Run browser-based end-to-end workflows against an isolated real PostgreSQL database in CI.
+- [ ] Rehearse production backup restore and schema rollback; document the recovery owner and recovery objectives.
+- [ ] Complete accessibility and keyboard checks on employee, manager, and admin workflows; fix critical barriers.
+- [ ] Add production monitoring, alert routing, and an incident runbook; verify email delivery and failure handling.
+
+#### P1 — Complete the core HR lifecycle
+
+- [ ] Add secure employee document storage, permission rules, acknowledgements, audit trail, and retention/deletion controls. Keep private files out of the public frontend build.
+- [ ] Add reusable onboarding templates, owners, due dates, progress, and reminders; retain the existing task checklist integration.
+- [ ] Add offboarding checklists, accountable owners, access-revocation steps, exit dates, and preserved employment history.
+- [ ] Expand leave policies with accrual, working-day calculations, company holidays, carryover, and configurable approval rules. Do not silently reinterpret existing calendar-day policies.
+- [ ] Add HR reporting for headcount, team/department changes, active/inactive employees, onboarding/offboarding, and leave usage.
+- [ ] Improve manager workflows with a clear pending-approval queue, team absence planning, and auditable actions while keeping private HR data restricted.
+- [ ] Add locale-aware dates, time zones, and number formatting; test keyboard navigation and screen-reader labels in critical forms.
+
+#### P2 — Add only after target-market validation
+
+- [ ] Decide whether the target customers need recruiting/ATS, performance reviews, goals/OKRs, and learning.
+- [ ] Confirm workforce segment and labor-law scope before adding attendance, shifts, and timesheets.
+- [ ] Select launch countries and compliance partners before adding payroll, benefits, compensation, or statutory HR workflows.
+- [ ] Prioritize SSO/SCIM, public APIs/webhooks, and additional integrations based on customer demand.
+- [ ] Add billing, plan limits, and tenant lifecycle tooling if EmployeeMS is commercialized as SaaS.
+
+For scaling, also load-test representative tenant sizes, review database indexes and query plans, define tenant/data-retention controls, and establish measurable availability and recovery objectives before making scale or compliance claims.
 
 ## V2 task reporting
 
@@ -138,7 +181,7 @@ Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected 
 
 Admins can review a company-scoped audit trail of account, employee, invitation, integration, and task changes. Audit records omit passwords, reset tokens, and invitation tokens; audit storage errors are logged without undoing completed workflows.
 
-Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Admins can review requests for their workspace. New requests are emailed to active workspace admins, and approvals are emailed to the employee with any manager note. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
+Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Assigned managers can review requests from active direct reports; admins can review requests workspace-wide. New requests are emailed to active workspace admins and the assigned manager, and approvals are emailed to the employee with the review note. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
 
 Admins can configure annual calendar-day allowances per leave type; a blank allowance is unlimited. Approved and pending requests count toward the employee's allowance for each calendar year, and request creation serializes per employee to prevent concurrent requests from exceeding a configured cap. The team calendar shows approved absences only and omits leave reasons and leave types. Accrual schedules, working-day calculations, public holidays, carryover, and jurisdiction-specific policies are not implemented.
 
@@ -210,7 +253,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, plus backend syn
 - Employee profiles include job title, employment type, and hire date, available during direct and CSV invitations and editable/exportable from team management.
 - Hybrid team management keeps company structure, invitations, employee access, and policy changes admin-controlled. An employee becomes a manager through assigned active direct reports (not a separate elevated role); managers can view only those reports and review only their leave requests, while admins retain workspace-wide oversight.
 - Team structure includes named teams, manager/reporting-line assignments, team-filtered directory, and a browsable org chart.
-- Leave request emails go to active workspace admins; approval emails go to the employee, with delivery status surfaced in the workflow.
+- Leave request emails go to active workspace admins and the assigned manager; approval emails go to the employee, with delivery status surfaced in the workflow.
 - Admin-configurable annual leave allowances, employee leave balances, and a shared calendar of approved absences.
 - Dark mode with a persisted theme preference.
 - Live workspace updates and notification delivery using authenticated Server-Sent Events.

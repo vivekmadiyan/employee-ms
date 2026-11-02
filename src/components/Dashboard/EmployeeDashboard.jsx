@@ -23,6 +23,13 @@ const EmployeeDashboard = (props) => {
     userData && userData.length > 0
       ? userData[0]
       : null;
+  const workspaceTabs = [
+    { id: 'tasks', label: 'My tasks', icon: FaListCheck, count: employeeData?.tasks?.length },
+    { id: 'leaves', label: 'Time off', icon: FaCalendarDay },
+    ...(directReports.length > 0
+      ? [{ id: 'team', label: 'My team', icon: FaUserGroup, count: directReports.length }]
+      : [])
+  ];
 
   const todayFormatted = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -80,61 +87,28 @@ const EmployeeDashboard = (props) => {
             <TaskListNumbers data={employeeData} />
 
             {/* View Switcher Tabs */}
-            <div className="flex gap-2 border-b border-slate-200 pb-3">
-              <button
-                type="button"
-                onClick={() => setActiveTab('tasks')}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                  activeTab === 'tasks'
-                    ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/25'
-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <FaListCheck className="text-xs" />
-                <span>Assigned Tasks</span>
-                {employeeData?.tasks?.length > 0 && (
-                  <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] ${
-                    activeTab === 'tasks' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {employeeData.tasks.length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('leaves')}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                  activeTab === 'leaves'
-                    ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/25'
-                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <FaCalendarDay className="text-xs" />
-                <span>Time Off & Leave</span>
-              </button>
-              {directReports.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('team')}
-                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                    activeTab === 'team'
-                      ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/25'
-                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <FaUserGroup className="text-xs" />
-                  <span>My Team</span>
-                  <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] ${
-                    activeTab === 'team' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {directReports.length}
-                  </span>
-                </button>
-              )}
-            </div>
+            <nav aria-label="My workspace sections" className="employee-tabs">
+              {workspaceTabs.map(tab => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-current={isActive ? 'page' : undefined}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`employee-tab${isActive ? ' is-active' : ''}`}
+                  >
+                    <Icon className="text-xs" aria-hidden="true" />
+                    <span>{tab.label}</span>
+                    {tab.count > 0 && <span className="employee-tab-count">{tab.count > 99 ? '99+' : tab.count}</span>}
+                  </button>
+                );
+              })}
+            </nav>
 
             {/* Tab Views */}
+            <div className="space-y-4">
             {teamError && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{teamError}</p>}
             {activeTab === 'tasks' ? (
               <div className="animate-fade-in">
@@ -166,6 +140,7 @@ const EmployeeDashboard = (props) => {
                 </ul>
               </section>
             )}
+            </div>
           </div>
         )}
       </main>
