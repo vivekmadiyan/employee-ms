@@ -191,9 +191,28 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   const plan = (await offboardingResponse.json()).find(item => item.employeeId === employeeSession.user.id);
   expect(plan).toMatchObject({
     status: 'in_progress',
-    lastWorkingDate: lastWorkingDate.toISOString().slice(0, 10)
+    lastWorkingDate: lastWorkingDate.toISOString().slice(0, 10),
+    revision: 1
   });
   expect(plan.items).toHaveLength(5);
+  await offboarding.getByLabel('Owner for Complete role and knowledge handover')
+    .selectOption(String(managerSession.user.id));
+  await expect(page.getByRole('status').filter({ hasText: 'Offboarding plan revision 2' })).toBeVisible();
+  const revisedDate = new Date(lastWorkingDate);
+  revisedDate.setDate(revisedDate.getDate() + 1);
+  const revisedDateValue = revisedDate.toISOString().slice(0, 10);
+  await offboarding.getByLabel('Last working date for E2E Teammate').fill(revisedDateValue);
+  await offboarding.getByRole('button', { name: 'Save last working date for E2E Teammate' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Offboarding plan revision 3' })).toBeVisible();
+  const revisedPlanResponse = await page.request.get(`${apiUrl}/offboardings`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
+  });
+  const revisedPlan = (await revisedPlanResponse.json()).find(item => item.employeeId === employeeSession.user.id);
+  expect(revisedPlan).toMatchObject({
+    revision: 3,
+    lastWorkingDate: revisedDateValue
+  });
+  expect(revisedPlan.items[0].ownerId).toBe(managerSession.user.id);
   const duplicatePlan = await page.request.post(`${apiUrl}/employees/${employeeSession.user.id}/offboarding`, {
     headers: { Authorization: `Bearer ${updatedAdminSession.token}` },
     data: { lastWorkingDate: lastWorkingDate.toISOString().slice(0, 10) }
@@ -217,6 +236,16 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     data: { completed: false }
   });
   expect(reopenItem.status()).toBe(409);
+  const reviseCompletedPlan = await page.request.patch(`${apiUrl}/offboardings/${plan.id}`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` },
+    data: { lastWorkingDate: revisedDateValue }
+  });
+  expect(reviseCompletedPlan.status()).toBe(409);
+  const reassignCompletedItem = await page.request.patch(`${apiUrl}/offboardings/${plan.id}/items/${plan.items[0].id}/owner`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` },
+    data: { ownerId: null }
+  });
+  expect(reassignCompletedItem.status()).toBe(409);
   const employees = await page.request.get(`${apiUrl}/employees`, {
     headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
   });

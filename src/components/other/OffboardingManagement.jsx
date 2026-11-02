@@ -4,7 +4,9 @@ import { AuthContext } from '../../context/AuthProvider';
 import {
   createEmployeeOffboardingApi,
   getOffboardingsApi,
-  updateOffboardingItemApi
+  reviseOffboardingApi,
+  updateOffboardingItemApi,
+  updateOffboardingItemOwnerApi
 } from '../../api';
 
 export default function OffboardingManagement() {
@@ -16,12 +18,17 @@ export default function OffboardingManagement() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [dateDrafts, setDateDrafts] = useState({});
 
   const availableEmployees = useMemo(() => (userData || []).filter(employee =>
     employee.role === 'employee' &&
     employee.active &&
     !offboardings.some(offboarding => offboarding.employeeId === employee.id)
   ), [offboardings, userData]);
+  const ownerOptions = useMemo(
+    () => (userData || []).filter(employee => employee.role === 'employee'),
+    [userData]
+  );
 
   const loadOffboardings = useCallback(async () => {
     setLoading(true);
@@ -76,6 +83,47 @@ export default function OffboardingManagement() {
       }
     } catch (requestError) {
       setError(requestError.message || 'Could not update the offboarding checklist.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateItemOwner = async (offboarding, item, ownerId) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await updateOffboardingItemOwnerApi(offboarding.id, item.id, ownerId);
+      setOffboardings(current => current.map(record => record.id !== offboarding.id
+        ? record
+        : {
+          ...record,
+          revision: result.revision,
+          items: record.items.map(currentItem => currentItem.id === item.id ? result.item : currentItem)
+        }));
+      setNotice(`Owner updated. Offboarding plan revision ${result.revision} is recorded in the audit trail.`);
+    } catch (requestError) {
+      setError(requestError.message || 'Could not update the checklist owner.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateLastWorkingDate = async offboarding => {
+    const updatedDate = dateDrafts[offboarding.id] ?? offboarding.lastWorkingDate;
+    if (updatedDate === offboarding.lastWorkingDate) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await reviseOffboardingApi(offboarding.id, { lastWorkingDate: updatedDate });
+      setOffboardings(current => current.map(record => record.id !== offboarding.id
+        ? record
+        : { ...record, lastWorkingDate: result.lastWorkingDate, revision: result.revision }));
+      setDateDrafts(current => ({ ...current, [offboarding.id]: result.lastWorkingDate }));
+      setNotice(`Offboarding plan revision ${result.revision} is recorded in the audit trail.`);
+    } catch (requestError) {
+      setError(requestError.message || 'Could not revise the offboarding plan.');
     } finally {
       setBusy(false);
     }
@@ -144,17 +192,43 @@ export default function OffboardingManagement() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">{offboarding.firstName}</h3>
-                  <p className="mt-0.5 text-xs text-slate-500">{offboarding.email} · Last day {offboarding.lastWorkingDate}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{offboarding.email}</p>
+                  <div className="mt-2 flex flex-wrap items-end gap-2">
+                    <label className="block text-[11px] font-semibold text-slate-700">
+                      Last working date
+                      <input
+                        type="date"
+                        aria-label={`Last working date for ${offboarding.firstName}`}
+                        value={dateDrafts[offboarding.id] ?? offboarding.lastWorkingDate}
+                        disabled={busy || offboarding.status === 'completed'}
+                        onChange={event => setDateDrafts(current => ({ ...current, [offboarding.id]: event.target.value }))}
+                        className="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 disabled:bg-slate-100"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      aria-label={`Save last working date for ${offboarding.firstName}`}
+                      disabled={busy || offboarding.status === 'completed' ||
+                        (dateDrafts[offboarding.id] ?? offboarding.lastWorkingDate) === offboarding.lastWorkingDate}
+                      onClick={() => updateLastWorkingDate(offboarding)}
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Save date
+                    </button>
+                  </div>
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ${
-                  offboarding.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'
-                }`}>
-                  {offboarding.status.replace('_', ' ')}
-                </span>
+                <div className="text-right">
+                  <p className="text-[11px] font-semibold text-slate-600">Revision {offboarding.revision}</p>
+                  <span className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ${
+                    offboarding.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'
+                  }`}>
+                    {offboarding.status.replace('_', ' ')}
+                  </span>
+                </div>
               </div>
               <ul className="mt-4 grid gap-2 sm:grid-cols-2">
                 {offboarding.items.map(item => (
-                  <li key={item.id}>
+                  <li key={item.id} className="space-y-2 rounded-lg border border-slate-100 p-3">
                     <label className={`flex items-start gap-2 rounded-lg border border-slate-100 p-3 text-xs ${
                       offboarding.status === 'completed' ? 'text-slate-500' : 'text-slate-700'
                     }`}>
@@ -166,6 +240,27 @@ export default function OffboardingManagement() {
                         className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <span>{item.title}</span>
+                    </label>
+                    <label className="block text-[11px] font-semibold text-slate-700">
+                      Owner
+                      <select
+                        aria-label={`Owner for ${item.title}`}
+                        value={item.ownerId ?? ''}
+                        disabled={busy || offboarding.status === 'completed'}
+                        onChange={event => updateItemOwner(
+                          offboarding,
+                          item,
+                          event.target.value ? Number(event.target.value) : null
+                        )}
+                        className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 disabled:bg-slate-100"
+                      >
+                        <option value="">Unassigned</option>
+                        {ownerOptions.map(owner => (
+                          <option key={owner.id} value={owner.id} disabled={!owner.active}>
+                            {owner.firstName}{owner.active ? '' : ' (inactive)'}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                   </li>
                 ))}

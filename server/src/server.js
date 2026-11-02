@@ -474,6 +474,8 @@ const schemas = {
     })
   }),
   onboarding: z.object({ templateId: z.number().int().positive().nullable().optional() }),
+  offboardingDate: z.object({ lastWorkingDate: isoDate }).strict(),
+  offboardingOwner: z.object({ ownerId: z.number().int().positive().nullable() }).strict(),
   task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: isoDate, category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
@@ -1000,10 +1002,10 @@ app.get('/api/offboardings', auth, adminOnly, async (req, res, next) => {
   try {
     const { rows } = await query(
       `SELECT o.id,o.employee_id AS "employeeId",u.first_name AS "firstName",u.email,
-         o.last_working_date::text AS "lastWorkingDate",o.status,
+         o.last_working_date::text AS "lastWorkingDate",o.status,o.revision,
          i.id AS "itemId",i.item_key AS "itemKey",i.title AS "itemTitle",
          i.position AS "itemPosition",i.completed AS "itemCompleted",
-         i.completed_at AS "itemCompletedAt"
+         i.completed_at AS "itemCompletedAt",i.owner_id AS "itemOwnerId"
        FROM employee_offboardings o
        JOIN users u ON u.id=o.employee_id AND u.company_id=o.company_id
        LEFT JOIN employee_offboarding_items i ON i.offboarding_id=o.id
@@ -1021,6 +1023,7 @@ app.get('/api/offboardings', auth, adminOnly, async (req, res, next) => {
           email: row.email,
           lastWorkingDate: row.lastWorkingDate,
           status: row.status,
+          revision: row.revision,
           items: []
         });
       }
@@ -1030,7 +1033,8 @@ app.get('/api/offboardings', auth, adminOnly, async (req, res, next) => {
           key: row.itemKey,
           title: row.itemTitle,
           completed: row.itemCompleted,
-          completedAt: row.itemCompletedAt
+          completedAt: row.itemCompletedAt,
+          ownerId: row.itemOwnerId
         });
       }
     }
@@ -1078,7 +1082,7 @@ app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, nex
     offboarding = (await client.query(
       `INSERT INTO employee_offboardings(company_id,employee_id,last_working_date,created_by)
        VALUES($1,$2,$3,$4)
-       RETURNING id,employee_id AS "employeeId",last_working_date::text AS "lastWorkingDate",status`,
+       RETURNING id,employee_id AS "employeeId",last_working_date::text AS "lastWorkingDate",status,revision`,
       [req.company.id, employeeId, values.lastWorkingDate, req.user.id]
     )).rows[0];
     offboarding.firstName = employee.firstName;
@@ -1088,7 +1092,7 @@ app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, nex
       const createdItem = await client.query(
         `INSERT INTO employee_offboarding_items(offboarding_id,item_key,title,position)
          VALUES($1,$2,$3,$4)
-         RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt"`,
+         RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt",owner_id AS "ownerId"`,
         [offboarding.id, item.key, item.title, position]
       );
       offboarding.items.push(createdItem.rows[0]);
@@ -1110,6 +1114,161 @@ app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, nex
     lastWorkingDate: offboarding.lastWorkingDate
   });
   res.status(201).json(offboarding);
+});
+
+app.patch('/api/offboardings/:id', auth, adminOnly, async (req, res, next) => {
+  let values;
+  try {
+    values = body(schemas.offboardingDate, req.body);
+  } catch (error) {
+    return next(error);
+  }
+  const offboardingId = Number(req.params.id);
+  if (!Number.isSafeInteger(offboardingId) || offboardingId < 1) {
+    return res.status(400).json({ message: 'Offboarding plan is invalid' });
+  }
+
+  const client = await pool.connect();
+  let plan;
+  let previousDate;
+  try {
+    await client.query('BEGIN');
+    const current = (await client.query(
+      `SELECT id,status,last_working_date::text AS "lastWorkingDate",revision
+       FROM employee_offboardings WHERE id=$1 AND company_id=$2 FOR UPDATE`,
+      [offboardingId, req.company.id]
+    )).rows[0];
+    if (!current) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Offboarding plan not found' });
+    }
+    if (current.status !== 'in_progress') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Completed offboarding plans cannot be revised' });
+    }
+    if (current.lastWorkingDate === values.lastWorkingDate) {
+      await client.query('COMMIT');
+      return res.json({ id: current.id, lastWorkingDate: current.lastWorkingDate, revision: current.revision });
+    }
+    previousDate = current.lastWorkingDate;
+    plan = (await client.query(
+      `UPDATE employee_offboardings
+       SET last_working_date=$1,revision=revision+1,updated_at=NOW()
+       WHERE id=$2 AND company_id=$3
+       RETURNING id,last_working_date::text AS "lastWorkingDate",revision`,
+      [values.lastWorkingDate, offboardingId, req.company.id]
+    )).rows[0];
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Offboarding plan revision rollback failed:', { requestId: req.id, message: rollbackError.message });
+    }
+    return next(error);
+  } finally {
+    client.release();
+  }
+
+  await recordAuditEvent(req.company.id, req.user.id, req, 'employee.offboarding_revised', 'offboarding', offboardingId, {
+    revision: plan.revision,
+    changes: { lastWorkingDate: { from: previousDate, to: plan.lastWorkingDate } }
+  });
+  res.json(plan);
+});
+
+app.patch('/api/offboardings/:id/items/:itemId/owner', auth, adminOnly, async (req, res, next) => {
+  let values;
+  try {
+    values = body(schemas.offboardingOwner, req.body);
+  } catch (error) {
+    return next(error);
+  }
+  const offboardingId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  if (![offboardingId, itemId].every(value => Number.isSafeInteger(value) && value > 0)) {
+    return res.status(400).json({ message: 'Offboarding checklist item is invalid' });
+  }
+
+  const client = await pool.connect();
+  let item;
+  let revision;
+  let previousOwnerId;
+  try {
+    await client.query('BEGIN');
+    const plan = (await client.query(
+      `SELECT id,status,revision FROM employee_offboardings
+       WHERE id=$1 AND company_id=$2 FOR UPDATE`,
+      [offboardingId, req.company.id]
+    )).rows[0];
+    if (!plan) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Offboarding plan not found' });
+    }
+    if (plan.status !== 'in_progress') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Completed offboarding plans cannot be revised' });
+    }
+    const currentItem = (await client.query(
+      `SELECT id,title,completed,owner_id AS "ownerId"
+       FROM employee_offboarding_items WHERE id=$1 AND offboarding_id=$2 FOR UPDATE`,
+      [itemId, offboardingId]
+    )).rows[0];
+    if (!currentItem) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Offboarding checklist item not found' });
+    }
+    if (values.ownerId != null) {
+      const owner = (await client.query(
+        `SELECT id FROM users
+         WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true FOR KEY SHARE`,
+        [values.ownerId, req.company.id]
+      )).rows[0];
+      if (!owner) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'Select an active employee in this workspace as the item owner' });
+      }
+    }
+    if (currentItem.ownerId === values.ownerId) {
+      await client.query('COMMIT');
+      return res.json({
+        offboardingId,
+        status: plan.status,
+        revision: plan.revision,
+        item: currentItem
+      });
+    }
+    previousOwnerId = currentItem.ownerId;
+    item = (await client.query(
+      `UPDATE employee_offboarding_items SET owner_id=$1
+       WHERE id=$2 AND offboarding_id=$3
+       RETURNING id,title,completed,owner_id AS "ownerId"`,
+      [values.ownerId, itemId, offboardingId]
+    )).rows[0];
+    revision = (await client.query(
+      `UPDATE employee_offboardings SET revision=revision+1,updated_at=NOW()
+       WHERE id=$1 AND company_id=$2 RETURNING revision`,
+      [offboardingId, req.company.id]
+    )).rows[0].revision;
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Offboarding owner revision rollback failed:', { requestId: req.id, message: rollbackError.message });
+    }
+    return next(error);
+  } finally {
+    client.release();
+  }
+
+  await recordAuditEvent(req.company.id, req.user.id, req, 'employee.offboarding_owner_assigned', 'offboarding', offboardingId, {
+    revision,
+    itemId,
+    previousOwnerId,
+    ownerId: item.ownerId
+  });
+  res.json({ offboardingId, status: 'in_progress', revision, item });
 });
 
 app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, res, next) => {
@@ -1149,7 +1308,7 @@ app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, re
          completed_by=CASE WHEN $1 THEN $4::integer ELSE NULL END,
          completed_at=CASE WHEN $1 THEN NOW() ELSE NULL END
        WHERE id=$2 AND offboarding_id=$3
-       RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt"`,
+         RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt",owner_id AS "ownerId"`,
       [values.completed, itemId, offboardingId, req.user.id]
     )).rows[0];
     if (!item) {

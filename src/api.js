@@ -39,7 +39,9 @@ export const getEmployeeDashboard = () => api('/dashboard/employee');
 export const getEmployees = () => api('/employees');
 export const getOffboardingsApi = () => api('/offboardings');
 export const createEmployeeOffboardingApi = (id, payload) => api(`/employees/${id}/offboarding`, { method: 'POST', body: JSON.stringify(payload) });
+export const reviseOffboardingApi = (id, payload) => api(`/offboardings/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const updateOffboardingItemApi = (offboardingId, itemId, completed) => api(`/offboardings/${offboardingId}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify({ completed }) });
+export const updateOffboardingItemOwnerApi = (offboardingId, itemId, ownerId) => api(`/offboardings/${offboardingId}/items/${itemId}/owner`, { method: 'PATCH', body: JSON.stringify({ ownerId }) });
 export const getDirectReportsApi = () => api('/team/direct-reports');
 export const getAdminDashboard = () => api('/dashboard/admin');
 export const getTaskReportApi = filters => {

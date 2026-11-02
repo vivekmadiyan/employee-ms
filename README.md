@@ -109,6 +109,7 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/reports/tasks?from=YYYY-MM-DD&to=YYYY-MM-DD` (admin)
 - `GET /api/reports/workforce` (admin; company-scoped headcount and lifecycle totals)
 - `GET /api/offboardings`, `POST /api/employees/:id/offboarding`, and `PATCH /api/offboardings/:id/items/:itemId` (admin)
+- `PATCH /api/offboardings/:id` (admin; revise the last working date) and `PATCH /api/offboardings/:id/items/:itemId/owner` (admin; assign an active employee)
 - `GET /api/notifications` and notification read endpoints
 - `GET /api/audit-events` (admin; latest 100 company-scoped security events)
 - `GET /api/leave-requests` (employee's own requests and direct reports' requests), `POST /api/leave-requests` (employee), `PATCH /api/leave-requests/:id/review` (admin or assigned manager for a direct report), `DELETE /api/leave-requests/:id` (employee)
@@ -141,7 +142,7 @@ Status means: **Available** = implemented in EmployeeMS; **Basic** = a useful fi
 | Onboarding | Reusable workflows, forms/documents, assigned tasks, progress tracking | Company-scoped reusable templates with configurable task descriptions and due-date offsets; admins apply them to active employees, and generated tasks keep existing assignment and notification behavior | **Basic** — no forms, document collection, e-signatures, per-item owners, or reminders |
 | Leave and time off | Configurable policies, balance visibility, approval chains, holidays, accrual, scheduling | Requests, manager/admin review, email, annual calendar-day caps, balances, approved-absence calendar | **Basic** — no accrual, workday/holiday rules, carryover, or multi-stage approvals |
 | Employee documents | Private records, acknowledgements, secure retrieval, retention, signatures | No employee document repository | **Gap** |
-| Offboarding and lifecycle | Exit workflow, clearance, task ownership, access revocation, retained history | Admin-managed dated checklist with handover, task reassignment, property recovery, access revocation, and exit records; checklist completion does not deactivate the account | **Basic** — no per-item owners or plan revisions |
+| Offboarding and lifecycle | Exit workflow, clearance, task ownership, access revocation, retained history | Admin-managed dated checklist with active employee owners, revision-numbered date/owner changes in the audit trail, handover, property recovery, access revocation, and exit records; checklist completion does not deactivate the account | **Basic** — no employee-level lifecycle history or onboarding step owners |
 | Attendance, shifts, and timesheets | Clock-in/out, schedules, breaks, approvals, labor rules | Not implemented | **Gap** — prioritize only for hourly/shift-based customers |
 | Recruiting and hiring | Candidate pipeline, requisitions, interview/hiring workflows | Invitations begin after a hiring decision; no applicant tracking | **Gap** — segment-dependent |
 | Performance and growth | Goals, review cycles, feedback, skills, learning | Task progress and comments, but no performance reviews, goals, or learning plans | **Gap** — segment-dependent |
@@ -172,7 +173,8 @@ Priorities target a usable, productive small-company HRIS first. “P0” items 
 - [ ] Add secure employee document storage, permission rules, acknowledgements, audit trail, and retention/deletion controls. Keep private files out of the public frontend build.
 - [x] Add reusable onboarding templates with configurable steps and due-date offsets; retain the existing task checklist integration.
 - [x] Add a dated admin-owned offboarding checklist with task handover, property, system access, and exit-record steps; account deactivation remains an explicit separate action.
-- [ ] Add per-item owners and plan revisions to onboarding/offboarding workflows.
+- [x] Add active employee owners and audit-trail-backed revisions for offboarding plan dates and item assignments.
+- [ ] Add per-item owners and plan revisions to onboarding workflows.
 - [x] Add an admin-only workforce summary and CSV export for active/inactive headcount, departments, onboarding tasks, offboarding plans, and the last 12 months of leave requests.
 - [ ] Expand leave policies with accrual, working-day calculations, company holidays, carryover, and configurable approval rules. Do not silently reinterpret existing calendar-day policies.
 - [ ] Add HR reporting for headcount, team/department changes, active/inactive employees, onboarding/offboarding, and leave usage.
@@ -205,6 +207,8 @@ Admins can configure annual calendar-day allowances per leave type; a blank allo
 Users can optionally enable authenticator-app MFA from Account Settings. TOTP secrets are encrypted in PostgreSQL, login requires a current authenticator code, and ten single-use recovery codes are shown once. Slack incoming webhook URLs are also encrypted and restricted to Slack's HTTPS webhook host. Set a stable `MFA_ENCRYPTION_KEY` (at least 32 characters) in the API environment; if omitted, the API derives the encryption key from `JWT_SECRET`, so rotating the JWT secret will require MFA re-enrollment for users without recovery codes and reconfiguration of Slack.
 
 Admins can create company-scoped onboarding templates with 1–25 steps, descriptions, and due-date offsets from checklist creation. New employee checklists use a selected template or the built-in five-step standard checklist; generated tasks retain normal status, comments, assignment notifications, and duplicate protection.
+
+Admins can assign active employees to offboarding checklist items and revise the last working date while a plan is in progress. Each changed owner or date increments the plan revision and creates an audit event with the previous and new value; completed plans cannot be revised. Completing every checklist item does not deactivate the employee account.
 
 ## Multi-company / SaaS-ready architecture
 This version is designed so multiple companies can use the same application while keeping their data isolated. Each company gets a workspace, the first registered user becomes that company's admin, and employees/tasks are scoped by `companyId`. Admins can create employee accounts and assign tasks only within their own company.
@@ -263,7 +267,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - **P0 — Recovery rehearsal:** production database backup, restore, and rollback of schema changes need an owner-run rehearsal against the actual hosting provider.
 - **P1 — Production observability:** health and Prometheus metrics exist, but hosted dashboards, alert routing, and an incident runbook are not configured by the application.
 - **P1 — Accessibility assurance:** the registration form has an automated WCAG 2.1 A/AA scan; continue with manual keyboard and assistive-technology checks across all workflows before making an accessibility conformance claim.
-- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, onboarding/offboarding item ownership and revisions, and employee-level lifecycle history remain.
+- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, onboarding item ownership and revisions, and employee-level lifecycle history remain.
 - **Scope-dependent:** recruiting, payroll, benefits, billing, and advanced talent modules require customer and jurisdiction choices before implementation.
 
 ### Implemented
@@ -280,7 +284,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - Optional authenticator-app MFA with encrypted TOTP secrets and single-use recovery codes.
 - Workspace-configurable Slack notifications for task assignments and reassignments.
 - Reusable company onboarding templates with configurable steps and due-date offsets; generated tasks use existing assignment and notification workflows.
-- Admin-managed, date-based offboarding checklists with auditable item completion; completing a plan never silently disables the employee account.
+- Admin-managed, date-based offboarding checklists with assigned owners and revision-audited plan changes; completing a plan never silently disables the employee account.
 - Company-scoped workforce summaries and CSV exports for headcount, department activity, onboarding/offboarding status, and leave requests from the last 12 months.
 - Token-protected Prometheus metrics for HTTP request/error totals, latency, and PostgreSQL pool usage.
 - API rate limits, responsive/mobile layouts, task comments, leave management, contextual tooltips, and task calendar export.
@@ -290,7 +294,7 @@ Calendar export downloads an `.ics` file for the tasks currently visible to the 
 ### Remaining
 - Secure employee document storage and acknowledgement workflows.
 - Accrual-aware leave policies, working-day/holiday calculations, and carryover rules.
-- Offboarding checklist owners, plan revisions, and employee-lifecycle reporting.
+- Onboarding checklist owners and employee-level lifecycle reporting.
 - Full accessibility audit and remediation against WCAG, including assistive-technology testing.
 - Internationalization and locale-aware formatting.
 - Workspace-editable email templates and branding.
