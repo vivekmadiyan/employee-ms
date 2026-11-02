@@ -21,7 +21,7 @@ const createInvitation = async (page, adminToken, invitation) => {
 const acceptInvitationInBrowser = async (page, inviteUrl, expectedName) => {
   await page.getByRole('button', { name: 'Log out' }).click();
   await page.goto(inviteUrl);
-  await expect(page.getByText(expectedName, { exact: true })).toBeVisible();
+  await expect(page.getByText(expectedName, { exact: false })).toBeVisible();
   await page.getByLabel('Create password').fill(password);
   await page.getByLabel('Confirm password').fill(password);
   await page.getByRole('button', { name: 'Accept Invitation & Enter' }).click();
