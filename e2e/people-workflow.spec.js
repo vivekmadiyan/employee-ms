@@ -171,7 +171,9 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     'Revoke company-system access',
     'Complete required exit records'
   ]) {
-    await offboarding.getByLabel(item).check();
+    const checkbox = offboarding.getByLabel(item);
+    await checkbox.click();
+    await expect(checkbox).toBeChecked();
   }
   await expect(offboarding.getByText('completed', { exact: true })).toBeVisible();
   const reopenItem = await page.request.patch(`${apiUrl}/offboardings/${plan.id}/items/${plan.items[0].id}`, {
