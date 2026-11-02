@@ -95,6 +95,8 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `GET /api/employees` (admin)
 - `PATCH /api/employees/:id` and `PATCH /api/employees/:id/status` (admin)
 - Employee records include team and an optional same-workspace employee manager; reporting cycles are rejected.
+- `GET /api/onboarding-templates` and `POST /api/onboarding-templates` (admin); templates are company-scoped and checklist tasks remain in the normal task workflow.
+- `POST /api/employees/:id/onboarding` (admin; optional `templateId`, defaults to the standard checklist)
 - `GET /api/team/direct-reports` (employee; only active direct reports)
 - `GET /api/invitations`, `POST /api/invitations/:id/resend`, and `DELETE /api/invitations/:id` (admin)
 - `POST /api/invitations/bulk` (admin; create up to 100 invitations)
@@ -105,6 +107,8 @@ The API validates environment variables and request bodies, scopes all tenant da
 - `PATCH /api/tasks/:id/status`
 - `GET` and `POST /api/tasks/:id/comments`
 - `GET /api/reports/tasks?from=YYYY-MM-DD&to=YYYY-MM-DD` (admin)
+- `GET /api/reports/workforce` (admin; company-scoped headcount and lifecycle totals)
+- `GET /api/offboardings`, `POST /api/employees/:id/offboarding`, and `PATCH /api/offboardings/:id/items/:itemId` (admin)
 - `GET /api/notifications` and notification read endpoints
 - `GET /api/audit-events` (admin; latest 100 company-scoped security events)
 - `GET /api/leave-requests` (employee's own requests and direct reports' requests), `POST /api/leave-requests` (employee), `PATCH /api/leave-requests/:id/review` (admin or assigned manager for a direct report), `DELETE /api/leave-requests/:id` (employee)
@@ -134,7 +138,7 @@ Status means: **Available** = implemented in EmployeeMS; **Basic** = a useful fi
 | Employee records and directory | Central employee profiles, searchable workforce records, reporting hierarchy | Company-scoped profiles with department, team, manager, job title, employment type, hire date, status, filtering, CSV export, and org chart | **Available** |
 | Organization and manager experience | HR owns structure and access; managers have scoped team views and approvals | Admin-controlled invites, access, team/reporting changes; managers see active direct reports and review only their leave requests | **Available** |
 | Employee and manager self-service | Employees update permitted profile details; managers complete people workflows | Employees manage their account and tasks/time off; managers get a direct-report view and scoped leave review | **Basic** — no delegated workflow settings or manager task assignment controls |
-| Onboarding | Reusable workflows, forms/documents, assigned tasks, progress tracking | One-time checklist per active employee, implemented as trackable tasks | **Basic** — no configurable templates, forms, document collection, or e-signatures |
+| Onboarding | Reusable workflows, forms/documents, assigned tasks, progress tracking | Company-scoped reusable templates with configurable task descriptions and due-date offsets; admins apply them to active employees, and generated tasks keep existing assignment and notification behavior | **Basic** — no forms, document collection, e-signatures, per-item owners, or reminders |
 | Leave and time off | Configurable policies, balance visibility, approval chains, holidays, accrual, scheduling | Requests, manager/admin review, email, annual calendar-day caps, balances, approved-absence calendar | **Basic** — no accrual, workday/holiday rules, carryover, or multi-stage approvals |
 | Employee documents | Private records, acknowledgements, secure retrieval, retention, signatures | No employee document repository | **Gap** |
 | Offboarding and lifecycle | Exit workflow, clearance, task ownership, access revocation, retained history | Admin-managed dated checklist with handover, task reassignment, property recovery, access revocation, and exit records; checklist completion does not deactivate the account | **Basic** — no per-item owners or plan revisions |
@@ -166,7 +170,7 @@ Priorities target a usable, productive small-company HRIS first. “P0” items 
 #### P1 — Complete the core HR lifecycle
 
 - [ ] Add secure employee document storage, permission rules, acknowledgements, audit trail, and retention/deletion controls. Keep private files out of the public frontend build.
-- [ ] Add reusable onboarding templates, owners, due dates, progress, and reminders; retain the existing task checklist integration.
+- [x] Add reusable onboarding templates with configurable steps and due-date offsets; retain the existing task checklist integration.
 - [x] Add a dated admin-owned offboarding checklist with task handover, property, system access, and exit-record steps; account deactivation remains an explicit separate action.
 - [ ] Add per-item owners and plan revisions to onboarding/offboarding workflows.
 - [x] Add an admin-only workforce summary and CSV export for active/inactive headcount, departments, onboarding tasks, offboarding plans, and the last 12 months of leave requests.
@@ -200,7 +204,7 @@ Admins can configure annual calendar-day allowances per leave type; a blank allo
 
 Users can optionally enable authenticator-app MFA from Account Settings. TOTP secrets are encrypted in PostgreSQL, login requires a current authenticator code, and ten single-use recovery codes are shown once. Slack incoming webhook URLs are also encrypted and restricted to Slack's HTTPS webhook host. Set a stable `MFA_ENCRYPTION_KEY` (at least 32 characters) in the API environment; if omitted, the API derives the encryption key from `JWT_SECRET`, so rotating the JWT secret will require MFA re-enrollment for users without recovery codes and reconfiguration of Slack.
 
-Admins can create a one-time onboarding checklist for each active employee. It creates five assigned tasks with staggered due dates, reuses the normal task status/comment/notification workflows, and prevents duplicate checklists.
+Admins can create company-scoped onboarding templates with 1–25 steps, descriptions, and due-date offsets from checklist creation. New employee checklists use a selected template or the built-in five-step standard checklist; generated tasks retain normal status, comments, assignment notifications, and duplicate protection.
 
 ## Multi-company / SaaS-ready architecture
 This version is designed so multiple companies can use the same application while keeping their data isolated. Each company gets a workspace, the first registered user becomes that company's admin, and employees/tasks are scoped by `companyId`. Admins can create employee accounts and assign tasks only within their own company.
@@ -251,7 +255,7 @@ npm --prefix server test
 npm --prefix server audit --omit=dev
 ```
 
-GitHub Actions runs the frontend lint/build and calendar tests, backend syntax checks and API/email/MFA tests, and Chromium end-to-end workflows for registration, invitations, manager reporting, leave approval, and offboarding against an ephemeral PostgreSQL 16 service. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
+GitHub Actions runs the frontend lint/build and calendar tests, backend syntax checks and API/email/MFA tests, and Chromium end-to-end workflows for registration, invitations, manager reporting, leave approval, onboarding templates, workforce-report CSV export, and offboarding against an ephemeral PostgreSQL 16 service. Production database backups/restores and provider-backed email/deployment smoke tests must still be verified in the hosting environment.
 
 ### V2 release-readiness gaps
 
@@ -259,7 +263,7 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - **P0 — Recovery rehearsal:** production database backup, restore, and rollback of schema changes need an owner-run rehearsal against the actual hosting provider.
 - **P1 — Production observability:** health and Prometheus metrics exist, but hosted dashboards, alert routing, and an incident runbook are not configured by the application.
 - **P1 — Accessibility assurance:** the registration form has an automated WCAG 2.1 A/AA scan; continue with manual keyboard and assistive-technology checks across all workflows before making an accessibility conformance claim.
-- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, per-item offboarding ownership, and lifecycle reporting exports remain.
+- **P1 — HR policy depth:** leave is annual calendar-day caps only; accrual, working-day/holiday rules, carryover, secure employee documents, onboarding/offboarding item ownership and revisions, and employee-level lifecycle history remain.
 - **Scope-dependent:** recruiting, payroll, benefits, billing, and advanced talent modules require customer and jurisdiction choices before implementation.
 
 ### Implemented
@@ -275,9 +279,9 @@ GitHub Actions runs the frontend lint/build and calendar tests, backend syntax c
 - Company-scoped audit events with search and filters.
 - Optional authenticator-app MFA with encrypted TOTP secrets and single-use recovery codes.
 - Workspace-configurable Slack notifications for task assignments and reassignments.
-- One-time employee onboarding checklists based on assigned, trackable tasks.
+- Reusable company onboarding templates with configurable steps and due-date offsets; generated tasks use existing assignment and notification workflows.
 - Admin-managed, date-based offboarding checklists with auditable item completion; completing a plan never silently disables the employee account.
-- Company-scoped workforce summaries for headcount, department activity, onboarding/offboarding status, and leave requests from the last 12 months.
+- Company-scoped workforce summaries and CSV exports for headcount, department activity, onboarding/offboarding status, and leave requests from the last 12 months.
 - Token-protected Prometheus metrics for HTTP request/error totals, latency, and PostgreSQL pool usage.
 - API rate limits, responsive/mobile layouts, task comments, leave management, contextual tooltips, and task calendar export.
 

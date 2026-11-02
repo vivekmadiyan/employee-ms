@@ -1,6 +1,15 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { FaArrowsRotate, FaCopy, FaFileArrowDown, FaUserGroup, FaPenToSquare, FaClipboardCheck, FaSitemap } from 'react-icons/fa6';
-import { createEmployeeOnboardingApi, getInvitationsApi, resendInvitationApi, revokeInvitationApi, updateEmployeeApi, updateEmployeeStatusApi } from '../../api';
+import {
+  createEmployeeOnboardingApi,
+  createOnboardingTemplateApi,
+  getInvitationsApi,
+  getOnboardingTemplatesApi,
+  resendInvitationApi,
+  revokeInvitationApi,
+  updateEmployeeApi,
+  updateEmployeeStatusApi
+} from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { HelpIcon } from './Tooltip';
 import PdfExportButton from './PdfExportButton';
@@ -57,6 +66,13 @@ export default function TeamManagement() {
   const [showOrgChart, setShowOrgChart] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
   const [freshLinks, setFreshLinks] = useState({});
+  const [onboardingTemplates, setOnboardingTemplates] = useState([]);
+  const [selectedOnboardingTemplateId, setSelectedOnboardingTemplateId] = useState('default');
+  const [onboardingTemplateError, setOnboardingTemplateError] = useState('');
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateItems, setTemplateItems] = useState([{ title: '', description: '', daysAfterStart: 0 }]);
 
   const loadInvitations = useCallback(async () => {
     try {
@@ -67,16 +83,30 @@ export default function TeamManagement() {
     }
   }, []);
 
+  const loadOnboardingTemplates = useCallback(async () => {
+    try {
+      setOnboardingTemplates(await getOnboardingTemplatesApi());
+      setOnboardingTemplateError('');
+    } catch (error) {
+      setOnboardingTemplateError(error.message);
+    }
+  }, []);
+
   useEffect(() => {
     loadInvitations();
+    loadOnboardingTemplates();
     const onInvitationsUpdated = () => loadInvitations();
+    const onWorkspaceUpdated = () => {
+      loadInvitations();
+      loadOnboardingTemplates();
+    };
     window.addEventListener('ems:invitations-updated', onInvitationsUpdated);
-    window.addEventListener('ems:workspace-updated', onInvitationsUpdated);
+    window.addEventListener('ems:workspace-updated', onWorkspaceUpdated);
     return () => {
       window.removeEventListener('ems:invitations-updated', onInvitationsUpdated);
-      window.removeEventListener('ems:workspace-updated', onInvitationsUpdated);
+      window.removeEventListener('ems:workspace-updated', onWorkspaceUpdated);
     };
-  }, [loadInvitations]);
+  }, [loadInvitations, loadOnboardingTemplates]);
 
   const startEdit = employee => {
     setEditId(employee.id);
@@ -144,7 +174,10 @@ export default function TeamManagement() {
     setEmployeeError('');
     setMessage('');
     try {
-      const result = await createEmployeeOnboardingApi(employee.id);
+      const templateId = selectedOnboardingTemplateId === 'default'
+        ? null
+        : Number(selectedOnboardingTemplateId);
+      const result = await createEmployeeOnboardingApi(employee.id, templateId);
       setMessage(`Created ${result.tasksCreated} onboarding tasks for ${employee.firstName}.`);
       try {
         await refresh();
@@ -155,6 +188,25 @@ export default function TeamManagement() {
       setEmployeeError(error.message);
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const saveOnboardingTemplate = async event => {
+    event.preventDefault();
+    setTemplateBusy(true);
+    setOnboardingTemplateError('');
+    try {
+      const template = await createOnboardingTemplateApi({ name: templateName, items: templateItems });
+      setOnboardingTemplates(current => [...current, template].sort((left, right) => left.name.localeCompare(right.name)));
+      setSelectedOnboardingTemplateId(String(template.id));
+      setTemplateName('');
+      setTemplateItems([{ title: '', description: '', daysAfterStart: 0 }]);
+      setShowTemplateForm(false);
+      setMessage('Onboarding template created.');
+    } catch (error) {
+      setOnboardingTemplateError(error.message);
+    } finally {
+      setTemplateBusy(false);
     }
   };
 
@@ -297,6 +349,125 @@ export default function TeamManagement() {
       {message && <p role="status" className="mx-5 mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800 sm:mx-6">{message}</p>}
       {employeeError && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700 sm:mx-6">{employeeError}</p>}
       {copyMessage && <p role="status" className="mx-5 mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800 sm:mx-6">{copyMessage}</p>}
+
+      <div className="mx-5 mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:mx-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <label className="block min-w-56 flex-1 text-xs font-semibold text-slate-700">
+            Onboarding template
+            <select
+              aria-label="Onboarding template"
+              value={selectedOnboardingTemplateId}
+              onChange={event => setSelectedOnboardingTemplateId(event.target.value)}
+              disabled={!onboardingTemplates.length}
+              className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900"
+            >
+              {onboardingTemplates.map(template => (
+                <option key={template.id ?? 'default'} value={template.id ?? 'default'}>
+                  {template.name} · {template.items.length} steps{template.isDefault ? ' (built in)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowTemplateForm(value => !value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+          >
+            {showTemplateForm ? 'Close template form' : 'Create template'}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-600">The selected template is used by new onboarding checklists. Due dates are relative to checklist creation.</p>
+        {onboardingTemplateError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{onboardingTemplateError}</p>}
+        {showTemplateForm && (
+          <form onSubmit={saveOnboardingTemplate} className="mt-4 space-y-4 border-t border-slate-200 pt-4">
+            <label className="block max-w-md text-xs font-semibold text-slate-700">
+              Template name
+              <input
+                required
+                minLength={2}
+                maxLength={80}
+                value={templateName}
+                onChange={event => setTemplateName(event.target.value)}
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900"
+              />
+            </label>
+            <div className="space-y-3">
+              {templateItems.map((item, index) => (
+                <fieldset key={index} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-2">
+                  <legend className="px-1 text-[11px] font-bold text-slate-700">Step {index + 1}</legend>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Step title
+                    <input
+                      required
+                      minLength={2}
+                      maxLength={160}
+                      value={item.title}
+                      onChange={event => setTemplateItems(current => current.map((step, stepIndex) =>
+                        stepIndex === index ? { ...step, title: event.target.value } : step
+                      ))}
+                      className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900"
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Description
+                    <textarea
+                      required
+                      minLength={2}
+                      maxLength={1000}
+                      rows={2}
+                      value={item.description}
+                      onChange={event => setTemplateItems(current => current.map((step, stepIndex) =>
+                        stepIndex === index ? { ...step, description: event.target.value } : step
+                      ))}
+                      className="mt-1 block w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900"
+                    />
+                  </label>
+                  <label className="block max-w-xs text-xs font-semibold text-slate-700">
+                    Days after checklist starts
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={item.daysAfterStart}
+                      onChange={event => setTemplateItems(current => current.map((step, stepIndex) =>
+                        stepIndex === index ? { ...step, daysAfterStart: Number(event.target.value) } : step
+                      ))}
+                      className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900"
+                    />
+                  </label>
+                  {templateItems.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setTemplateItems(current => current.filter((_, stepIndex) => stepIndex !== index))}
+                      className="self-end justify-self-start text-xs font-semibold text-rose-700 hover:text-rose-800"
+                    >
+                      Remove step {index + 1}
+                    </button>
+                  )}
+                </fieldset>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={templateItems.length >= 25}
+                onClick={() => setTemplateItems(current => [...current, { title: '', description: '', daysAfterStart: 0 }])}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50"
+              >
+                Add step
+              </button>
+              <button
+                type="submit"
+                disabled={templateBusy || templateItems.length > 25}
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {templateBusy ? 'Saving…' : 'Save template'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
 
       {/* Team Members Table */}
       <div ref={teamReportRef} className="p-5 sm:p-6">
@@ -498,7 +669,7 @@ export default function TeamManagement() {
                             <button
                               type="button"
                               onClick={() => createOnboarding(employee)}
-                              disabled={busyId === employee.id}
+                              disabled={busyId === employee.id || !onboardingTemplates.length}
                               aria-label={`Create onboarding checklist for ${employee.firstName}`}
                               className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
                             >

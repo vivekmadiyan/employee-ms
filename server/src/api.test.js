@@ -52,8 +52,10 @@ let invitations;
 let passwordResets;
 let slackWebhookEncrypted;
 let onboardingEmployees;
+let onboardingTemplates;
 let baseUsers;
 let nextTaskId;
+let nextOnboardingTemplateId;
 let nextCommentId;
 let nextInvitationId;
 let nextLeaveId;
@@ -124,6 +126,33 @@ function installQueryMock() {
     }
     if (text.startsWith('select employee_id as "employeeid" from employee_onboarding')) {
       return result([...onboardingEmployees].map(employeeId => ({ employeeId })));
+    }
+    if (text.startsWith('select id,name,items from company_onboarding_templates where company_id=$1 order by lower(name)')) {
+      return result(onboardingTemplates
+        .filter(template => template.companyId === Number(params[0]))
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(({ id, name, items }) => ({ id, name, items })));
+    }
+    if (text.startsWith('select id,name,items from company_onboarding_templates where id=$1 and company_id=$2')) {
+      const template = onboardingTemplates.find(item =>
+        item.id === Number(params[0]) && item.companyId === Number(params[1])
+      );
+      return result(template ? [{ id: template.id, name: template.name, items: template.items }] : []);
+    }
+    if (text.startsWith('insert into company_onboarding_templates(')) {
+      const name = String(params[1]);
+      if (onboardingTemplates.some(template =>
+        template.companyId === Number(params[0]) && template.name.toLowerCase() === name.toLowerCase()
+      )) return result([]);
+      const template = {
+        id: nextOnboardingTemplateId++,
+        companyId: Number(params[0]),
+        name,
+        items: JSON.parse(params[2]),
+        createdBy: Number(params[3])
+      };
+      onboardingTemplates.push(template);
+      return result([{ id: template.id, name: template.name, items: template.items }]);
     }
     if (text.startsWith('select mfa_secret as "mfasecret",mfa_enabled as "mfaenabled"')) {
       const user = users.find(item => item.id === Number(params[0]));
@@ -832,7 +861,9 @@ beforeEach(() => {
   passwordResets = [];
   slackWebhookEncrypted = null;
   onboardingEmployees = new Set();
+  onboardingTemplates = [];
   nextTaskId = 1;
+  nextOnboardingTemplateId = 1;
   nextCommentId = 1;
   nextInvitationId = 1;
   nextLeaveId = 1;
@@ -1043,6 +1074,61 @@ describe('authenticated API workflows', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(employees.body.find(employee => employee.id === 2).onboardingCreated).toBe(true);
+  });
+
+  it('creates reusable company onboarding templates and applies their tasks', async () => {
+    const adminLogin = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const adminToken = adminLogin.body.token;
+
+    const defaults = await request(app).get('/api/onboarding-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(defaults.body[0]).toMatchObject({ id: null, name: 'Standard onboarding', isDefault: true });
+    expect(defaults.body[0].items).toHaveLength(5);
+
+    const templatePayload = {
+      name: 'Engineering starter',
+      items: [
+        { title: 'Review the codebase', description: 'Read the engineering onboarding guide.', daysAfterStart: 0 },
+        { title: 'Deploy a change', description: 'Ship a small change with a teammate.', daysAfterStart: 4 }
+      ]
+    };
+    const createdTemplate = await request(app).post('/api/onboarding-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(templatePayload)
+      .expect(201);
+    expect(createdTemplate.body).toMatchObject({ name: templatePayload.name, items: templatePayload.items, isDefault: false });
+
+    await request(app).post('/api/onboarding-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ...templatePayload, name: 'engineering starter' })
+      .expect(409);
+    await request(app).post('/api/onboarding-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ...templatePayload, items: [{ ...templatePayload.items[0], daysAfterStart: 366 }] })
+      .expect(400);
+
+    const employeeLogin = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    await request(app).get('/api/onboarding-templates')
+      .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+      .expect(403);
+
+    const createdOnboarding = await request(app).post('/api/employees/2/onboarding')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ templateId: createdTemplate.body.id })
+      .expect(201);
+    expect(createdOnboarding.body.tasksCreated).toBe(2);
+    expect(tasks.map(task => task.taskTitle)).toEqual(['Review the codebase', 'Deploy a change']);
+    expect(tasks[0].category).toBe('Onboarding');
+    expect(tasks.every(task => task.assignedTo === 2)).toBe(true);
+    expect(new Date(`${tasks[1].taskDate}T00:00:00Z`).getTime() - new Date(`${tasks[0].taskDate}T00:00:00Z`).getTime())
+      .toBe(4 * 24 * 60 * 60 * 1000);
   });
 
   it('secures workspace Slack settings and sends task-assignment notifications', async () => {

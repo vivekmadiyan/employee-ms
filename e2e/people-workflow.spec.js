@@ -143,6 +143,30 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await page.getByRole('button', { name: 'Sign In to Workspace' }).click();
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByRole('button', { name: 'Team & Invites' }).click();
+  await expect(page.getByRole('heading', { name: 'People & Workspace Access' })).toBeVisible();
+  await page.getByRole('button', { name: 'Create template' }).click();
+  await page.getByLabel('Template name').fill('Engineering starter');
+  await page.getByLabel('Step title').fill('Review the codebase');
+  await page.getByLabel('Description').fill('Read the engineering onboarding guide.');
+  await page.getByLabel('Days after checklist starts').fill('0');
+  await page.getByRole('button', { name: 'Add step' }).click();
+  const secondStep = page.getByRole('group', { name: 'Step 2' });
+  await secondStep.getByLabel('Step title').fill('Deploy a change');
+  await secondStep.getByLabel('Description').fill('Ship a small change with a teammate.');
+  await secondStep.getByLabel('Days after checklist starts').fill('4');
+  await page.getByRole('button', { name: 'Save template' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Onboarding template created.' })).toBeVisible();
+  await expect(page.getByLabel('Onboarding template')).toHaveValue(/^\d+$/);
+  await page.getByRole('button', { name: 'Create onboarding checklist for E2E Teammate' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Created 2 onboarding tasks for E2E Teammate.' })).toBeVisible();
+  const onboardedEmployees = await page.request.get(`${apiUrl}/employees`, {
+    headers: { Authorization: `Bearer ${adminSession.token}` }
+  });
+  expect(onboardedEmployees.ok()).toBeTruthy();
+  const onboardedTeammate = (await onboardedEmployees.json()).find(employee => employee.id === employeeSession.user.id);
+  expect(onboardedTeammate.onboardingCreated).toBe(true);
+  expect(onboardedTeammate.tasks.map(task => task.taskTitle)).toEqual(['Review the codebase', 'Deploy a change']);
   await page.getByRole('button', { name: 'Offboarding' }).click();
   await expect(page.getByRole('heading', { name: 'Employee offboarding' })).toBeVisible();
   const offboardingAccessibility = await new AxeBuilder({ page })

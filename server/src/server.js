@@ -62,6 +62,13 @@ const offboardingChecklist = [
   { key: 'access', title: 'Revoke company-system access' },
   { key: 'records', title: 'Complete required exit records' }
 ];
+const defaultOnboardingItems = [
+  { title: 'Complete your employee profile', description: 'Review your name, work email, department, and account settings.', daysAfterStart: 0 },
+  { title: 'Set up your work tools', description: 'Confirm access to the applications and communication tools needed for your role.', daysAfterStart: 1 },
+  { title: 'Review company policies', description: 'Read the policies and guidance shared by your manager.', daysAfterStart: 3 },
+  { title: 'Meet your teammates', description: 'Schedule introductions with your manager and immediate teammates.', daysAfterStart: 5 },
+  { title: 'Align on your first-week goals', description: 'Review your role expectations and agree on initial priorities with your manager.', daysAfterStart: 7 }
+];
 const leaveYearDays = (startDate, endDate, year) => {
   const yearStart = Date.UTC(year, 0, 1);
   const yearEnd = Date.UTC(year + 1, 0, 1) - 86400000;
@@ -456,6 +463,17 @@ const schemas = {
       message: 'Provide exactly one annual allowance for each leave type'
     })
   }),
+  onboardingTemplate: z.object({
+    name: z.string().trim().min(2).max(80),
+    items: z.array(z.object({
+      title: z.string().trim().min(2).max(160),
+      description: z.string().trim().min(2).max(1_000),
+      daysAfterStart: z.number().int().min(0).max(365)
+    })).min(1).max(25).refine(items => new Set(items.map(item => item.title.toLowerCase())).size === items.length, {
+      message: 'Onboarding steps must have unique titles'
+    })
+  }),
+  onboarding: z.object({ templateId: z.number().int().positive().nullable().optional() }),
   task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: isoDate, category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
@@ -855,16 +873,65 @@ app.patch('/api/employees/:id', auth, adminOnly, async (req, res, next) => {
     next(error);
   }
 });
+app.get('/api/onboarding-templates', auth, adminOnly, async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT id,name,items FROM company_onboarding_templates WHERE company_id=$1 ORDER BY lower(name)',
+      [req.company.id]
+    );
+    res.json([
+      { id: null, name: 'Standard onboarding', items: defaultOnboardingItems, isDefault: true },
+      ...rows.map(template => ({ ...template, isDefault: false }))
+    ]);
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/onboarding-templates', auth, adminOnly, async (req, res, next) => {
+  let values;
+  try {
+    values = body(schemas.onboardingTemplate, req.body);
+  } catch (error) {
+    return next(error);
+  }
+  try {
+    const template = (await query(
+      `INSERT INTO company_onboarding_templates(company_id,name,items,created_by)
+       VALUES($1,$2,$3::jsonb,$4) ON CONFLICT DO NOTHING
+       RETURNING id,name,items`,
+      [req.company.id, values.name, JSON.stringify(values.items), req.user.id]
+    )).rows[0];
+    if (!template) return res.status(409).json({ message: 'A template with this name already exists' });
+    await recordAuditEvent(req.company.id, req.user.id, req, 'onboarding.template_created', 'onboarding_template', template.id);
+    res.status(201).json({ ...template, isDefault: false });
+  } catch (error) {
+    next(error);
+  }
+});
 app.post('/api/employees/:id/onboarding', auth, adminOnly, async (req, res, next) => {
-  const checklist = [
-    { title: 'Complete your employee profile', description: 'Review your name, work email, department, and account settings.' },
-    { title: 'Set up your work tools', description: 'Confirm access to the applications and communication tools needed for your role.' },
-    { title: 'Review company policies', description: 'Read the policies and guidance shared by your manager.' },
-    { title: 'Meet your teammates', description: 'Schedule introductions with your manager and immediate teammates.' },
-    { title: 'Align on your first-week goals', description: 'Review your role expectations and agree on initial priorities with your manager.' }
-  ];
+  let values;
+  try {
+    values = body(schemas.onboarding, req.body || {});
+  } catch (error) {
+    return next(error);
+  }
   const employeeId = Number(req.params.id);
   if (!Number.isSafeInteger(employeeId) || employeeId < 1) return res.status(400).json({ message: 'Employee ID is invalid' });
+  let checklist = defaultOnboardingItems;
+  let templateId = null;
+  if (values.templateId != null) {
+    try {
+      const template = (await query(
+        'SELECT id,name,items FROM company_onboarding_templates WHERE id=$1 AND company_id=$2',
+        [values.templateId, req.company.id]
+      )).rows[0];
+      if (!template) return res.status(404).json({ message: 'Onboarding template not found in this workspace' });
+      checklist = template.items;
+      templateId = template.id;
+    } catch (error) {
+      return next(error);
+    }
+  }
   const client = await pool.connect();
   let createdTasks = [];
   let employee;
@@ -880,8 +947,8 @@ app.post('/api/employees/:id/onboarding', auth, adminOnly, async (req, res, next
     }
 
     const plan = (await client.query(
-      'INSERT INTO employee_onboarding(company_id,employee_id,created_by) VALUES($1,$2,$3) ON CONFLICT(employee_id) DO NOTHING RETURNING id',
-      [req.company.id, employeeId, req.user.id]
+      'INSERT INTO employee_onboarding(company_id,employee_id,created_by,template_id) VALUES($1,$2,$3,$4) ON CONFLICT(employee_id) DO NOTHING RETURNING id',
+      [req.company.id, employeeId, req.user.id, templateId]
     )).rows[0];
     if (!plan) {
       await client.query('ROLLBACK');
@@ -889,16 +956,16 @@ app.post('/api/employees/:id/onboarding', auth, adminOnly, async (req, res, next
     }
 
     const createdAt = new Date();
-    createdTasks = await Promise.all(checklist.map(async (item, index) => {
+    for (const item of checklist) {
       const taskDate = new Date(createdAt);
-      taskDate.setUTCDate(taskDate.getUTCDate() + [0, 1, 3, 5, 7][index]);
+      taskDate.setUTCDate(taskDate.getUTCDate() + item.daysAfterStart);
       const dueDate = taskDate.toISOString().slice(0, 10);
-      return (await client.query(
+      createdTasks.push((await client.query(
         `INSERT INTO tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)
          VALUES($1,$2,$3,$4,'Onboarding',$5,$6,'medium') RETURNING ${taskFields}`,
         [req.company.id, item.title, item.description, dueDate, employeeId, req.user.id]
-      )).rows[0];
-    }));
+      )).rows[0]);
+    }
     await client.query('COMMIT');
   } catch (error) {
     try {

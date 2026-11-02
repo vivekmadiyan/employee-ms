@@ -61,7 +61,9 @@ export const registerCompanyApi = (payload) => api('/onboarding/register-company
 export const createEmployeeApi = (payload) => api('/employees', {method:'POST', body:JSON.stringify(payload)});
 export const updateEmployeeApi = (id, payload) => api(`/employees/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const updateEmployeeStatusApi = (id, active) => api(`/employees/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) });
-export const createEmployeeOnboardingApi = id => api(`/employees/${id}/onboarding`, { method: 'POST', body: '{}' });
+export const getOnboardingTemplatesApi = () => api('/onboarding-templates');
+export const createOnboardingTemplateApi = payload => api('/onboarding-templates', { method: 'POST', body: JSON.stringify(payload) });
+export const createEmployeeOnboardingApi = (id, templateId = null) => api(`/employees/${id}/onboarding`, { method: 'POST', body: JSON.stringify({ templateId }) });
 
 export const createInvitationApi = (payload) => api('/invitations', {method:'POST', body:JSON.stringify(payload)});
 export const createBulkInvitationsApi = employees => api('/invitations/bulk', { method: 'POST', body: JSON.stringify({ employees }) });
