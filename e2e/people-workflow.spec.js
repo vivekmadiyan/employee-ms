@@ -97,6 +97,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   const leaveRequest = await leaveResponse.json();
 
   await page.getByRole('button', { name: 'Log out' }).click();
+  await page.goto('/');
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await page.getByLabel('Work Email').fill(managerEmail);
   await page.getByLabel('Password').fill(password);
