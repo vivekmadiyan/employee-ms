@@ -87,7 +87,16 @@ function installQueryMock() {
   mocks.query.mockImplementation(async (sql, params = []) => {
     const text = normalize(sql);
     if (text.startsWith('select task_title as title, task_date::text as due_date, status, priority') && Number(params[0]) === company.id) {
-      return result([]);
+      const visible = tasks.filter(task => task.companyId === Number(params[0]) && !task.archivedAt &&
+        (!text.includes('assigned_to=$2') || task.assignedTo === Number(params[1])));
+      return result(visible.map(task => ({
+        id: task.id, title: task.taskTitle, due_date: task.taskDate, status: task.status, priority: task.priority,
+        scope_total: visible.length
+      })));
+    }
+    if (text.startsWith('select id, first_name as name from users')) {
+      return result(users.filter(user => user.companyId === Number(params[0]) && user.role === 'employee' && user.active)
+        .map(user => ({ id: user.id, name: user.firstName })));
     }
     if (text.startsWith('insert into audit_events(')) {
       if (failAuditWrites) throw new Error('audit storage unavailable');
@@ -776,6 +785,10 @@ function installQueryMock() {
       return result([]);
     }
     if (text.startsWith('select id, company_id as "companyid", task_title as "tasktitle"')) {
+      if (text.includes('from tasks where id=$1 and company_id=$2')) {
+        const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && !item.archivedAt);
+        return result(task ? [taskFields(task)] : []);
+      }
       let found = tasks.filter(task => task.companyId === Number(params[0]));
       if (text.includes('assigned_to=$2')) found = found.filter(task => task.assignedTo === Number(params[1]));
       if (text.includes('archived_at is null')) found = found.filter(task => !task.archivedAt);
@@ -791,7 +804,9 @@ function installQueryMock() {
       return result(found.map(taskFields));
     }
     if (text.startsWith('update tasks set status=$1')) {
-      const task = tasks.find(item => item.id === Number(params[1]) && item.companyId === Number(params[2]));
+      const task = tasks.find(item => item.id === Number(params[1]) && item.companyId === Number(params[2]) &&
+        item.status === params[3] && !item.archivedAt && (params[4] == null || item.assignedTo === Number(params[4])));
+      if (!task) return result([]);
       task.status = params[0];
       task.updatedAt = new Date().toISOString();
       return result([taskFields(task)]);
@@ -1041,6 +1056,85 @@ beforeEach(() => {
 });
 
 describe('authenticated API workflows', () => {
+  it('previews a scoped status change, keeps the task unchanged without approval, and rejects stale confirmations', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    const authorization = `Bearer ${login.body.token}`;
+    const catalog = await request(app).get('/api/ai/tools').set('Authorization', authorization).expect(200);
+    expect(catalog.body.tools.map(tool => tool.id)).toEqual(['set_task_status']);
+    tasks.push(
+      { id: 11, companyId: 1, taskTitle: 'Check stock', taskDate: '2026-11-28', status: 'new', assignedTo: 2, createdBy: 1 },
+      { id: 12, companyId: 1, taskTitle: 'Private task', taskDate: '2026-11-28', status: 'new', assignedTo: 3, createdBy: 1 }
+    );
+
+    const proposal = taskId => Response.json({ candidates: [{ content: { parts: [{
+      functionCall: { name: 'set_task_status', args: { taskId, status: 'active' } }
+    }] } }] });
+    const fetchMock = vi.fn().mockResolvedValueOnce(proposal(12)).mockResolvedValueOnce(proposal(11));
+    vi.stubGlobal('fetch', fetchMock);
+    const ask = question => request(app).post('/api/ai/ask').set('Authorization', authorization)
+      .send({ mode: 'chat', question, tools: ['set_task_status', 'create_task'] }).expect(200);
+
+    try {
+      const rejected = await ask('Start the private task');
+      expect(rejected.body.action).toBeUndefined();
+      expect(tasks[1].status).toBe('new');
+      const reply = await ask('Start Check stock');
+      expect(reply.body.action).toMatchObject({
+        tool: 'set_task_status',
+        input: { taskId: 11, status: 'active', expectedStatus: 'new' }
+      });
+      expect(tasks[0].status).toBe('new');
+      const args = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(args.tools[0].functionDeclarations.map(tool => tool.name)).toEqual(['set_task_status']);
+      expect(JSON.parse(args.contents.at(-1).parts[0].text).tasks.map(task => task.id)).toEqual([11]);
+      const { taskId, ...change } = reply.body.action.input;
+      const commit = () => request(app).patch(`/api/tasks/${taskId}/status`).set('Authorization', authorization).send(change);
+      await commit().expect(200);
+      expect(tasks[0].status).toBe('active');
+      await commit().expect(409);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('allows an admin to review an AI task draft then save it through the normal task endpoint', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    const authorization = `Bearer ${login.body.token}`;
+    const catalog = await request(app).get('/api/ai/tools').set('Authorization', authorization).expect(200);
+    expect(catalog.body.tools.map(tool => tool.id)).toContain('create_task');
+    const input = {
+      taskTitle: 'Run inventory check', taskDescription: 'Count current stock.', taskDate: '2026-11-28',
+      assignedTo: 2, category: 'Operations', priority: 'medium'
+    };
+    config.GROQ_API_KEY = 'test-groq-key';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('Busy', { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { tool_calls: [{
+        function: { name: 'create_task', arguments: JSON.stringify(input) }
+      }] } }] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const reply = await request(app).post('/api/ai/ask').set('Authorization', authorization)
+        .send({ mode: 'chat', question: 'Draft an inventory task for Employee', tools: ['create_task'] })
+        .expect(200);
+      expect(reply.body.action).toMatchObject({ tool: 'create_task', input });
+      expect(reply.body.source).toBe('groq');
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).tools[0].function.name).toBe('create_task');
+      expect(reply.body.action.details).toContainEqual({ label: 'Assignee', value: 'Employee (#2)' });
+      expect(tasks).toHaveLength(0);
+      const saved = await request(app).post('/api/tasks').set('Authorization', authorization).send(reply.body.action.input).expect(201);
+      expect(saved.body).toMatchObject({ taskTitle: input.taskTitle, assignedTo: 2, newTask: true });
+    } finally {
+      config.GROQ_API_KEY = undefined;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('answers with Flash-Lite when Gemini rejects the old configured model', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'admin@example.test',

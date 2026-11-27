@@ -45,6 +45,8 @@ To enable a separate provider when Gemini is unavailable, add a `GROQ_API_KEY` i
 
 Use **AI chat** to test a task question and a follow-up. Model replies identify the provider and can link to referenced tasks. **Task summaries** use the database directly and do not call a model.
 
+The **AI** tab has a tool picker. Employees can enable **Update task status** for their assignments. Admins can also enable **Create a task** for active teammates. With that tool enabled, active teammate names and IDs are included in the model context so it can resolve assignments. Review the proposed changes, then select **Confirm action** to save through the normal task API. The usual permissions, notifications, and audit trail apply.
+
 ## Production checks
 
 - The frontend bundle must use the public API URL, not `localhost`.

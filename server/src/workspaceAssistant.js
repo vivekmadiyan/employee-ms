@@ -4,7 +4,7 @@ import { defaultGeminiModel } from './config.js';
 const alternateModel = 'gemini-3.1-flash-lite';
 const retryableStatuses = new Set([0, 408, 500, 502, 503, 504]);
 
-async function callModel({ url, headers, body, readAnswer, provider, model }) {
+async function callModel({ url, headers, body, readReply, provider, model }) {
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -16,14 +16,22 @@ async function callModel({ url, headers, body, readAnswer, provider, model }) {
       await response.body?.cancel();
       return { status: response.status, provider, model };
     }
-    const answer = readAnswer(await response.json());
-    return { status: response.status, answer: typeof answer === 'string' ? answer.trim() : '', provider, model };
+    const { text, calls } = readReply(await response.json());
+    return { status: response.status, answer: typeof text === 'string' ? text.trim() : '', calls, provider, model };
   } catch {
     return { status: 0, provider, model };
   }
 }
 
-export async function generateWorkspaceAnswer({ apiKey, model, groqKey, instruction, messages }) {
+function parseToolArguments(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+export async function generateWorkspaceAnswer({ apiKey, model, groqKey, instruction, messages, tools = [] }) {
   const generate = modelName => callModel({
     url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`,
     headers: { 'x-goog-api-key': apiKey },
@@ -32,10 +40,21 @@ export async function generateWorkspaceAnswer({ apiKey, model, groqKey, instruct
       contents: messages.map(({ role, content }) => ({
         role: role === 'assistant' ? 'model' : 'user', parts: [{ text: content }]
       })),
-      generationConfig: { maxOutputTokens: 1024 }
+      generationConfig: { maxOutputTokens: 1024 },
+      ...(tools.length > 0 && {
+        tools: [{ functionDeclarations: tools.map(({ id, description, parameters }) => ({
+          name: id, description, parametersJsonSchema: parameters
+        })) }],
+        toolConfig: { functionCallingConfig: { mode: 'AUTO' } }
+      })
     },
-    readAnswer: data => data.candidates?.[0]?.content?.parts
-      ?.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join(''),
+    readReply: data => {
+      const parts = data.candidates?.[0]?.content?.parts ?? [];
+      return {
+        text: parts.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join(''),
+        calls: parts.flatMap(part => part.functionCall ? [part.functionCall] : [])
+      };
+    },
     provider: 'gemini',
     model: modelName
   });
@@ -47,9 +66,23 @@ export async function generateWorkspaceAnswer({ apiKey, model, groqKey, instruct
       messages: [{ role: 'system', content: instruction }, ...messages],
       max_completion_tokens: 1024,
       reasoning_effort: 'low',
-      include_reasoning: false
+      include_reasoning: false,
+      ...(tools.length > 0 && {
+        tools: tools.map(({ id, description, parameters }) => ({
+          type: 'function', function: { name: id, description, parameters }
+        })),
+        tool_choice: 'auto'
+      })
     },
-    readAnswer: data => data.choices?.[0]?.message?.content,
+    readReply: data => {
+      const message = data.choices?.[0]?.message;
+      return {
+        text: message?.content,
+        calls: (message?.tool_calls ?? []).flatMap(call => call.function ? [{
+          name: call.function.name, args: parseToolArguments(call.function.arguments)
+        }] : [])
+      };
+    },
     provider: 'groq',
     model: 'openai/gpt-oss-20b'
   });

@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   FaCalendarDay, FaChartLine, FaChartPie, FaClipboardCheck, FaListCheck, FaPlus,
-  FaPlug, FaShieldHalved, FaUserPlus, FaUsers
+  FaPlug, FaShieldHalved, FaUserPlus, FaUsers, FaWandMagicSparkles
 } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
 import Header from '../other/Header';
@@ -23,6 +23,7 @@ import './Workspace.css';
 
 const navigation = [
   ['Operations', [
+    { id: 'ai', label: 'AI', title: 'AI workspace', icon: FaWandMagicSparkles, description: 'Ask about work, draft updates, or prepare a task change.' },
     { id: 'overview', label: 'Overview', title: 'Workspace Overview', icon: FaChartPie, description: 'See what needs attention and keep your team on track.' },
     { id: 'tasks', label: 'Task Hub', icon: FaListCheck, description: 'Assign, prioritize, and follow up on team tasks.' },
     { id: 'leaves', label: 'Leave Requests', icon: FaCalendarDay, description: 'Review requests and plan around approved absences.' },
@@ -40,6 +41,7 @@ const pages = navigation.flatMap(([, items]) => items);
 const AdminDashboard = ({ changeUser, data }) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
   const [view, setView] = useState({ tab: 'overview' });
+  const [hasOpenedAi, setHasOpenedAi] = useState(false);
   const headingRef = useRef(null);
   const taskFormRef = useRef(null);
   const inviteRef = useRef(null);
@@ -59,6 +61,10 @@ const AdminDashboard = ({ changeUser, data }) => {
     { label: 'Needs follow-up', value: totals.failed, note: 'Tasks marked failed', icon: FaChartLine }
   ];
   const openTaskHub = task => setView({ tab: 'tasks', taskId: task?.id, jump: 'heading' });
+  const openPage = id => {
+    if (id === 'ai') setHasOpenedAi(true);
+    setView({ tab: id });
+  };
 
   useEffect(() => {
     if (!view.jump) return;
@@ -81,7 +87,8 @@ const AdminDashboard = ({ changeUser, data }) => {
               <p>{group}</p>
               {items.map(({ id, label, icon: Icon }) => (
                 <button key={id} type="button" aria-current={tab === id ? 'page' : undefined}
-                  onClick={() => setView({ tab: id })}>
+                  aria-controls={id === 'ai' ? 'admin-ai-view' : undefined}
+                  onClick={() => openPage(id)}>
                   <Icon aria-hidden="true" />
                   {label}
                 </button>
@@ -96,15 +103,18 @@ const AdminDashboard = ({ changeUser, data }) => {
               <h1 id="workspace-page-title" ref={headingRef} tabIndex={-1}>{page.title || page.label}</h1>
               <p>{page.description}</p>
             </div>
-            <div className="workspace-actions">
+            {tab !== 'ai' && <div className="workspace-actions">
               <button type="button" onClick={() => setView({ tab: 'team', jump: 'invite' })}
                 className="workspace-action workspace-action--secondary"><FaUserPlus aria-hidden="true" /> Invite Member</button>
               <button type="button" onClick={() => setView({ tab: 'tasks', jump: 'create' })}
                 className="workspace-action"><FaPlus aria-hidden="true" /> New Task</button>
-            </div>
+            </div>}
           </section>
 
-          {userData === null ? (
+          <div id="admin-ai-view" className="workspace-ai-view" hidden={tab !== 'ai'}>
+            {hasOpenedAi && <AIAssistant onOpenTask={openTaskHub} />}
+          </div>
+          {tab !== 'ai' && (userData === null ? (
             <section className="dashboard-card p-8 text-center">
               {dataError ? (
                 <>
@@ -129,7 +139,7 @@ const AdminDashboard = ({ changeUser, data }) => {
                   </dl>
                   <WorkFocus admin employees={employees} onOpenTasks={openTaskHub} />
                   {employees.length > 0 ? (
-                    <div className="workspace-support"><AllTask /><AIAssistant onOpenTask={openTaskHub} /></div>
+                    <AllTask />
                   ) : (
                     <section className="dashboard-card workspace-onboard">
                       <span className="workspace-onboard-icon"><FaUserPlus aria-hidden="true" /></span>
@@ -167,7 +177,7 @@ const AdminDashboard = ({ changeUser, data }) => {
               {tab === 'audit' && <AuditTrail />}
               {tab === 'integrations' && <SlackIntegration />}
             </div>
-          )}
+          ))}
         </main>
       </div>
     </div>

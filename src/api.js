@@ -58,7 +58,8 @@ export const createTaskApi = (payload) => api('/tasks', {method:'POST', body:JSO
 export const updateTaskApi = (id, payload) => api(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const archiveTaskApi = (id, archived = true) => api(`/tasks/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ archived }) });
 export const bulkUpdateTasksApi = payload => api('/tasks/bulk', { method: 'POST', body: JSON.stringify(payload) });
-export const updateTaskStatusApi = (id, status) => api(`/tasks/${id}/status`, {method:'PATCH', body:JSON.stringify({status})});
+export const updateTaskStatusApi = (id, status, expectedStatus) =>
+  api(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, expectedStatus }) });
 export const registerCompanyApi = (payload) => api('/onboarding/register-company', {method:'POST', body:JSON.stringify(payload)});
 export const createEmployeeApi = (payload) => api('/employees', {method:'POST', body:JSON.stringify(payload)});
 export const updateEmployeeApi = (id, payload) => api(`/employees/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -156,3 +157,4 @@ export const markAllNotificationsReadApi = () => api('/notifications/read-all', 
 export const getTaskCommentsApi = id => api(`/tasks/${id}/comments`);
 export const createTaskCommentApi = (id, content) => api(`/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
 export const askAiApi = payload => api('/ai/ask', { method: 'POST', body: JSON.stringify(payload) });
+export const getAiToolsApi = () => api('/ai/tools');

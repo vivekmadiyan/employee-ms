@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
-import { FaCalendarDay, FaListCheck, FaUserGroup } from 'react-icons/fa6';
+import { FaCalendarDay, FaListCheck, FaUserGroup, FaWandMagicSparkles } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
 import { getDirectReportsApi } from '../../api';
 import Header from '../other/Header';
@@ -13,6 +13,7 @@ import './Workspace.css';
 const EmployeeDashboard = (props) => {
   const { userData, loading, dataError, refresh, currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('tasks');
+  const [hasOpenedAi, setHasOpenedAi] = useState(false);
   const [directReports, setDirectReports] = useState([]);
   const [teamError, setTeamError] = useState('');
   const [focusRequest, setFocusRequest] = useState(null);
@@ -31,6 +32,7 @@ const EmployeeDashboard = (props) => {
       ? userData[0]
       : null;
   const workspaceTabs = [
+    { id: 'ai', label: 'AI', icon: FaWandMagicSparkles },
     { id: 'tasks', label: 'My tasks', icon: FaListCheck, count: employeeData?.tasks?.length },
     { id: 'leaves', label: 'Time off', icon: FaCalendarDay },
     ...(directReports.length > 0
@@ -47,10 +49,17 @@ const EmployeeDashboard = (props) => {
   const openTask = task => {
     if (task) {
       setFocusRequest({ taskId: task.id });
+      setActiveTab('tasks');
     } else {
       taskListRef.current?.focus({ preventScroll: true });
       taskListRef.current?.scrollIntoView({ block: 'start' });
     }
+  };
+
+  const openPage = id => {
+    if (id === 'ai') setHasOpenedAi(true);
+    if (id === 'tasks') setFocusRequest(null);
+    setActiveTab(id);
   };
 
   return (
@@ -61,11 +70,13 @@ const EmployeeDashboard = (props) => {
         </div>
       </div>
 
-      <main className="workspace-main workspace-personal">
+      <main className={`workspace-main workspace-personal${activeTab === 'ai' ? ' workspace-personal--ai' : ''}`}>
         <div className="workspace-pagehead">
           <div>
-            <h1>My Workspace</h1>
-            <p>Manage your assignments, keep track of deadlines, and plan time off.</p>
+            <h1>{activeTab === 'ai' ? 'AI workspace' : 'My Workspace'}</h1>
+            <p>{activeTab === 'ai'
+              ? 'Ask about your tasks, draft updates, or prepare a status change.'
+              : 'Manage your assignments, keep track of deadlines, and plan time off.'}</p>
           </div>
           <span className="workspace-date"><FaCalendarDay aria-hidden="true" /> {todayFormatted}</span>
         </div>
@@ -97,7 +108,8 @@ const EmployeeDashboard = (props) => {
                     key={tab.id}
                     type="button"
                     aria-current={isActive ? 'page' : undefined}
-                    onClick={() => setActiveTab(tab.id)}
+                    aria-controls={tab.id === 'ai' ? 'employee-ai-view' : undefined}
+                    onClick={() => openPage(tab.id)}
                   >
                     <Icon className="text-xs" aria-hidden="true" />
                     <span>{tab.label}</span>
@@ -108,20 +120,24 @@ const EmployeeDashboard = (props) => {
             </nav>
 
             {teamError && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{teamError}</p>}
-            {activeTab === 'tasks' ? (
+            <div id="employee-ai-view" className="workspace-ai-view" hidden={activeTab !== 'ai'}>
+              {hasOpenedAi && <AIAssistant onOpenTask={openTask} />}
+            </div>
+            {activeTab === 'tasks' && (
               <div className="workspace-stack">
                 <WorkFocus tasks={employeeData?.tasks} onOpenTasks={openTask} />
                 <TaskListNumbers data={employeeData} />
                 <div className="workspace-jump" tabIndex={-1} ref={taskListRef} aria-label="Assigned Tasks">
                   <TaskList data={employeeData} focusRequest={focusRequest} />
                 </div>
-                <AIAssistant onOpenTask={openTask} />
               </div>
-            ) : activeTab === 'leaves' ? (
+            )}
+            {activeTab === 'leaves' && (
               <div className="animate-fade-in">
                 <LeaveManagement isManager={directReports.length > 0} />
               </div>
-            ) : (
+            )}
+            {activeTab === 'team' && (
               <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm" aria-labelledby="manager-team-heading">
                 <div className="border-b border-slate-100 p-5 sm:p-6">
                   <h2 id="manager-team-heading" className="text-sm font-bold text-slate-900">Your direct reports</h2>

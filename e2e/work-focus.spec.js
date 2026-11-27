@@ -23,8 +23,8 @@ test('the public landing works at 390 pixels in both themes', async ({ page }) =
   await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
-test('Work Focus leads admins and employees to the right task on a phone', async ({ page }) => {
-  test.setTimeout(50_000);
+test('Work Focus and AI approvals keep task actions scoped on a phone', async ({ page }) => {
+  test.setTimeout(60_000);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const registered = await page.request.post(`${api}/onboarding/register-company`, {
     data: {
@@ -47,7 +47,16 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   await page.getByLabel('Confirm password').fill(password);
   await page.getByRole('button', { name: 'Accept Invitation & Enter' }).click();
   await expect(page.getByRole('heading', { name: 'My Workspace' })).toBeVisible();
-  const employee = await page.evaluate(() => JSON.parse(localStorage.getItem('ems_user')));
+  const employee = await page.evaluate(() => ({
+    ...JSON.parse(localStorage.getItem('ems_user')),
+    token: localStorage.getItem('ems_token')
+  }));
+  const employeeHeaders = { Authorization: `Bearer ${employee.token}` };
+  const readTask = async taskId => {
+    const response = await page.request.get(`${api}/tasks?taskId=${taskId}`, { headers: employeeHeaders });
+    expect(response.status()).toBe(200);
+    return (await response.json())[0];
+  };
 
   const overdue = new Date();
   overdue.setUTCDate(overdue.getUTCDate() - 3);
@@ -77,7 +86,16 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   expect((await new AxeBuilder({ page }).include('.work-focus')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await workFocus.getByRole('button', { name: /Review shift handoff/ }).click();
+  const employeeTask = page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' });
+  await expect(employeeTask).toBeFocused();
+
+  const employeeNavigation = page.getByRole('navigation', { name: 'My workspace sections' });
+  await expect(employeeNavigation.getByRole('button').first()).toHaveAccessibleName('AI');
+  await employeeNavigation.getByRole('button', { name: 'AI', exact: true }).click();
   const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  await expect(workFocus).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await assistant.getByRole('button', { name: 'Task summaries' }).click();
   await assistant.getByRole('button', { name: 'Which tasks are overdue?' }).click();
   await expect(assistant.getByRole('status')).toContainText('Workspace summary');
@@ -90,22 +108,40 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   await assistant.getByRole('button', { name: 'AI chat' }).click();
   await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Which tasks are overdue?');
   await assistant.getByRole('button', { name: 'Ask AI' }).click();
-  await expect(assistant.getByRole('alert')).toContainText('The AI provider is unavailable');
+  await expect(assistant.getByRole('alert')).toContainText(/AI provider .*unavailable/);
   await expect(assistant.getByText('Workspace summary')).toHaveCount(0);
 
+  const employeeTools = await page.request.get(`${api}/ai/tools`, { headers: employeeHeaders });
+  expect(employeeTools.status()).toBe(200);
+  const { tools } = await employeeTools.json();
+  expect(tools.map(tool => tool.id)).toContain('set_task_status');
+  expect(tools.map(tool => tool.id)).not.toContain('create_task');
+  const statusTool = tools.find(tool => tool.id === 'set_task_status');
   const chatInputs = [];
+  const action = {
+    tool: 'set_task_status', title: 'Update task status',
+    details: [
+      { label: 'Task', value: 'Review shift handoff' },
+      { label: 'Change', value: 'New → In progress' }
+    ],
+    input: { taskId: overdueTaskId, status: 'active', expectedStatus: 'new' }
+  };
   await page.route('**/api/ai/ask', async route => {
     if (route.request().method() !== 'POST') return route.continue();
     chatInputs.push(route.request().postDataJSON());
+    const isProposal = chatInputs.length > 2;
     await route.fulfill({
       json: {
-        answer: chatInputs.length === 1 ? 'Review the overdue shift handoff first.' : 'Tell the next shift to review the handoff.',
+        answer: isProposal ? 'Review the proposed task change.' :
+          chatInputs.length === 1 ? 'Review the overdue shift handoff first.' : 'Tell the next shift to review the handoff.',
         source: 'gemini',
         model: 'gemini-3.5-flash-lite',
-        references: [{ id: overdueTaskId, title: 'Review shift handoff' }]
+        references: [{ id: overdueTaskId, title: 'Review shift handoff' }],
+        ...(isProposal ? { action } : {})
       }
     });
   });
+  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Which tasks are overdue?');
   await assistant.getByRole('button', { name: 'Ask AI' }).click();
   await expect(assistant.getByRole('log')).toContainText('Review the overdue shift handoff first.');
   await expect(assistant.getByRole('log')).toContainText('Gemini');
@@ -115,14 +151,33 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   expect(chatInputs[1].history).toEqual([{
     question: 'Which tasks are overdue?', answer: 'Review the overdue shift handoff first.'
   }]);
+
+  await assistant.getByRole('button', { name: 'Tools', exact: true }).click();
+  await assistant.getByRole('checkbox', { name: statusTool.label, exact: true }).check();
+  const proposeStatusChange = async () => {
+    await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Start the overdue shift handoff.');
+    await assistant.getByRole('button', { name: 'Ask AI' }).click();
+    await expect(assistant.getByRole('button', { name: 'Confirm action', exact: true })).toBeVisible();
+    expect(chatInputs.at(-1).tools).toContain('set_task_status');
+    expect(await readTask(overdueTaskId)).toMatchObject({ id: overdueTaskId, newTask: true, active: false });
+  };
+  await proposeStatusChange();
+  await assistant.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await expect(assistant.getByRole('button', { name: 'Confirm action', exact: true })).toHaveCount(0);
+  expect(await readTask(overdueTaskId)).toMatchObject({ newTask: true, active: false });
+  await proposeStatusChange();
+  const [confirmedStatus] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname === `/api/tasks/${overdueTaskId}/status`),
+    assistant.getByRole('button', { name: 'Confirm action', exact: true }).click()
+  ]);
+  expect(confirmedStatus.ok()).toBe(true);
+  await expect(assistant.getByText('Task status updated.', { exact: true })).toBeVisible();
+  expect(await readTask(overdueTaskId)).toMatchObject({ newTask: false, active: true });
   await assistant.getByRole('button', { name: 'Review shift handoff' }).last().click();
-  await expect(page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' })).toBeFocused();
+  await expect(employeeTask).toBeFocused();
   await page.unroute('**/api/ai/ask');
 
-  await workFocus.getByRole('button', { name: /Review shift handoff/ }).click();
-  const employeeTask = page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' });
-  await expect(employeeTask).toBeFocused();
-  await employeeTask.getByRole('button', { name: 'Accept Task' }).click();
   await employeeTask.getByRole('button', { name: 'Completed' }).click();
   await expect(workFocus.getByRole('button', { name: 'Overdue 0' })).toBeVisible();
 
@@ -142,6 +197,66 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign In to Workspace' }).click();
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
+  const adminNavigation = page.getByRole('navigation', { name: 'Workspace navigation' });
+  await expect(adminNavigation.getByRole('button').first()).toHaveAccessibleName('AI');
+  await adminNavigation.getByRole('button', { name: 'AI', exact: true }).click();
+  await expect(assistant).toBeVisible();
+  const adminTools = await page.request.get(`${api}/ai/tools`, { headers });
+  expect(adminTools.status()).toBe(200);
+  const { tools: availableAdminTools } = await adminTools.json();
+  expect(availableAdminTools.map(tool => tool.id)).toEqual(expect.arrayContaining(['set_task_status', 'create_task']));
+  const creationTool = availableAdminTools.find(tool => tool.id === 'create_task');
+  const creationInput = {
+    taskTitle: 'Update the stock checklist',
+    taskDescription: 'Review items added during the shift.',
+    taskDate: fartherOut.toISOString().slice(0, 10),
+    category: 'Operations',
+    assignedTo: employee.id,
+    priority: 'medium'
+  };
+  const readCreatedTasks = async () => {
+    const response = await page.request.get(`${api}/tasks?q=${encodeURIComponent(creationInput.taskTitle)}`, { headers });
+    expect(response.status()).toBe(200);
+    return response.json();
+  };
+  let creationRequest;
+  await page.route('**/api/ai/ask', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    creationRequest = route.request().postDataJSON();
+    await route.fulfill({
+      json: {
+        answer: 'Review the proposed new task.',
+        source: 'gemini',
+        model: 'gemini-3.5-flash-lite',
+        references: [],
+        action: {
+          tool: 'create_task', title: 'Create a task',
+          details: [
+            { label: 'Title', value: creationInput.taskTitle },
+            { label: 'Assigned to', value: 'Focus Teammate' },
+            { label: 'Due date', value: creationInput.taskDate }
+          ],
+          input: creationInput
+        }
+      }
+    });
+  });
+  await assistant.getByRole('button', { name: 'Tools', exact: true }).click();
+  await assistant.getByRole('checkbox', { name: creationTool.label, exact: true }).check();
+  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Create a task to update the stock checklist.');
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('button', { name: 'Confirm action', exact: true })).toBeVisible();
+  expect(creationRequest.tools).toContain('create_task');
+  expect(await readCreatedTasks()).toEqual([]);
+  const [createdTask] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/tasks'),
+    assistant.getByRole('button', { name: 'Confirm action', exact: true }).click()
+  ]);
+  expect(createdTask.status()).toBe(201);
+  await expect(assistant.getByText('Task created.', { exact: true })).toBeVisible();
+  expect(await readCreatedTasks()).toMatchObject([{ ...creationInput, newTask: true }]);
+  await page.unroute('**/api/ai/ask');
+  await adminNavigation.getByRole('button', { name: 'Overview', exact: true }).click();
   await expect(workFocus.getByText('Focus Teammate', { exact: false })).toBeVisible();
   const adminAudit = await new AxeBuilder({ page })
     .include('.workspace-pagehead').include('.workspace-stats').include('.work-focus').include('.workspace-workload')
