@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   connect: vi.fn(),
   sendInvitationEmail: vi.fn(),
+  sendEmailChangeEmail: vi.fn(),
   sendLeaveRequestEmail: vi.fn(),
   sendLeaveDecisionEmail: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('./db.js', () => ({
 }));
 vi.mock('./email.js', () => ({
   sendInvitationEmail: mocks.sendInvitationEmail,
+  sendEmailChangeEmail: mocks.sendEmailChangeEmail,
   sendLeaveRequestEmail: mocks.sendLeaveRequestEmail,
   sendLeaveDecisionEmail: mocks.sendLeaveDecisionEmail,
   sendPasswordResetEmail: mocks.sendPasswordResetEmail,
@@ -54,6 +56,8 @@ let leaveRequests;
 let leavePolicies;
 let invitations;
 let passwordResets;
+let emailChanges;
+let revokedTokens;
 let slackWebhookEncrypted;
 let onboardingEmployees;
 let onboardingTemplates;
@@ -81,6 +85,7 @@ const userFields = user => ({
   active: user.active
 });
 const taskFields = task => ({ ...task });
+const hasActiveTaskAssignee = task => users.some(user => user.id === task.assignedTo && user.companyId === task.companyId && user.role === 'employee' && user.active);
 const normalize = sql => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 const visibleReportTasks = ([companyId, from, to, assigneeId]) => tasks.filter(task =>
   task.companyId === Number(companyId) && !task.archivedAt &&
@@ -209,31 +214,33 @@ function installQueryMock() {
       }] : []);
     }
     if (text.startsWith('update users set mfa_secret=$1')) {
-      const user = users.find(item => item.id === Number(params[1]));
-      if (user) user.mfaSecret = params[0];
-      return result([]);
+      const user = users.find(item => item.id === Number(params[1]) && (item.authVersion || 0) === params[2] && !item.mfaEnabled);
+      if (!user) return result([]);
+      user.mfaSecret = params[0];
+      return result([{ id: user.id }]);
     }
     if (text.startsWith('update users set mfa_recovery_codes=array_remove')) {
-      const user = users.find(item => item.id === Number(params[1]));
-      if (user) user.mfaRecoveryCodes = (user.mfaRecoveryCodes || []).filter(hash => hash !== params[0]);
-      return result([]);
+      const user = users.find(item => item.id === Number(params[1]) && (item.authVersion || 0) === params[2] && item.mfaEnabled);
+      if (!user?.mfaRecoveryCodes.includes(params[0])) return result([]);
+      user.mfaRecoveryCodes = user.mfaRecoveryCodes.filter(hash => hash !== params[0]);
+      return result([{ id: user.id }]);
     }
     if (text.startsWith('update users set mfa_enabled=true')) {
-      const user = users.find(item => item.id === Number(params[1]));
-      if (user) {
-        user.mfaEnabled = true;
-        user.mfaRecoveryCodes = params[0];
-      }
-      return result([]);
+      const user = users.find(item => item.id === Number(params[1]) && (item.authVersion || 0) === params[2] && item.mfaSecret === params[3] && !item.mfaEnabled);
+      if (!user) return result([]);
+      user.mfaEnabled = true;
+      user.mfaRecoveryCodes = params[0];
+      user.authVersion = (user.authVersion || 0) + 1;
+      return result([{ authVersion: user.authVersion }]);
     }
     if (text.startsWith('update users set mfa_enabled=false')) {
-      const user = users.find(item => item.id === Number(params[0]));
-      if (user) {
-        user.mfaEnabled = false;
-        user.mfaSecret = null;
-        user.mfaRecoveryCodes = [];
-      }
-      return result([]);
+      const user = users.find(item => item.id === Number(params[0]) && (item.authVersion || 0) === params[1] && item.mfaEnabled);
+      if (!user) return result([]);
+      user.mfaEnabled = false;
+      user.mfaSecret = null;
+      user.mfaRecoveryCodes = [];
+      user.authVersion = (user.authVersion || 0) + 1;
+      return result([{ authVersion: user.authVersion }]);
     }
     if (text.startsWith('select a.id,a.actor_user_id as "actorid"')) {
       const visibleEvents = auditEvents
@@ -388,7 +395,7 @@ function installQueryMock() {
         item.id === Number(params[0]) &&
         item.companyId === Number(params[1]) &&
         item.userId === Number(params[2]) &&
-        item.status === 'pending'
+        (item.status === 'pending' || (item.status === 'approved' && item.startDate > params[3]))
       );
       if (!leave) return result([]);
       leave.status = 'cancelled';
@@ -471,12 +478,12 @@ function installQueryMock() {
         };
       }).sort((a, b) => b.totalTasks - a.totalTasks));
     }
-    if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, job_title as "jobtitle"') && text.includes('password_hash as "passwordhash" from users where email')) {
+    if (text.startsWith('select id, company_id as "companyid", first_name as "firstname", email, role, department, job_title as "jobtitle"') && text.includes('password_hash as "passwordhash", auth_version as "authversion" from users where email')) {
       const user = users.find(item => item.email === params[0]);
-      return result(user ? [{ ...userFields(user), passwordHash: user.passwordHash }] : []);
+      return result(user ? [{ ...userFields(user), passwordHash: user.passwordHash, authVersion: user.authVersion || 0 }] : []);
     }
     if (text.startsWith('select u.id, u.company_id as "companyid"') && text.includes('join companies c')) {
-      const user = users.find(item => item.id === Number(params[0]));
+      const user = users.find(item => item.id === Number(params[0]) && (item.authVersion || 0) === params[1] && !revokedTokens.has(params[2]));
       return result(user ? [{
         ...userFields(user),
         company_id_value: company.id,
@@ -507,16 +514,40 @@ function installQueryMock() {
       return result([]);
     }
     if (text.startsWith('insert into password_resets(')) {
-      passwordResets.push({ userId: Number(params[0]), tokenHash: params[1], usedAt: null });
+      passwordResets.push({ userId: Number(params[0]), tokenHash: params[1], authVersion: params[2], usedAt: null });
       return result([]);
     }
-    if (text.startsWith('update users set first_name=$1,email=$2')) {
-      const userId = Number(params[params.length - 1]);
-      const user = users.find(item => item.id === userId);
+    if (text.startsWith('update users set first_name=$1,') && text.includes('where id=$2 and auth_version=$3')) {
+      const user = users.find(item => item.id === Number(params[1]) && (item.authVersion || 0) === params[2]);
+      if (!user) return result([]);
       user.firstName = params[0];
-      user.email = params[1];
-      if (params.length === 4) user.passwordHash = params[2];
-      return result([userFields(user)]);
+      if (params.length === 4) {
+        user.passwordHash = params[3];
+        user.authVersion = (user.authVersion || 0) + 1;
+      }
+      return result([{ ...userFields(user), authVersion: user.authVersion || 0 }]);
+    }
+    if (text.startsWith('with pruned as (delete from auth_session_revocations')) {
+      revokedTokens.add(params[0]);
+      return result([]);
+    }
+    if (text.startsWith('insert into auth_email_changes(')) {
+      const [userId, email, codeHash, tokenId, authVersion] = params;
+      emailChanges.set(userId, { email, codeHash, tokenId, authVersion });
+      return result([{ user_id: userId }]);
+    }
+    if (text.startsWith('delete from auth_email_changes')) {
+      if (emailChanges.get(params[0])?.codeHash === params[1]) emailChanges.delete(params[0]);
+      return result([]);
+    }
+    if (text.startsWith('update users set email=change.requested_email')) {
+      const [userId, authVersion, tokenId, codeHash] = params;
+      const user = users.find(item => item.id === userId && (item.authVersion || 0) === authVersion);
+      const change = emailChanges.get(userId);
+      if (!user || change?.authVersion !== authVersion || change.tokenId !== tokenId || change.codeHash !== codeHash) return result([]);
+      user.email = change.email;
+      user.authVersion = authVersion + 1;
+      return result([{ ...userFields(user), authVersion: user.authVersion }]);
     }
     if (text.startsWith('select id,first_name as "firstname",email from users where id=$1 and company_id=$2 and role=\'employee\' and active=true')) {
       const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && item.role === 'employee' && item.active);
@@ -602,15 +633,18 @@ function installQueryMock() {
       return result([userFields(employee)]);
     }
     if (text.startsWith('select assigned_to as "assignedto",task_date as "taskdate" from tasks where id=$1')) {
-      const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && !item.archivedAt);
+      const archived = text.includes('archived_at is not null');
+      const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && Boolean(item.archivedAt) === archived);
       return result(task ? [{ assignedTo: task.assignedTo, taskDate: task.taskDate }] : []);
     }
     if (text.startsWith('update tasks set task_title=$1')) {
-      const task = tasks.find(item => item.id === Number(params[6]) && item.companyId === Number(params[7]) && !item.archivedAt);
+      const archived = text.includes('archived_at is not null');
+      const task = tasks.find(item => item.id === Number(params[6]) && item.companyId === Number(params[7]) && Boolean(item.archivedAt) === archived);
       if (!task) return result([]);
       [task.taskTitle, task.taskDescription, task.taskDate, task.category] = params.slice(0, 4);
       task.assignedTo = Number(params[4]);
       task.priority = params[5];
+      if (archived) task.archivedAt = null;
       task.updatedAt = new Date().toISOString();
       return result([taskFields(task)]);
     }
@@ -777,6 +811,17 @@ function installQueryMock() {
       }
       return result(found.map(taskFields));
     }
+    if (text.startsWith('with task_page as (')) {
+      const [pageSize, offset] = params.slice(-2);
+      let matching = tasks.filter(task => task.companyId === Number(params[0]));
+      if (text.includes('assigned_to=$2')) matching = matching.filter(task => task.assignedTo === Number(params[1]));
+      if (text.includes('archived_at is null')) matching = matching.filter(task => !task.archivedAt);
+      matching.sort((a, b) => a.taskDate.localeCompare(b.taskDate) || (b.createdAt || '').localeCompare(a.createdAt || '') || b.id - a.id);
+      return result([{ total: matching.length, tasks: matching.slice(offset, offset + pageSize).map(taskFields) }]);
+    }
+    if (text === 'select id from tasks where id=$1 and company_id=$2') {
+      return result(tasks.filter(task => task.id === Number(params[0]) && task.companyId === Number(params[1])).map(({ id }) => ({ id })));
+    }
     if (text.startsWith('select id,company_id as "companyid",task_title as "tasktitle"')) {
       let found = tasks.filter(task => task.companyId === Number(params[0]));
       if (text.includes('archived_at is null')) found = found.filter(task => !task.archivedAt);
@@ -785,7 +830,7 @@ function installQueryMock() {
     if (text.startsWith('update tasks set status=$1')) {
       const task = tasks.find(item => item.id === Number(params[1]) && item.companyId === Number(params[2]) &&
         item.status === params[3] && !item.archivedAt && (params[4] == null || item.assignedTo === Number(params[4])));
-      if (!task) return result([]);
+      if (!task || (text.includes('from users owner') && !hasActiveTaskAssignee(task))) return result([]);
       task.status = params[0];
       task.updatedAt = new Date().toISOString();
       return result([taskFields(task)]);
@@ -821,7 +866,8 @@ function installQueryMock() {
       const changed = tasks.filter(task =>
         requestedIds.has(task.id) &&
         task.companyId === Number(params[1]) &&
-        Boolean(task.archivedAt)
+        Boolean(task.archivedAt) &&
+        (!['new', 'active'].includes(task.status) || hasActiveTaskAssignee(task))
       );
       changed.forEach(task => {
         task.archivedAt = null;
@@ -831,7 +877,7 @@ function installQueryMock() {
     }
     if (text.startsWith('update tasks set archived_at=')) {
       const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]));
-      if (!task) return result([]);
+      if (!task || (text.includes('from users owner') && ['new', 'active'].includes(task.status) && !hasActiveTaskAssignee(task))) return result([]);
       task.archivedAt = text.includes('archived_at=now()') ? new Date().toISOString() : null;
       task.updatedAt = new Date().toISOString();
       return result([taskFields(task)]);
@@ -860,6 +906,8 @@ beforeEach(() => {
   leavePolicies = [];
   invitations = [];
   passwordResets = [];
+  emailChanges = new Map();
+  revokedTokens = new Set();
   slackWebhookEncrypted = null;
   onboardingEmployees = new Set();
   onboardingTemplates = [];
@@ -872,6 +920,8 @@ beforeEach(() => {
   installQueryMock();
   mocks.sendInvitationEmail.mockReset();
   mocks.sendInvitationEmail.mockResolvedValue(undefined);
+  mocks.sendEmailChangeEmail.mockReset();
+  mocks.sendEmailChangeEmail.mockResolvedValue(undefined);
   mocks.sendLeaveRequestEmail.mockReset();
   mocks.sendLeaveRequestEmail.mockResolvedValue(undefined);
   mocks.sendLeaveDecisionEmail.mockReset();
@@ -883,7 +933,17 @@ beforeEach(() => {
   mocks.clientQuery.mockReset();
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
-  if (['begin', 'commit', 'rollback'].includes(text)) return result([]);
+  if (['begin', 'begin isolation level repeatable read read only', 'commit', 'rollback'].includes(text)) return result([]);
+  if (text.startsWith('with dates as ( select $2::date as period_start')) {
+    return result([{
+      coverageStartedAt: '2026-10-05T01:00:00.000Z', previousFrom: '2026-08-31', previousTo: '2026-09-30',
+      currentCoverage: 'partial', previousCoverage: 'unavailable', currentCompleted: 1, previousCompleted: 0
+    }]);
+  }
+  if (text.startsWith('select count(*)::int as "totaltasks"') || text.includes('from tasks t where t.company_id=$1 and t.archived_at is null') || text.startsWith('select t.assigned_to as "assigneeid"')) {
+    return mocks.query(sql, params);
+  }
+  if (text === 'select pg_advisory_xact_lock(-1042, $1::int)') return result([]);
   if (text.startsWith('select id from users where id=$1 and company_id=$2 for update')) {
     const user = users.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]));
     return result(user ? [{ id: user.id }] : []);
@@ -951,7 +1011,7 @@ beforeEach(() => {
     onboardingEmployees.add(employeeId);
     return result([{ id: onboardingEmployees.size }]);
   }
-  if (text.startsWith('insert into tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)')) {
+  if (text.startsWith('insert into tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)') && text.includes("'onboarding'")) {
     const task = {
       id: nextTaskId++,
       companyId: Number(params[0]),
@@ -970,10 +1030,10 @@ beforeEach(() => {
     tasks.push(task);
     return result([taskFields(task)]);
   }
-  if (text.startsWith('select p.id,p.user_id,u.company_id from password_resets')) {
+  if (text.startsWith('select p.id,p.user_id,u.company_id,p.auth_version from password_resets')) {
     const reset = passwordResets.find(item => item.tokenHash === params[0] && !item.usedAt);
-    const user = reset && users.find(item => item.id === reset.userId);
-    return result(reset && user ? [{ id: passwordResets.indexOf(reset) + 1, user_id: reset.userId, company_id: user.companyId }] : []);
+    const user = reset && users.find(item => item.id === reset.userId && item.active && (item.authVersion || 0) === reset.authVersion);
+    return result(reset && user ? [{ id: passwordResets.indexOf(reset) + 1, user_id: reset.userId, company_id: user.companyId, auth_version: reset.authVersion }] : []);
   }
   if (text.startsWith('select * from invitations where token_hash=')) {
     const invitation = invitations.find(item => item.tokenHash === params[0] && !item.acceptedAt && item.expiresAt > new Date());
@@ -1018,15 +1078,17 @@ beforeEach(() => {
     return result([]);
   }
   if (text.startsWith('update users set password_hash=$1')) {
-    const user = users.find(item => item.id === Number(params[1]));
-    if (user) user.passwordHash = params[0];
-    return result([]);
+    const user = users.find(item => item.id === Number(params[1]) && item.active && (item.authVersion || 0) === params[2]);
+    if (!user) return result([]);
+    user.passwordHash = params[0];
+    user.authVersion = (user.authVersion || 0) + 1;
+    return result([{ id: user.id }]);
   }
   if (text.startsWith('update password_resets set used_at=now() where user_id=$1')) {
     passwordResets.filter(reset => reset.userId === Number(params[0]) && !reset.usedAt).forEach(reset => { reset.usedAt = new Date().toISOString(); });
     return result([]);
   }
-  throw new Error(`Unexpected transaction SQL in API test: ${text}`);
+  return mocks.query(sql, params);
   });
   mocks.connect.mockResolvedValue({
   query: mocks.clientQuery,
@@ -1309,22 +1371,27 @@ describe('authenticated API workflows', () => {
     }
   });
 
-  it('does not substitute a task summary for a chat reply when quota runs out', async () => {
+  it('returns the scoped overdue summary in chat without contacting an external provider', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'admin@example.test',
       password: 'correct-horse-battery-123'
     }).expect(200);
     const fetchMock = vi.fn().mockResolvedValue(new Response('Quota exceeded', { status: 429 }));
     vi.stubGlobal('fetch', fetchMock);
+    const defaultQuery = mocks.query.getMockImplementation();
+    mocks.query.mockImplementation((sql, params) => sql.includes('AS total, id')
+      ? result([{ id: 71, title: 'Prepare handoff', due_date: '2026-11-25', status: 'active', total: 1 }])
+      : defaultQuery(sql, params));
 
     try {
       const response = await request(app).post('/api/ai/ask')
         .set('Authorization', `Bearer ${login.body.token}`)
         .send({ question: 'Which tasks are overdue?', mode: 'chat' })
-        .expect(429);
-      expect(response.body.message).toContain('AI usage limit reached');
-      expect(fetchMock).toHaveBeenCalledOnce();
+        .expect(200);
+      expect(response.body).toMatchObject({ source: 'workspace', taskSummary: true, references: [{ id: 71, title: 'Prepare handoff' }] });
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
+      mocks.query.mockImplementation(defaultQuery);
       vi.unstubAllGlobals();
     }
   });
@@ -1357,7 +1424,7 @@ describe('authenticated API workflows', () => {
         answer: 'Start with the checklist.', source: 'groq', model: 'openai/gpt-oss-20b',
         references: [{ id: 31, title: 'Review checklist' }]
       });
-      expect(taskQuery).toHaveBeenCalledWith(expect.stringContaining('company_id=$1 AND assigned_to=$2'), [company.id, login.body.user.id]);
+      expect(taskQuery).toHaveBeenCalledWith(expect.stringContaining('company_id=$1 AND assigned_to=$2'), [company.id, login.body.user.id, expect.any(Array)]);
       const [, [url, options]] = fetchMock.mock.calls;
       expect(url).toBe('https://api.groq.com/openai/v1/chat/completions');
       const messages = JSON.parse(options.body).messages;
@@ -1573,21 +1640,19 @@ describe('authenticated API workflows', () => {
     expect(verified.body.token).toBeTruthy();
 
     const recoveryCode = enabled.body.recoveryCodes[0];
-    await request(app).post('/api/auth/login').send({
-      email: 'admin@example.test',
-      password: 'correct-horse-battery-123',
-      mfaCode: recoveryCode
-    }).expect(200);
-    await request(app).post('/api/auth/login').send({
-      email: 'admin@example.test',
-      password: 'correct-horse-battery-123',
-      mfaCode: recoveryCode
-    }).expect(401);
+    const reuse = () => request(app).post('/api/auth/login').send({
+      email: 'admin@example.test', password: 'correct-horse-battery-123', mfaCode: recoveryCode
+    });
+    expect((await Promise.all([reuse(), reuse()])).map(reply => reply.status).sort()).toEqual([200, 401]);
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`).expect(401);
 
-    await request(app).post('/api/auth/mfa/disable')
-      .set('Authorization', `Bearer ${token}`)
+    const disabled = await request(app).post('/api/auth/mfa/disable')
+      .set('Authorization', `Bearer ${enabled.body.token}`)
       .send({ currentPassword: 'correct-horse-battery-123', code: createTotpCode(decryptTotpSecret(users[0].mfaSecret)) })
-      .expect(200, { enabled: false });
+      .expect(200);
+    expect(disabled.body.enabled).toBe(false);
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${enabled.body.token}`).expect(401);
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${disabled.body.token}`).expect(200);
     expect(users[0].mfaSecret).toBeNull();
     expect(users[0].mfaEnabled).toBe(false);
   });
@@ -1765,6 +1830,55 @@ describe('authenticated API workflows', () => {
       .expect(403);
   });
 
+  it('returns honest task page totals without changing the legacy task list shape', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    tasks = Array.from({ length: 121 }, (_, index) => ({
+      id: index + 1, companyId: 1, assignedTo: 2, taskTitle: `Task ${index}`, taskDate: '2099-12-31', status: 'new'
+    }));
+    tasks.push(
+      { ...tasks[0], id: 122, assignedTo: 3 },
+      { ...tasks[0], id: 123, companyId: 2 },
+      { ...tasks[0], id: 124, archivedAt: '2025-01-01' }
+    );
+    const get = path => request(app).get(path).set('Authorization', `Bearer ${login.body.token}`);
+    expect((await get('/api/tasks').expect(200)).body).toHaveLength(121);
+    const page = (await get('/api/tasks?page=2&pageSize=100').expect(200)).body;
+    expect(page).toMatchObject({ total: 121, page: 2, pageSize: 100 });
+    expect(page.tasks.map(task => task.id)).toEqual(Array.from({ length: 21 }, (_, index) => 21 - index));
+    expect((await get('/api/tasks?page=3&pageSize=100').expect(200)).body).toMatchObject({ total: 121, tasks: [] });
+    await get('/api/tasks?pageSize=101').expect(400);
+  });
+
+  it('requires a live assignee for resumed or restored open work and can reassign while restoring', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    const auth = `Bearer ${login.body.token}`;
+    const patch = (path, body) => request(app).patch(path).set('Authorization', auth).send(body);
+    const draft = { taskTitle: 'Follow up on handoff', taskDescription: 'Check that the handoff is complete.', taskDate: '2099-12-31', category: 'Operations', assignedTo: 2, priority: 'low' };
+    tasks = [
+      { ...draft, id: 101, companyId: 1, createdBy: 1, status: 'failed' },
+      { ...draft, id: 102, companyId: 1, createdBy: 1, status: 'new', archivedAt: '2025-01-01' },
+      { ...draft, id: 103, companyId: 1, createdBy: 1, status: 'completed', archivedAt: '2025-01-01' }
+    ];
+    await patch('/api/employees/2/status', { active: false }).expect(200);
+    await patch('/api/tasks/101/status', { status: 'active', expectedStatus: 'failed' }).expect(409);
+    await patch('/api/tasks/102/archive', { archived: false }).expect(409);
+    const bulk = await request(app).post('/api/tasks/bulk').set('Authorization', auth)
+      .send({ action: 'restore', taskIds: [102, 103] }).expect(200);
+    expect(bulk.body.updatedIds).toEqual([103]);
+    expect(tasks[1].archivedAt).toBeTruthy();
+
+    const reassignment = { ...draft, assignedTo: 3 };
+    const restored = await patch('/api/tasks/102', { ...reassignment, restoreArchived: true }).expect(200);
+    expect(restored.body).toMatchObject({ assignedTo: 3, newTask: true, archived: false });
+    await patch('/api/tasks/101', reassignment).expect(200);
+    await patch('/api/tasks/101/status', { status: 'active', expectedStatus: 'failed' }).expect(200);
+    await patch('/api/employees/3/status', { active: false }).expect(409);
+  });
+
   it('returns tenant-scoped task reports for the requested creation period', async () => {
     const adminLogin = await request(app).post('/api/auth/login').send({
       email: 'admin@example.test',
@@ -1786,6 +1900,13 @@ describe('authenticated API workflows', () => {
       .set('Authorization', `Bearer ${adminLogin.body.token}`)
       .expect(200);
     expect(report.body.range).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(report.body.timeZone).toBe('UTC');
+    expect(report.body.completionActivity).toEqual({
+      coverageStartedAt: '2026-10-05T01:00:00.000Z',
+      current: { from: '2026-10-01', to: '2026-10-31', completed: 1, coverage: 'partial' },
+      previous: { from: '2026-08-31', to: '2026-09-30', completed: null, coverage: 'unavailable' }
+    });
+    expect(mocks.clientQuery).toHaveBeenCalledWith('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     expect(report.body.summary).toMatchObject({
       totalTasks: 2,
       newTasks: 0,
@@ -2319,10 +2440,59 @@ describe('authenticated API workflows', () => {
         newPassword: 'a-new-valid-password-123'
       }).expect(200);
     expect(updated.body.user.firstName).toBe('Workspace Owner');
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${login.body.token}`).expect(401);
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${updated.body.token}`).expect(200);
     await request(app).post('/api/auth/login').send({
       email: 'admin@example.test',
       password: 'a-new-valid-password-123'
     }).expect(200);
+  });
+
+  it('ends just the signed-out session and distinguishes a database outage from expiry', async () => {
+    const login = () => request(app).post('/api/auth/login')
+      .send({ email: 'admin@example.test', password: 'correct-horse-battery-123' }).expect(200);
+    const first = (await login()).body.token;
+    const second = (await login()).body.token;
+    expect(first).not.toBe(second);
+    await request(app).post('/api/auth/logout').set('Authorization', `Bearer ${first}`).expect(204);
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${first}`).expect(401);
+    mocks.query.mockRejectedValueOnce(new Error('database unavailable'));
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${second}`).expect(503);
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${second}`).expect(200);
+  });
+
+  it('requires a verified new email address and binds confirmation to the initiated session', async () => {
+    const newEmail = 'new-admin@example.test';
+    const password = 'correct-horse-battery-123';
+    const login = () => request(app).post('/api/auth/login').send({ email: 'admin@example.test', password }).expect(200);
+    const token = (await login()).body.token;
+    const differentSession = (await login()).body.token;
+    const auth = `Bearer ${token}`;
+    await request(app).patch('/api/auth/me').set('Authorization', auth)
+      .send({ firstName: 'Admin', email: newEmail }).expect(409);
+    await request(app).post('/api/auth/email/request').set('Authorization', auth)
+      .send({ email: newEmail, currentPassword: 'incorrect' }).expect(400);
+    expect(mocks.sendEmailChangeEmail).not.toHaveBeenCalled();
+    await request(app).post('/api/auth/email/request').set('Authorization', auth)
+      .send({ email: newEmail, currentPassword: password }).expect(202);
+    expect(users[0].email).toBe('admin@example.test');
+    const { code } = mocks.sendEmailChangeEmail.mock.calls[0][0];
+    expect(mocks.sendEmailChangeEmail).toHaveBeenCalledWith(expect.objectContaining({ recipientEmail: newEmail }));
+    await request(app).post('/api/auth/email/confirm').set('Authorization', `Bearer ${differentSession}`)
+      .send({ code }).expect(400);
+    const old = await request(app).post('/api/auth/forgot-password').send({ email: 'admin@example.test' }).expect(200);
+    expect(old.body.message).toContain('If an active account');
+    const resetUrl = mocks.sendPasswordResetEmail.mock.calls[0][0].resetUrl;
+    const resetToken = new URL(resetUrl).pathname.split('/').pop();
+    const verified = await request(app).post('/api/auth/email/confirm').set('Authorization', auth)
+      .send({ code: code.toLowerCase() }).expect(200);
+    expect(verified.body.user.email).toBe(newEmail);
+    expect(mocks.sendEmailChangeEmail).toHaveBeenLastCalledWith(expect.objectContaining({ recipientEmail: 'admin@example.test' }));
+    for (const revoked of [token, differentSession]) {
+      await request(app).get('/api/auth/me').set('Authorization', `Bearer ${revoked}`).expect(401);
+    }
+    await request(app).get('/api/auth/me').set('Authorization', `Bearer ${verified.body.token}`).expect(200);
+    await request(app).post('/api/auth/reset-password').send({ token: resetToken, password: 'unrelated-new-password-123' }).expect(400);
   });
 
   it('lets admins edit employees and prevents deactivation while open work remains', async () => {
@@ -2531,7 +2701,7 @@ describe('password reset API flow', () => {
     const clientQuery = mocks.clientQuery.mockImplementation(async sql => {
       const text = normalize(sql);
       if (text === 'begin' || text === 'rollback') return result([]);
-      if (text.startsWith('select p.id,p.user_id,u.company_id from password_resets')) return result([]);
+      if (text.startsWith('select p.id,p.user_id,u.company_id,p.auth_version from password_resets')) return result([]);
       throw new Error(`Unexpected transaction SQL in API test: ${text}`);
     });
 

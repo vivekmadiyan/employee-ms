@@ -4,7 +4,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
@@ -12,12 +11,14 @@ import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { formatChatAnswer, formatTaskSnapshot, generateWorkspaceAnswer, taskSnapshotFilter } from './workspaceAssistant.js';
 import { canChangeTaskStatus, prepareAssistantAction, statusUpdateSchema, toolsForRole } from './assistantTools.js';
-import { deleteAiConversation, listAiConversations, readAiConversation, saveAiTurn } from './aiConversations.js';
+import { deleteAiConversation, listAiConversations, purgeExpiredAiConversations, readAiConversation, saveAiTurn } from './aiConversations.js';
 import { defaultTaskReportPeriod, findExplicitReportRequest, generateAiReport, reportTool } from './aiReports.js';
 import { readTaskReport, readWorkforceReport } from './reports.js';
-import { auth, adminOnly } from './middleware/auth.js';
+import { isTimeZone, workspaceDateKey } from './workspaceDate.js';
+import { auth, adminOnly, revokeSession, sessionIsCurrent, signSession as sign } from './middleware/auth.js';
 import {
   sendInvitationEmail,
+  sendEmailChangeEmail,
   sendLeaveDecisionEmail,
   sendLeaveRequestEmail,
   sendPasswordResetEmail,
@@ -83,7 +84,10 @@ const leaveYearDays = (startDate, endDate, year) => {
 };
 const taskFields = 'id, company_id AS "companyId", task_title AS "taskTitle", task_description AS "taskDescription", task_date AS "taskDate", category, priority, status, assigned_to AS "assignedTo", created_by AS "createdBy", archived_at AS "archivedAt", created_at AS "createdAt", updated_at AS "updatedAt"';
 const safeUser = u => ({ id: u.id, companyId: u.companyId, firstName: u.firstName, email: u.email, role: u.role, department: u.department, jobTitle: u.jobTitle || '', employmentType: u.employmentType || 'unspecified', hireDate: u.hireDate || null, team: u.team || 'General', managerId: u.managerId || null, active: u.active });
-const serializeTask = t => ({ id: t.id, companyId: t.companyId, taskTitle: t.taskTitle, taskDescription: t.taskDescription, taskDate: t.taskDate, category: t.category, priority: t.priority, active: t.status === 'active', newTask: t.status === 'new', completed: t.status === 'completed', failed: t.status === 'failed', overdue: !t.archivedAt && !['completed', 'failed'].includes(t.status) && t.taskDate < new Date().toISOString().slice(0, 10), archived: Boolean(t.archivedAt), assignedTo: t.assignedTo, createdBy: t.createdBy, createdAt: t.createdAt, updatedAt: t.updatedAt });
+const serializeTasksFor = req => {
+  const today = workspaceDateKey(req.company.timeZone ?? 'UTC');
+  return t => ({ id: t.id, companyId: t.companyId, taskTitle: t.taskTitle, taskDescription: t.taskDescription, taskDate: t.taskDate, category: t.category, priority: t.priority, active: t.status === 'active', newTask: t.status === 'new', completed: t.status === 'completed', failed: t.status === 'failed', overdue: !t.archivedAt && !['completed', 'failed'].includes(t.status) && t.taskDate < today, archived: Boolean(t.archivedAt), assignedTo: t.assignedTo, createdBy: t.createdBy, createdAt: t.createdAt, updatedAt: t.updatedAt });
+};
 const counts = tasks => ({ newTask: tasks.filter(t => t.status === 'new').length, active: tasks.filter(t => t.status === 'active').length, completed: tasks.filter(t => t.status === 'completed').length, failed: tasks.filter(t => t.status === 'failed').length });
 const slugify = value => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
 const hashToken = token => crypto.createHash('sha256').update(token).digest('hex');
@@ -400,26 +404,26 @@ const loadNotifications = async userId => {
 };
 const syncDeadlineNotifications = async user => {
   if (user.role !== 'employee') return;
+  const today = workspaceDateKey(user.workspaceTimeZone ?? 'UTC');
   await query(
     `INSERT INTO notifications(user_id,task_id,type,message,event_key)
      SELECT t.assigned_to,t.id,'due','Task due today: ' || t.task_title,'due:' || t.id || ':' || t.task_date
      FROM tasks t WHERE t.company_id=$1 AND t.assigned_to=$2 AND t.archived_at IS NULL
-       AND t.status IN ('new','active') AND t.task_date=CURRENT_DATE::text
+       AND t.status IN ('new','active') AND t.task_date=$3
      ON CONFLICT(event_key) DO NOTHING`,
-    [user.companyId, user.id]
+    [user.companyId, user.id, today]
   );
   await query(
     `INSERT INTO notifications(user_id,task_id,type,message,event_key)
      SELECT t.assigned_to,t.id,'overdue','Task is overdue: ' || t.task_title,'overdue:' || t.id || ':' || t.task_date
      FROM tasks t WHERE t.company_id=$1 AND t.assigned_to=$2 AND t.archived_at IS NULL
-       AND t.status IN ('new','active') AND t.task_date<CURRENT_DATE::text
+       AND t.status IN ('new','active') AND t.task_date<$3
      ON CONFLICT(event_key) DO NOTHING`,
-    [user.companyId, user.id]
+    [user.companyId, user.id, today]
   );
 };
-const sign = user => jwt.sign({ userId: String(user.id), role: user.role, companyId: String(user.companyId) }, config.JWT_SECRET, { algorithm: 'HS256', expiresIn: '8h', issuer: 'employeems-api', audience: 'employeems-web' });
 const companyDto = c => ({ id: c.id, name: c.name, slug: c.slug, industry: c.industry, size: c.size });
-const findUser = async (email) => (await query(`SELECT ${userFields}, password_hash AS "passwordHash" FROM users WHERE email = $1`, [email])).rows[0];
+const findUser = async (email) => (await query(`SELECT ${userFields}, password_hash AS "passwordHash", auth_version AS "authVersion" FROM users WHERE email = $1`, [email])).rows[0];
 const email = z.string().trim().email().max(254).transform(value => value.toLowerCase());
 const password = z.string().min(10, 'Password must be at least 10 characters').max(128);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
@@ -500,7 +504,9 @@ app.get('/api/health/live', (req, res) => {
   res.json({ status: 'ok' });
 });
 app.get('/api/health', async (req, res) => { try { await query('SELECT 1'); res.json({ status: 'ok', database: true }); } catch { res.status(503).json({ status: 'error', database: false }); } });
-const aiLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'AI request limit reached. Try again later.' } });
+const aiLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, keyGenerator: req => String(req.user.id), standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'AI request limit reached. Try again later.' } });
+const contextWords = new Set(['about', 'could', 'from', 'have', 'help', 'please', 'should', 'task', 'tasks', 'that', 'their', 'this', 'what', 'when', 'which', 'with', 'would']);
+const searchWords = text => [...new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(word => !contextWords.has(word)))].slice(0, 16);
 const aiInstructions = [
   'Your name in this workspace is EmployeeMS AI. Answer questions, suggest priorities, and draft short status or handoff updates.',
   'Respond to greetings naturally in one sentence and offer relevant workspace help.',
@@ -530,12 +536,13 @@ async function answerReportRequest(req, args, today, previousReport, question) {
     if (!parsed.success) return reply('Please give a valid start and end date, with the start on or before the end.');
     range = parsed.data;
   }
-  const report = await generateAiReport({ companyId: req.company.id, user: req.user, kind, range, question, requestId: req.id });
+  const report = await generateAiReport({ companyId: req.company.id, user: req.user, kind, range, question, requestId: req.id,
+    aiEnabled: req.company.aiEnabled, timeZone: req.company.timeZone });
   if (!report) return reply('Workforce reports are available to admins. I can generate a report on your assigned tasks.');
   return reply('Your report is ready.', report);
 }
 app.get('/api/ai/tools', auth, (req, res) => {
-  const tools = toolsForRole(req.user.role).map(({ id, label, description, example }) => ({ id, label, description, example }));
+  const tools = (req.company.aiEnabled === false ? [] : toolsForRole(req.user.role)).map(({ id, label, description, example }) => ({ id, label, description, example }));
   res.set('Cache-Control', 'no-store').json({ tools });
 });
 const conversationIdSchema = z.uuid();
@@ -562,7 +569,7 @@ app.delete('/api/ai/conversations/:id', auth, async (req, res, next) => {
 });
 app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
   try {
-    const { question, today = new Date().toISOString().slice(0, 10), mode, history: clientHistory = [], tools = [], reportContext: clientReportContext, conversationId } = body(z.object({
+    const { question, today: requestedToday, mode, history: clientHistory = [], tools = [], reportContext: clientReportContext, conversationId } = body(z.object({
       question: z.string().trim().min(1, 'Enter a message.').max(500),
       today: isoDate.optional(),
       mode: z.enum(['chat', 'summary']).optional(),
@@ -574,6 +581,7 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
         answer: z.string().trim().min(1).max(2500)
       })).max(4).optional()
     }), req.body);
+    const today = req.company.timeZone ? workspaceDateKey(req.company.timeZone) : requestedToday ?? workspaceDateKey();
     res.set('Cache-Control', 'no-store');
     const isChat = mode === 'chat';
     const saveConversation = isChat && conversationId !== undefined;
@@ -594,20 +602,34 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
     }
     const taskScope = req.user.role === 'admin' ? 'company_id=$1' : 'company_id=$1 AND assigned_to=$2';
     const taskParams = req.user.role === 'admin' ? [req.company.id] : [req.company.id, req.user.id];
+    const snapshot = taskSnapshotFilter(question, `$${taskParams.length + 1}`);
+    const readSummary = async () => {
+      const { rows } = await query(
+        `SELECT task_title AS title, task_date::text AS due_date, status, COUNT(*) OVER()::int AS total, id
+         FROM tasks WHERE ${taskScope} AND archived_at IS NULL AND ${snapshot.predicate}
+         ORDER BY task_date ASC, id ASC LIMIT 5`,
+        snapshot.needsDate ? [...taskParams, today] : taskParams
+      );
+      return { answer: formatTaskSnapshot(rows, snapshot.label), source: 'workspace',
+        ...(isChat && { taskSummary: true, references: rows.map(({ id, title }) => ({ id, title })) }) };
+    };
+    if (mode && snapshot) return await respond(await readSummary());
     let result;
-    if (mode !== 'summary' && (config.GEMINI_API_KEY || config.GROQ_API_KEY)) {
+    if (mode !== 'summary' && req.company.aiEnabled !== false && (config.GEMINI_API_KEY || config.GROQ_API_KEY)) {
       const selectedTools = isChat ? toolsForRole(req.user.role).filter(tool => tools.includes(tool.id)) : [];
-      const rows = (await query(
+      const tokens = searchWords(`${question} ${history.at(-1)?.question ?? ''}`);
+      const rows = /^(hi|hello|hey|thanks)[!. ]*$/i.test(question) ? [] : (await query(
         `SELECT task_title AS title, task_date::text AS due_date, status, priority, id, COUNT(*) OVER()::int AS scope_total
          FROM tasks WHERE ${taskScope} AND archived_at IS NULL
-         ORDER BY CASE WHEN status='completed' THEN 1 ELSE 0 END, task_date ASC, id ASC LIMIT 100`,
-        taskParams
+         ORDER BY (SELECT COUNT(*) FROM unnest($${taskParams.length + 1}::text[]) AS term WHERE strpos(lower(task_title),term)>0) DESC,
+           CASE WHEN status='completed' THEN 1 ELSE 0 END, task_date ASC, id ASC LIMIT 24`,
+        [...taskParams, tokens]
       )).rows;
       const tasks = rows.map(({ id, title, due_date, status, priority }) => ({ id, title, due_date, status, priority }));
       const assignees = selectedTools.some(tool => tool.id === 'create_task') ? (await query(
         `SELECT id, first_name AS name FROM users WHERE company_id=$1 AND role='employee' AND active=true
-         ORDER BY first_name, id LIMIT 100`,
-        [req.company.id]
+         ORDER BY (SELECT COUNT(*) FROM unnest($2::text[]) AS term WHERE strpos(lower(first_name),term)>0) DESC, first_name, id LIMIT 12`,
+        [req.company.id, tokens]
       )).rows : [];
       const messages = history.flatMap(turn => [
         { role: 'user', content: turn.question },
@@ -649,18 +671,10 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
       console.warn('Workspace AI reply unavailable', { requestId: req.id, provider: result.provider, status: result.status });
     }
 
-    const snapshot = taskSnapshotFilter(question, `$${taskParams.length + 1}`);
-    if (mode !== 'chat' && snapshot) {
-      const { rows } = await query(
-        `SELECT task_title AS title, task_date::text AS due_date, status, COUNT(*) OVER()::int AS total
-         FROM tasks WHERE ${taskScope} AND archived_at IS NULL AND ${snapshot.predicate}
-         ORDER BY task_date ASC, id ASC LIMIT 5`,
-        snapshot.needsDate ? [...taskParams, today] : taskParams
-      );
-      return res.json({ answer: formatTaskSnapshot(rows, snapshot.label), source: 'workspace' });
-    }
+    if (snapshot) return await respond(await readSummary());
 
     if (mode === 'summary') return res.status(400).json({ message: 'Choose a task summary from the options provided.' });
+    if (req.company.aiEnabled === false) return res.status(503).json({ message: 'External AI is disabled for this workspace. You can still use task summaries and reports.' });
     if (result?.status === 429) return res.status(429).json({ message: 'AI usage limit reached. Open Task summaries or come back later.' });
     res.status(503).json({ message: 'The AI provider is unavailable. Retry in a moment or open Task summaries.' });
   } catch (error) { next(error); }
@@ -669,7 +683,8 @@ app.post('/api/ai/report', auth, aiLimiter, async (req, res, next) => {
   try {
     const { kind } = body(z.object({ kind: reportKind }), req.body);
     const range = kind === 'tasks' ? body(taskReportRange, req.body) : undefined;
-    const report = await generateAiReport({ companyId: req.company.id, user: req.user, kind, range, requestId: req.id });
+    const report = await generateAiReport({ companyId: req.company.id, user: req.user, kind, range, requestId: req.id,
+      aiEnabled: req.company.aiEnabled, timeZone: req.company.timeZone });
     if (!report) return res.status(403).json({ message: 'Only admins can generate workforce reports.' });
     res.set('Cache-Control', 'no-store').json(report);
   } catch (error) {
@@ -710,6 +725,7 @@ app.post('/api/onboarding/register-company', onboardingLimiter, async (req, res,
   try { await client.query('BEGIN'); const company = (await client.query('INSERT INTO companies(name,slug,industry,size) VALUES($1,$2,$3,$4) RETURNING id,name,slug,industry,size', [companyName.trim(), slug, industry.trim(), size])).rows[0]; const passwordHash = await bcrypt.hash(password, 12); const admin = (await client.query(`INSERT INTO users(company_id,first_name,email,password_hash,role,department) VALUES($1,$2,$3,$4,'admin','Management') RETURNING ${userFields}`, [company.id, firstName.trim(), normalizedEmail, passwordHash])).rows[0]; await client.query('COMMIT'); res.status(201).json({ token: sign(admin), user: { ...safeUser(admin), companyName: company.name }, company: companyDto(company) }); } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ message: 'Could not create company' }); } finally { client.release(); }
 });
 
+app.use('/api/auth', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.post('/api/auth/login', authLimiter, async (req, res, next) => {
   try {
     const values = body(schemas.login, req.body);
@@ -732,10 +748,12 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
       if (!accepted) {
         const recoveryHash = findRecoveryCodeHash(values.mfaCode, mfa.mfaRecoveryCodes);
         if (!recoveryHash) return res.status(401).json({ message: 'Invalid authenticator or recovery code' });
-        await query(
-          'UPDATE users SET mfa_recovery_codes=array_remove(mfa_recovery_codes,$1),updated_at=NOW() WHERE id=$2',
-          [recoveryHash, user.id]
+        const consumed = await query(
+          `UPDATE users SET mfa_recovery_codes=array_remove(mfa_recovery_codes,$1),updated_at=NOW()
+           WHERE id=$2 AND auth_version=$3 AND mfa_enabled=true AND $1=ANY(mfa_recovery_codes) RETURNING id`,
+          [recoveryHash, user.id, user.authVersion]
         );
+        if (!consumed.rowCount) return res.status(401).json({ message: 'Invalid authenticator or recovery code' });
         await recordAuditEvent(user.companyId, user.id, req, 'account.mfa_recovery_code_used', 'user', user.id);
       }
     }
@@ -744,6 +762,12 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+app.post('/api/auth/logout', auth, async (req, res, next) => {
+  try {
+    await revokeSession(req.session);
+    res.status(204).end();
+  } catch (error) { next(error); }
 });
 app.get('/api/auth/me', auth, (req, res) => res.json({ user: safeUser(req.user), company: companyDto(req.company) }));
 app.get('/api/auth/mfa', auth, async (req, res, next) => {
@@ -764,7 +788,11 @@ app.post('/api/auth/mfa/setup', auth, async (req, res, next) => {
     if (account.mfaEnabled) return res.status(409).json({ message: 'Multi-factor authentication is already enabled' });
 
     const secret = generateTotpSecret();
-    await query('UPDATE users SET mfa_secret=$1,updated_at=NOW() WHERE id=$2', [encryptTotpSecret(secret), req.user.id]);
+    const setup = await query(
+      'UPDATE users SET mfa_secret=$1,updated_at=NOW() WHERE id=$2 AND auth_version=$3 AND mfa_enabled=false RETURNING id',
+      [encryptTotpSecret(secret), req.user.id, req.session.version]
+    );
+    if (!setup.rowCount) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_setup_started', 'user', req.user.id);
     const label = encodeURIComponent(`${req.company.name}:${req.user.email}`);
     const issuer = encodeURIComponent(req.company.name);
@@ -786,12 +814,14 @@ app.post('/api/auth/mfa/enable', auth, async (req, res, next) => {
     }
 
     const recoveryCodes = createRecoveryCodes();
-    await query(
-      'UPDATE users SET mfa_enabled=true,mfa_recovery_codes=$1,updated_at=NOW() WHERE id=$2',
-      [recoveryCodes.map(hashRecoveryCode), req.user.id]
+    const { rows: [updated] } = await query(
+      `UPDATE users SET mfa_enabled=true,mfa_recovery_codes=$1,auth_version=auth_version+1,updated_at=NOW()
+       WHERE id=$2 AND auth_version=$3 AND mfa_secret=$4 AND mfa_enabled=false RETURNING auth_version AS "authVersion"`,
+      [recoveryCodes.map(hashRecoveryCode), req.user.id, req.session.version, account.secret]
     );
+    if (!updated) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_enabled', 'user', req.user.id);
-    res.json({ enabled: true, recoveryCodes });
+    res.json({ enabled: true, recoveryCodes, token: sign(req.user, updated.authVersion) });
   } catch (error) {
     next(error);
   }
@@ -810,9 +840,14 @@ app.post('/api/auth/mfa/disable', auth, async (req, res, next) => {
     let accepted = verifyTotpCode(decryptTotpSecret(account.secret), values.code);
     if (!accepted) accepted = Boolean(findRecoveryCodeHash(values.code, account.recoveryCodes));
     if (!accepted) return res.status(400).json({ message: 'Invalid authenticator or recovery code' });
-    await query('UPDATE users SET mfa_enabled=false,mfa_secret=NULL,mfa_recovery_codes=\'{}\',updated_at=NOW() WHERE id=$1', [req.user.id]);
+    const { rows: [updated] } = await query(
+      `UPDATE users SET mfa_enabled=false,mfa_secret=NULL,mfa_recovery_codes='{}',auth_version=auth_version+1,updated_at=NOW()
+       WHERE id=$1 AND auth_version=$2 AND mfa_enabled=true RETURNING auth_version AS "authVersion"`,
+      [req.user.id, req.session.version]
+    );
+    if (!updated) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_disabled', 'user', req.user.id);
-    res.json({ enabled: false });
+    res.json({ enabled: false, token: sign(req.user, updated.authVersion) });
   } catch (error) {
     next(error);
   }
@@ -871,12 +906,12 @@ app.patch('/api/auth/me', auth, async (req, res, next) => {
   try {
     const values = body(z.object({
       firstName: z.string().trim().min(2).max(80),
-      email,
+      email: email.optional(),
       currentPassword: z.string().min(1).max(128).optional(),
       newPassword: password.optional()
     }).refine(data => Boolean(data.currentPassword) === Boolean(data.newPassword), 'Enter both current and new password to change your password'), req.body);
-    if (values.email !== req.user.email && await query('SELECT 1 FROM users WHERE email=$1 AND id<>$2', [values.email, req.user.id]).then(result => result.rowCount)) {
-      return res.status(409).json({ message: 'This email is already in use' });
+    if (values.email && values.email !== req.user.email) {
+      return res.status(409).json({ message: 'Verify a new email address in Account Settings before using it to sign in.' });
     }
 
     let passwordHash;
@@ -886,24 +921,94 @@ app.patch('/api/auth/me', auth, async (req, res, next) => {
         return res.status(400).json({ message: 'Current password is incorrect' });
       }
       passwordHash = await bcrypt.hash(values.newPassword, 12);
-      await query('UPDATE password_resets SET used_at=NOW() WHERE user_id=$1 AND used_at IS NULL', [req.user.id]);
     }
 
     const updated = (await query(
-      `UPDATE users SET first_name=$1,email=$2,${passwordHash ? 'password_hash=$3,' : ''}updated_at=NOW() WHERE id=$${passwordHash ? 4 : 3} RETURNING ${userFields}`,
-      passwordHash ? [values.firstName, values.email, passwordHash, req.user.id] : [values.firstName, values.email, req.user.id]
+      `UPDATE users SET first_name=$1,${passwordHash ? 'password_hash=$4,auth_version=auth_version+1,' : ''}updated_at=NOW()
+       WHERE id=$2 AND auth_version=$3 RETURNING ${userFields}, auth_version AS "authVersion"`,
+      [values.firstName, req.user.id, req.session.version, ...(passwordHash ? [passwordHash] : [])]
     )).rows[0];
+    if (!updated) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'account.profile_updated', 'user', req.user.id, {
       nameChanged: values.firstName !== req.user.firstName,
-      emailChanged: values.email !== req.user.email,
+      emailChanged: false,
       passwordChanged: Boolean(passwordHash)
     });
-    res.json({ user: safeUser(updated) });
+    res.json({ user: safeUser(updated), ...(passwordHash && { token: sign(updated) }) });
   } catch (error) {
     if (error.code === '23505') return res.status(409).json({ message: 'This email is already in use' });
     next(error);
   }
 });
+
+app.post('/api/auth/email/request', auth, resetLimiter, async (req, res, next) => {
+  try {
+    const values = body(z.object({
+      email,
+      currentPassword: z.string().min(1).max(128),
+      mfaCode: z.string().trim().length(6).optional()
+    }), req.body);
+    if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) {
+      return res.status(503).json({ message: 'Email verification is temporarily unavailable.' });
+    }
+    if (values.email === req.user.email) return res.status(400).json({ message: 'Enter a different email address.' });
+    const { rows: [account] } = await query(
+      `SELECT password_hash AS "passwordHash",mfa_secret AS secret,mfa_enabled AS enabled
+       FROM users WHERE id=$1 AND auth_version=$2`, [req.user.id, req.session.version]
+    );
+    if (!account || !await bcrypt.compare(values.currentPassword, account.passwordHash)) {
+      return res.status(400).json({ message: 'Current password is incorrect.' });
+    }
+    if (account.enabled && (!account.secret || !verifyTotpCode(decryptTotpSecret(account.secret), values.mfaCode))) {
+      return res.status(400).json({ message: 'Enter a current authenticator code.' });
+    }
+    if (await findUser(values.email)) return res.status(409).json({ message: 'This email is already in use.' });
+    const code = crypto.randomBytes(8).toString('hex').toUpperCase();
+    const codeHash = hashToken(code);
+    const pending = await query(
+      `INSERT INTO auth_email_changes(user_id,requested_email,code_hash,token_id,auth_version,expires_at)
+       SELECT id,$2,$3,$4,auth_version,NOW()+INTERVAL '15 minutes' FROM users WHERE id=$1 AND auth_version=$5
+       ON CONFLICT(user_id) DO UPDATE SET requested_email=EXCLUDED.requested_email,code_hash=EXCLUDED.code_hash,
+         token_id=EXCLUDED.token_id,auth_version=EXCLUDED.auth_version,expires_at=EXCLUDED.expires_at RETURNING user_id`,
+      [req.user.id, values.email, codeHash, req.session.id, req.session.version]
+    );
+    if (!pending.rowCount) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
+    try {
+      await sendEmailChangeEmail({ apiKey: config.BREVO_API_KEY, senderEmail: config.BREVO_SENDER_EMAIL,
+        senderName: config.BREVO_SENDER_NAME, recipientEmail: values.email, code });
+    } catch (error) {
+      await query('DELETE FROM auth_email_changes WHERE user_id=$1 AND code_hash=$2', [req.user.id, codeHash]);
+      console.error('Email change verification delivery failed', { requestId: req.id, code: error.code });
+      return res.status(502).json({ message: 'Could not send the verification code. Try again later.' });
+    }
+    res.status(202).json({ message: 'Enter the verification code sent to your new address.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/auth/email/confirm', auth, resetLimiter, async (req, res, next) => {
+  try {
+    const { code } = body(z.object({ code: z.string().trim().regex(/^[a-f0-9]{16}$/i).transform(value => value.toUpperCase()) }), req.body);
+    const { rows: [updated] } = await query(
+      `UPDATE users SET email=change.requested_email,auth_version=users.auth_version+1,updated_at=NOW()
+       FROM auth_email_changes change WHERE users.id=$1 AND change.user_id=users.id
+       AND users.auth_version=change.auth_version AND change.auth_version=$2
+       AND change.token_id=$3 AND change.code_hash=$4 AND change.expires_at>NOW()
+       RETURNING ${userFields}, users.auth_version AS "authVersion"`,
+      [req.user.id, req.session.version, req.session.id, hashToken(code)]
+    );
+    if (!updated) return res.status(400).json({ message: 'The verification code is invalid or expired. Request a new code.' });
+    await recordAuditEvent(req.company.id, req.user.id, req, 'account.email_changed', 'user', req.user.id);
+    res.json({ user: safeUser(updated), token: sign(updated) });
+    sendEmailChangeEmail({ apiKey: config.BREVO_API_KEY, senderEmail: config.BREVO_SENDER_EMAIL,
+      senderName: config.BREVO_SENDER_NAME, recipientEmail: req.user.email }).catch(error => {
+      console.error('Could not notify previous address about change', { requestId: req.id, code: error.code });
+    });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ message: 'This email is already in use.' });
+    next(error);
+  }
+});
+
 app.post('/api/auth/forgot-password', resetLimiter, async (req, res, next) => {
   try {
     const { email: requestedEmail } = body(z.object({ email }), req.body);
@@ -912,8 +1017,8 @@ app.post('/api/auth/forgot-password', resetLimiter, async (req, res, next) => {
       const rawToken = crypto.randomBytes(32).toString('hex');
       await query('UPDATE password_resets SET used_at=NOW() WHERE user_id=$1 AND used_at IS NULL', [user.id]);
       await query(
-        'INSERT INTO password_resets(user_id,token_hash,expires_at) VALUES($1,$2,NOW() + INTERVAL \'30 minutes\')',
-        [user.id, hashToken(rawToken)]
+        `INSERT INTO password_resets(user_id,token_hash,expires_at,auth_version) VALUES($1,$2,NOW()+INTERVAL '30 minutes',$3)`,
+        [user.id, hashToken(rawToken), user.authVersion]
       );
       try {
         await sendPasswordResetEmail({
@@ -951,16 +1056,25 @@ app.post('/api/auth/reset-password', resetLimiter, async (req, res, next) => {
   try {
     await client.query('BEGIN');
     const reset = (await client.query(
-      `SELECT p.id,p.user_id,u.company_id
+      `SELECT p.id,p.user_id,u.company_id,p.auth_version
        FROM password_resets p JOIN users u ON u.id=p.user_id
-       WHERE p.token_hash=$1 AND p.used_at IS NULL AND p.expires_at>NOW() FOR UPDATE OF p`,
+       WHERE p.token_hash=$1 AND p.used_at IS NULL AND p.expires_at>NOW()
+         AND u.active=true AND p.auth_version=u.auth_version FOR UPDATE OF p`,
       [hashToken(values.token)]
     )).rows[0];
     if (!reset) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: 'This password reset link is invalid or expired. Request a new one.' });
     }
-    await client.query('UPDATE users SET password_hash=$1,updated_at=NOW() WHERE id=$2', [await bcrypt.hash(values.password, 12), reset.user_id]);
+    const updated = await client.query(
+      `UPDATE users SET password_hash=$1,auth_version=auth_version+1,updated_at=NOW()
+       WHERE id=$2 AND auth_version=$3 AND active=true RETURNING id`,
+      [await bcrypt.hash(values.password, 12), reset.user_id, reset.auth_version]
+    );
+    if (!updated.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'This password reset link is invalid or expired. Request a new one.' });
+    }
     await client.query('UPDATE password_resets SET used_at=NOW() WHERE user_id=$1 AND used_at IS NULL', [reset.user_id]);
     await client.query('COMMIT');
     await recordAuditEvent(reset.company_id, reset.user_id, req, 'account.password_reset', 'user', reset.user_id);
@@ -973,8 +1087,42 @@ app.post('/api/auth/reset-password', resetLimiter, async (req, res, next) => {
   }
 });
 app.get('/api/company/me', auth, (req, res) => res.json(companyDto(req.company)));
+app.get('/api/workspace/settings', auth, (req, res) => {
+  res.set('Cache-Control', 'no-store').json({
+    timeZone: req.company.timeZone ?? 'UTC', aiEnabled: req.company.aiEnabled ?? true
+  });
+});
+app.put('/api/workspace/settings', auth, adminOnly, async (req, res) => {
+  const values = body(z.object({ timeZone: z.string().max(80).refine(isTimeZone, 'Choose a valid IANA time zone'), aiEnabled: z.boolean() }).strict(), req.body);
+  await query(
+    `WITH changed AS (UPDATE companies SET time_zone=$2,ai_enabled=$3,updated_at=NOW() WHERE id=$1 RETURNING id)
+     INSERT INTO workspace_activity(company_id,updated_at) SELECT id,clock_timestamp() FROM changed
+     ON CONFLICT(company_id) DO UPDATE SET updated_at=EXCLUDED.updated_at`,
+    [req.company.id, values.timeZone, values.aiEnabled]
+  );
+  await recordAuditEvent(req.company.id, req.user.id, req, 'workspace.settings_updated', 'company', req.company.id, values);
+  res.set('Cache-Control', 'no-store').json(values);
+});
 
-app.get('/api/employees', auth, adminOnly, async (req, res) => { const users = (await query(`SELECT ${userFields} FROM users WHERE company_id=$1 AND role='employee' ORDER BY active DESC, first_name`, [req.company.id])).rows; const tasks = (await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, [req.company.id])).rows; const onboarding = new Set((await query('SELECT employee_id AS "employeeId" FROM employee_onboarding WHERE company_id=$1', [req.company.id])).rows.map(item => item.employeeId)); res.json(users.map(u => { const own = tasks.filter(t => t.assignedTo === u.id); return { ...safeUser(u), onboardingCreated: onboarding.has(u.id), tasks: own.map(serializeTask), taskCounts: counts(own) }; })); });
+app.get('/api/employees', auth, adminOnly, async (req, res) => {
+  const company = [req.company.id];
+  const [users, tasks, onboarding] = await Promise.all([
+    query(`SELECT ${userFields} FROM users WHERE company_id=$1 AND role='employee' ORDER BY active DESC, first_name`, company),
+    query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, company),
+    query('SELECT employee_id AS "employeeId" FROM employee_onboarding WHERE company_id=$1', company)
+  ]);
+  const onboarded = new Set(onboarding.rows.map(item => item.employeeId));
+  const assignments = new Map();
+  for (const task of tasks.rows) {
+    if (!assignments.has(task.assignedTo)) assignments.set(task.assignedTo, []);
+    assignments.get(task.assignedTo).push(task);
+  }
+  const serializeTask = serializeTasksFor(req);
+  res.json(users.rows.map(user => {
+    const own = assignments.get(user.id) ?? [];
+    return { ...safeUser(user), onboardingCreated: onboarded.has(user.id), tasks: own.map(serializeTask), taskCounts: counts(own) };
+  }));
+});
 app.get('/api/team/direct-reports', auth, async (req, res, next) => {
   try {
     if (req.user.role !== 'employee') return res.status(403).json({ message: 'Only employees can view their direct reports' });
@@ -1012,11 +1160,39 @@ app.post('/api/employees', auth, adminOnly, async (req, res, next) => {
     next(error);
   }
 });
+const taskBulkLimit = 100;
+const taskOwnershipLock = (client, companyId) => client.query('SELECT pg_advisory_xact_lock(-1042, $1::int)', [companyId]);
+const readTaskAssignee = async (client, companyId, userId) => (await client.query(
+  `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
+  [userId, companyId]
+)).rows[0];
+const activeTaskAssignee = `EXISTS (SELECT 1 FROM users owner WHERE owner.id=tasks.assigned_to
+  AND owner.company_id=tasks.company_id AND owner.role='employee' AND owner.active=true)`;
+const restorableTask = `(status NOT IN ('new','active') OR ${activeTaskAssignee})`;
+
+// Take the lock before reading owner or task state, so a waiting writer sees the committed changes.
+async function changeTaskOwnership(companyId, change) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await taskOwnershipLock(client, companyId);
+    const result = await change(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 app.patch('/api/employees/:id/status', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(z.object({ active: z.boolean() }), req.body);
-    const employee = (await query(
-      `UPDATE users u SET active=$1,updated_at=NOW()
+    const employee = await changeTaskOwnership(req.company.id, async client => (await client.query(
+      `UPDATE users u SET active=$1,updated_at=NOW(),
+       auth_version=auth_version+CASE WHEN u.active<>$1 THEN 1 ELSE 0 END
        WHERE u.id=$2 AND u.company_id=$3 AND u.role='employee'
          AND ($1 OR NOT EXISTS (
            SELECT 1 FROM tasks t WHERE t.assigned_to=u.id AND t.company_id=u.company_id
@@ -1024,7 +1200,7 @@ app.patch('/api/employees/:id/status', auth, adminOnly, async (req, res, next) =
          ))
        RETURNING ${userFields}`,
       [values.active, req.params.id, req.company.id]
-    )).rows[0];
+    )).rows[0]);
     if (!employee) {
       const exists = await query(`SELECT 1 FROM users WHERE id=$1 AND company_id=$2 AND role='employee'`, [req.params.id, req.company.id]);
       if (!exists.rowCount) return res.status(404).json({ message: 'Employee not found' });
@@ -1134,6 +1310,7 @@ app.post('/api/employees/:id/onboarding', auth, adminOnly, async (req, res, next
   let employee;
   try {
     await client.query('BEGIN');
+    await taskOwnershipLock(client, req.company.id);
     employee = (await client.query(
       `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
       [employeeId, req.company.id]
@@ -1205,7 +1382,7 @@ app.get('/api/offboardings', auth, adminOnly, async (req, res, next) => {
        JOIN users u ON u.id=o.employee_id AND u.company_id=o.company_id
        LEFT JOIN employee_offboarding_items i ON i.offboarding_id=o.id
        WHERE o.company_id=$1
-       ORDER BY o.created_at DESC,i.position`,
+       ORDER BY (o.status='in_progress') DESC,o.created_at DESC,o.id DESC,i.position`,
       [req.company.id]
     );
     const offboardings = new Map();
@@ -1239,6 +1416,24 @@ app.get('/api/offboardings', auth, adminOnly, async (req, res, next) => {
   }
 });
 
+app.get('/api/offboardings/assigned', auth, async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT i.id,i.title,o.id AS "offboardingId",u.first_name AS "firstName",
+         o.last_working_date::text AS "lastWorkingDate"
+       FROM employee_offboarding_items i
+       JOIN employee_offboardings o ON o.id=i.offboarding_id AND o.company_id=$1
+       JOIN users u ON u.id=o.employee_id AND u.company_id=o.company_id
+       WHERE i.owner_id=$2 AND i.completed=false AND o.status='in_progress'
+       ORDER BY o.last_working_date,o.id,i.position`,
+      [req.company.id, req.user.id]
+    );
+    res.set('Cache-Control', 'no-store').json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, next) => {
   let values;
   try {
@@ -1266,12 +1461,12 @@ app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, nex
     }
 
     const existing = (await client.query(
-      'SELECT id FROM employee_offboardings WHERE company_id=$1 AND employee_id=$2',
+      "SELECT id FROM employee_offboardings WHERE company_id=$1 AND employee_id=$2 AND status='in_progress'",
       [req.company.id, employeeId]
     )).rows[0];
     if (existing) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ message: 'An offboarding checklist already exists for this employee' });
+      return res.status(409).json({ message: 'An open offboarding checklist already exists for this employee' });
     }
 
     offboarding = (await client.query(
@@ -1311,6 +1506,51 @@ app.post('/api/employees/:id/offboarding', auth, adminOnly, async (req, res, nex
   res.status(201).json(offboarding);
 });
 
+app.patch('/api/offboardings/:id/status', auth, adminOnly, async (req, res, next) => {
+  let client;
+  let plan;
+  let id;
+  let status;
+  try {
+    id = body(z.coerce.number().int().min(1).max(2_147_483_647), req.params.id);
+    ({ status } = body(z.object({ status: z.enum(['completed', 'cancelled']) }).strict(), req.body));
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const { rows: [existing] } = await client.query(
+      'SELECT status FROM employee_offboardings WHERE id=$1 AND company_id=$2 FOR UPDATE', [id, req.company.id]
+    );
+    if (existing?.status !== 'in_progress') {
+      await client.query('ROLLBACK');
+      if (!existing) return res.status(404).json({ message: 'Offboarding plan not found' });
+      return res.status(409).json({ message: 'Only open offboarding plans can be closed.' });
+    }
+    ({ rows: [plan] } = await client.query(
+      `UPDATE employee_offboardings o SET status=$1,revision=revision+1,updated_at=NOW()
+       WHERE o.id=$2 AND o.company_id=$3
+         AND ($1='cancelled' OR NOT EXISTS (
+           SELECT 1 FROM employee_offboarding_items i WHERE i.offboarding_id=o.id AND i.completed=false
+         )) RETURNING id,status,revision`,
+      [status, id, req.company.id]
+    ));
+    if (!plan) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Complete all checklist items before closing the plan.' });
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client?.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Offboarding plan rollback failed:', { requestId: req.id, code: rollbackError.code });
+    }
+    return next(error);
+  } finally {
+    client?.release();
+  }
+  await recordAuditEvent(req.company.id, req.user.id, req, `employee.offboarding_${status}`, 'offboarding', id, { revision: plan.revision });
+  res.json(plan);
+});
+
 app.patch('/api/offboardings/:id', auth, adminOnly, async (req, res, next) => {
   let values;
   try {
@@ -1339,7 +1579,7 @@ app.patch('/api/offboardings/:id', auth, adminOnly, async (req, res, next) => {
     }
     if (current.status !== 'in_progress') {
       await client.query('ROLLBACK');
-      return res.status(409).json({ message: 'Completed offboarding plans cannot be revised' });
+      return res.status(409).json({ message: 'Closed offboarding plans cannot be revised' });
     }
     if (current.lastWorkingDate === values.lastWorkingDate) {
       await client.query('COMMIT');
@@ -1402,7 +1642,7 @@ app.patch('/api/offboardings/:id/items/:itemId/owner', auth, adminOnly, async (r
     }
     if (plan.status !== 'in_progress') {
       await client.query('ROLLBACK');
-      return res.status(409).json({ message: 'Completed offboarding plans cannot be revised' });
+      return res.status(409).json({ message: 'Closed offboarding plans cannot be revised' });
     }
     const currentItem = (await client.query(
       `SELECT id,title,completed,owner_id AS "ownerId"
@@ -1466,7 +1706,7 @@ app.patch('/api/offboardings/:id/items/:itemId/owner', auth, adminOnly, async (r
   res.json({ offboardingId, status: 'in_progress', revision, item });
 });
 
-app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, res, next) => {
+app.patch('/api/offboardings/:id/items/:itemId', auth, async (req, res, next) => {
   let values;
   try {
     values = body(z.object({ completed: z.boolean() }).strict(), req.body);
@@ -1475,6 +1715,9 @@ app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, re
   }
   const offboardingId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
+  const isAdmin = req.user.role === 'admin';
+  const ownerId = isAdmin ? null : req.user.id;
+  if (!isAdmin && !values.completed) return res.status(403).json({ message: 'Only admins can reopen offboarding items' });
   if (![offboardingId, itemId].every(value => Number.isSafeInteger(value) && value > 0)) {
     return res.status(400).json({ message: 'Offboarding checklist item is invalid' });
   }
@@ -1485,9 +1728,11 @@ app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, re
   try {
     await client.query('BEGIN');
     const offboarding = (await client.query(
-      `SELECT id,status FROM employee_offboardings
-       WHERE id=$1 AND company_id=$2 FOR UPDATE`,
-      [offboardingId, req.company.id]
+      `SELECT o.id,o.status FROM employee_offboardings o
+       WHERE o.id=$1 AND o.company_id=$2 AND ($3::integer IS NULL OR EXISTS (
+         SELECT 1 FROM employee_offboarding_items i WHERE i.offboarding_id=o.id AND i.id=$4 AND i.owner_id=$3
+       )) FOR UPDATE`,
+      [offboardingId, req.company.id, ownerId, itemId]
     )).rows[0];
     if (!offboarding) {
       await client.query('ROLLBACK');
@@ -1495,16 +1740,16 @@ app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, re
     }
     if (offboarding.status !== 'in_progress') {
       await client.query('ROLLBACK');
-      return res.status(409).json({ message: 'Completed offboarding checklists cannot be changed' });
+      return res.status(409).json({ message: 'Closed offboarding checklists cannot be changed' });
     }
 
     item = (await client.query(
       `UPDATE employee_offboarding_items SET completed=$1,
-         completed_by=CASE WHEN $1 THEN $4::integer ELSE NULL END,
-         completed_at=CASE WHEN $1 THEN NOW() ELSE NULL END
-       WHERE id=$2 AND offboarding_id=$3
+         completed_by=CASE WHEN $1 THEN COALESCE(completed_by,$4::integer) ELSE NULL END,
+         completed_at=CASE WHEN $1 THEN COALESCE(completed_at,NOW()) ELSE NULL END
+       WHERE id=$2 AND offboarding_id=$3 AND ($5::integer IS NULL OR owner_id=$5)
          RETURNING id,item_key AS key,title,completed,completed_at AS "completedAt",owner_id AS "ownerId"`,
-      [values.completed, itemId, offboardingId, req.user.id]
+      [values.completed, itemId, offboardingId, req.user.id, ownerId]
     )).rows[0];
     if (!item) {
       await client.query('ROLLBACK');
@@ -1514,7 +1759,8 @@ app.patch('/api/offboardings/:id/items/:itemId', auth, adminOnly, async (req, re
       'SELECT COUNT(*)::int AS count FROM employee_offboarding_items WHERE offboarding_id=$1 AND completed=false',
       [offboardingId]
     )).rows[0].count;
-    status = remaining === 0 ? 'completed' : 'in_progress';
+    // Owners can finish their assigned work. Only an administrator can close the plan.
+    status = isAdmin && remaining === 0 ? 'completed' : 'in_progress';
     await client.query(
       'UPDATE employee_offboardings SET status=$1,updated_at=NOW() WHERE id=$2 AND company_id=$3',
       [status, offboardingId, req.company.id]
@@ -1956,11 +2202,12 @@ app.delete('/api/leave-requests/:id', auth, async (req, res, next) => {
     if (req.user.role !== 'employee') return res.status(403).json({ message: 'Only employees can cancel leave requests' });
     const leave = (await query(
       `UPDATE leave_requests SET status='cancelled',updated_at=NOW()
-       WHERE id=$1 AND company_id=$2 AND user_id=$3 AND status='pending'
+       WHERE id=$1 AND company_id=$2 AND user_id=$3
+         AND (status='pending' OR (status='approved' AND start_date>$4::date))
        RETURNING id`,
-      [req.params.id, req.company.id, req.user.id]
+      [req.params.id, req.company.id, req.user.id, workspaceDateKey(req.company.timeZone ?? 'UTC')]
     )).rows[0];
-    if (!leave) return res.status(404).json({ message: 'Pending leave request not found' });
+    if (!leave) return res.status(404).json({ message: 'No pending or future approved leave request found' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'leave.cancelled', 'leave_request', leave.id);
     res.status(204).end();
   } catch (error) {
@@ -2062,6 +2309,18 @@ app.get('/api/notifications', auth, async (req, res, next) => {
   }
 });
 app.get('/api/notifications/stream', auth, async (req, res, next) => {
+  let closed = false;
+  let pollTimer;
+  let heartbeatTimer;
+  const closeStream = () => {
+    closed = true;
+    clearInterval(pollTimer);
+    clearInterval(heartbeatTimer);
+  };
+  req.once('aborted', closeStream);
+  res.once('close', closeStream);
+  if (req.aborted || res.destroyed) return;
+
   let initialState;
   let previousWorkspaceVersion;
   try {
@@ -2072,13 +2331,15 @@ app.get('/api/notifications/stream', auth, async (req, res, next) => {
       [req.user.companyId]
     )).rows[0]?.version;
   } catch (error) {
-    return next(error);
+    if (!closed) return next(error);
+    return;
   }
+  if (closed) return;
 
   res.status(200);
   res.set({
     'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
+    'Cache-Control': 'no-store, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no'
   });
@@ -2088,11 +2349,19 @@ app.get('/api/notifications/stream', auth, async (req, res, next) => {
   let previousState = JSON.stringify(initialState);
   let polling = false;
   const poll = async () => {
-    if (polling || res.writableEnded) return;
+    if (polling || closed || res.writableEnded) return;
     polling = true;
     try {
+      const sessionActive = await sessionIsCurrent(req.session);
+      if (closed) return;
+      if (!sessionActive) {
+        res.end();
+        closeStream();
+        return;
+      }
       await syncDeadlineNotifications(req.user);
       const state = await loadNotifications(req.user.id);
+      if (closed) return;
       const serialized = JSON.stringify(state);
       if (serialized !== previousState) {
         res.write(`event: notifications\ndata: ${serialized}\n\n`);
@@ -2102,28 +2371,22 @@ app.get('/api/notifications/stream', auth, async (req, res, next) => {
         'SELECT updated_at::text AS version FROM workspace_activity WHERE company_id=$1',
         [req.user.companyId]
       )).rows[0]?.version;
-      if (workspaceVersion && workspaceVersion !== previousWorkspaceVersion) {
+      if (!closed && workspaceVersion && workspaceVersion !== previousWorkspaceVersion) {
         res.write('event: workspace\ndata: {}\n\n');
         previousWorkspaceVersion = workspaceVersion;
       }
     } catch (error) {
       console.error('Notification stream poll failed:', { requestId: req.id, message: error.message });
       previousState = null;
-      if (!res.writableEnded) res.write('event: stream-error\ndata: {"message":"Live notifications are reconnecting."}\n\n');
+      if (!closed && !res.writableEnded) res.write('event: stream-error\ndata: {"message":"Live notifications are reconnecting."}\n\n');
     } finally {
       polling = false;
     }
   };
-  const pollTimer = setInterval(poll, 3000);
-  const heartbeatTimer = setInterval(() => {
-    if (!res.writableEnded) res.write(': keep-alive\n\n');
+  pollTimer = setInterval(poll, 3000);
+  heartbeatTimer = setInterval(() => {
+    if (!closed && !res.writableEnded) res.write(': keep-alive\n\n');
   }, 15_000);
-  const closeStream = () => {
-    clearInterval(pollTimer);
-    clearInterval(heartbeatTimer);
-  };
-  req.on('aborted', closeStream);
-  res.on('close', closeStream);
 });
 app.patch('/api/notifications/:id/read', auth, async (req, res, next) => {
   try {
@@ -2164,7 +2427,9 @@ app.get('/api/tasks', auth, async (req, res, next) => {
       category: z.string().trim().max(80).optional(),
       dueBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       dueAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      includeArchived: z.enum(['true', 'false']).optional()
+      includeArchived: z.enum(['true', 'false']).optional(),
+      page: z.coerce.number().int().min(1).max(2_147_483_647).optional(),
+      pageSize: z.coerce.number().int().min(1).max(taskBulkLimit).optional()
     }), req.query);
     if (queryValues.includeArchived === 'true' && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Only admins can view archived tasks' });
@@ -2181,11 +2446,26 @@ app.get('/api/tasks', auth, async (req, res, next) => {
       params.push(`%${queryValues.q}%`);
       clauses.push(`(task_title ILIKE $${params.length} OR task_description ILIKE $${params.length} OR category ILIKE $${params.length})`);
     }
+    const where = clauses.join(' AND ');
+    const order = 'task_date ASC, created_at DESC, id DESC';
+    if (queryValues.page !== undefined || queryValues.pageSize !== undefined) {
+      const { page = 1, pageSize = 50 } = queryValues;
+      const { rows: [result] } = await query(
+        `WITH task_page AS (
+           SELECT ${taskFields} FROM tasks WHERE ${where}
+           ORDER BY ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+         ) SELECT (SELECT COUNT(*)::int FROM tasks WHERE ${where}) AS total,
+           COALESCE(jsonb_agg(task_page ORDER BY "taskDate", "createdAt" DESC, id DESC), '[]'::jsonb) AS tasks
+         FROM task_page`,
+        [...params, pageSize, (page - 1) * pageSize]
+      );
+      return res.json({ tasks: result.tasks.map(serializeTasksFor(req)), total: result.total, page, pageSize });
+    }
     const { rows } = await query(
-      `SELECT ${taskFields} FROM tasks WHERE ${clauses.join(' AND ')} ORDER BY task_date ASC, created_at DESC LIMIT 200`,
+      `SELECT ${taskFields} FROM tasks WHERE ${where} ORDER BY ${order} LIMIT 200`,
       params
     );
-    res.json(rows.map(serializeTask));
+    res.json(rows.map(serializeTasksFor(req)));
   } catch (error) {
     next(error);
   }
@@ -2193,16 +2473,17 @@ app.get('/api/tasks', auth, async (req, res, next) => {
 app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(schemas.task, req.body);
-    const employee = (await query(
-      `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
-      [values.assignedTo, req.company.id]
-    )).rows[0];
+    const { employee, task } = await changeTaskOwnership(req.company.id, async client => {
+      const employee = await readTaskAssignee(client, req.company.id, values.assignedTo);
+      if (!employee) return {};
+      const task = (await client.query(
+        `INSERT INTO tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${taskFields}`,
+        [req.company.id, values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, req.user.id, values.priority]
+      )).rows[0];
+      return { employee, task };
+    });
     if (!employee) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
-    const task = (await query(
-      `INSERT INTO tasks(company_id,task_title,task_description,task_date,category,assigned_to,created_by,priority)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${taskFields}`,
-      [req.company.id, values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, req.user.id, values.priority]
-    )).rows[0];
     await recordAuditEvent(req.company.id, req.user.id, req, 'task.created', 'task', task.id, {
       assigneeId: task.assignedTo,
       priority: task.priority
@@ -2218,36 +2499,40 @@ app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
     }
     const email = await emailTaskAssignment(task, employee, req.user.firstName, req);
     void notifySlackTaskAssigned(task, employee, req);
-    res.status(201).json({ ...serializeTask(task), ...email });
+    res.status(201).json({ ...serializeTasksFor(req)(task), ...email });
   } catch (error) {
     next(error);
   }
 });
 app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
   try {
-    const values = body(schemas.task, req.body);
-    const employee = (await query(
-      `SELECT id,first_name AS "firstName",email FROM users WHERE id=$1 AND company_id=$2 AND role='employee' AND active=true`,
-      [values.assignedTo, req.company.id]
-    )).rows[0];
+    const values = body(schemas.task.extend({ restoreArchived: z.boolean().default(false) }), req.body);
+    const { restoreArchived } = values;
+    const archiveFilter = restoreArchived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL';
+    const { employee, previous, task } = await changeTaskOwnership(req.company.id, async client => {
+      const employee = await readTaskAssignee(client, req.company.id, values.assignedTo);
+      if (!employee) return {};
+      const previous = (await client.query(
+        `SELECT assigned_to AS "assignedTo",task_date AS "taskDate" FROM tasks WHERE id=$1 AND company_id=$2 AND ${archiveFilter} FOR UPDATE`,
+        [req.params.id, req.company.id]
+      )).rows[0];
+      if (!previous) return { employee };
+      const task = (await client.query(
+        `UPDATE tasks SET task_title=$1,task_description=$2,task_date=$3,category=$4,assigned_to=$5,priority=$6,
+         ${restoreArchived ? 'archived_at=NULL,' : ''}updated_at=NOW()
+         WHERE id=$7 AND company_id=$8 AND ${archiveFilter} RETURNING ${taskFields}`,
+        [values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, values.priority, req.params.id, req.company.id]
+      )).rows[0];
+      return { employee, previous, task };
+    });
     if (!employee) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
-    const previous = (await query(
-      'SELECT assigned_to AS "assignedTo",task_date AS "taskDate" FROM tasks WHERE id=$1 AND company_id=$2 AND archived_at IS NULL',
-      [req.params.id, req.company.id]
-    )).rows[0];
-    if (!previous) return res.status(404).json({ message: 'Task not found or archived' });
+    if (!task) return res.status(404).json({ message: restoreArchived ? 'Archived task not found' : 'Task not found or archived' });
     const previousTaskDate = previous.taskDate;
-    const task = (await query(
-      `UPDATE tasks SET task_title=$1,task_description=$2,task_date=$3,category=$4,assigned_to=$5,priority=$6,updated_at=NOW()
-       WHERE id=$7 AND company_id=$8 AND archived_at IS NULL RETURNING ${taskFields}`,
-      [values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, values.priority, req.params.id, req.company.id]
-    )).rows[0];
-    if (!task) return res.status(404).json({ message: 'Task not found or archived' });
-    await recordAuditEvent(req.company.id, req.user.id, req, 'task.updated', 'task', task.id, {
+    await recordAuditEvent(req.company.id, req.user.id, req, restoreArchived ? 'task.restored' : 'task.updated', 'task', task.id, {
       assigneeChanged: previous.assignedTo !== task.assignedTo,
       dueDateChanged: previousTaskDate !== task.taskDate
     });
-    const response = { ...serializeTask(task) };
+    const response = { ...serializeTasksFor(req)(task) };
     if (previous.assignedTo !== task.assignedTo) {
       try {
         await Promise.all([
@@ -2281,14 +2566,19 @@ app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
 app.patch('/api/tasks/:id/archive', auth, adminOnly, async (req, res, next) => {
   try {
     const { archived } = body(z.object({ archived: z.boolean() }), req.body);
-    const task = (await query(
+    const change = async execute => (await execute(
       `UPDATE tasks SET archived_at=${archived ? 'NOW()' : 'NULL'},updated_at=NOW()
-       WHERE id=$1 AND company_id=$2 RETURNING ${taskFields}`,
+       WHERE id=$1 AND company_id=$2 ${archived ? '' : `AND ${restorableTask}`} RETURNING ${taskFields}`,
       [req.params.id, req.company.id]
     )).rows[0];
-    if (!task) return res.status(404).json({ message: 'Task not found' });
+    const task = archived ? await change(query) : await changeTaskOwnership(req.company.id, client => change(client.query.bind(client)));
+    if (!task) {
+      const exists = !archived && (await query('SELECT id FROM tasks WHERE id=$1 AND company_id=$2', [req.params.id, req.company.id])).rowCount > 0;
+      if (exists) return res.status(409).json({ message: 'Reassign this task to an active employee before restoring it.' });
+      return res.status(404).json({ message: 'Task not found' });
+    }
     await recordAuditEvent(req.company.id, req.user.id, req, archived ? 'task.archived' : 'task.restored', 'task', task.id);
-    res.json(serializeTask(task));
+    res.json(serializeTasksFor(req)(task));
   } catch (error) {
     next(error);
   }
@@ -2296,7 +2586,7 @@ app.patch('/api/tasks/:id/archive', auth, adminOnly, async (req, res, next) => {
 app.post('/api/tasks/bulk', auth, adminOnly, async (req, res, next) => {
   try {
     const values = body(z.object({
-      taskIds: z.array(z.coerce.number().int().positive()).min(1).max(100),
+      taskIds: z.array(z.coerce.number().int().positive()).min(1).max(taskBulkLimit),
       action: z.enum(['archive', 'restore', 'priority']),
       priority: z.enum(['low', 'medium', 'high']).optional()
     }).refine(value => value.action !== 'priority' || value.priority !== undefined, {
@@ -2311,12 +2601,18 @@ app.post('/api/tasks/bulk', auth, adminOnly, async (req, res, next) => {
          WHERE id=ANY($1::int[]) AND company_id=$3 AND archived_at IS NULL RETURNING id`,
         [taskIds, values.priority, req.company.id]
       );
-    } else {
+    } else if (values.action === 'archive') {
       updated = await query(
-        `UPDATE tasks SET archived_at=${values.action === 'archive' ? 'NOW()' : 'NULL'},updated_at=NOW()
-         WHERE id=ANY($1::int[]) AND company_id=$2 AND archived_at IS ${values.action === 'archive' ? 'NULL' : 'NOT NULL'} RETURNING id`,
+        `UPDATE tasks SET archived_at=NOW(),updated_at=NOW()
+         WHERE id=ANY($1::int[]) AND company_id=$2 AND archived_at IS NULL RETURNING id`,
         [taskIds, req.company.id]
       );
+    } else {
+      updated = await changeTaskOwnership(req.company.id, client => client.query(
+        `UPDATE tasks SET archived_at=NULL,updated_at=NOW()
+         WHERE id=ANY($1::int[]) AND company_id=$2 AND archived_at IS NOT NULL AND ${restorableTask} RETURNING id`,
+        [taskIds, req.company.id]
+      ));
     }
     const updatedIds = updated.rows.map(task => task.id);
     await recordAuditEvent(req.company.id, req.user.id, req, `task.bulk_${values.action}`, 'task', null, {
@@ -2346,19 +2642,22 @@ app.patch('/api/tasks/:id/status', auth, async (req, res, next) => {
     if (!canChangeTaskStatus(task.status, status)) {
       return res.status(409).json({ message: `Cannot change task from "${task.status}" to "${status}"` });
     }
-    const updated = (await query(
+    const change = async execute => (await execute(
       `UPDATE tasks SET status=$1,updated_at=NOW()
        WHERE id=$2 AND company_id=$3 AND status=$4 AND archived_at IS NULL
-       AND ($5::integer IS NULL OR assigned_to=$5)
+       AND ($5::integer IS NULL OR assigned_to=$5) ${status === 'active' ? `AND ${activeTaskAssignee}` : ''}
        RETURNING ${taskFields}`,
       [status, task.id, req.company.id, task.status, req.user.role === 'admin' ? null : req.user.id]
     )).rows[0];
-    if (!updated) return res.status(409).json({ message: 'This task changed. Review it before trying again.' });
+    const updated = status === 'active' ? await changeTaskOwnership(req.company.id, client => change(client.query.bind(client))) : await change(query);
+    if (!updated) return res.status(409).json({ message: status === 'active'
+      ? 'This task changed or its assignee is inactive. Review it and reassign it if needed.'
+      : 'This task changed. Review it before trying again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'task.status_changed', 'task', task.id, {
       previousStatus: task.status,
       status
     });
-    const notifyId = req.user.id === task.createdBy ? task.assignedTo : task.createdBy;
+    const notifyId = req.user.id === updated.createdBy ? updated.assignedTo : updated.createdBy;
     if (notifyId !== req.user.id) {
       try {
         await notifyUser(notifyId, task.id, req.user.id, 'status', `${req.user.firstName} marked "${task.taskTitle}" ${status}`, `status:${task.id}:${crypto.randomUUID()}`);
@@ -2368,14 +2667,14 @@ app.patch('/api/tasks/:id/status', auth, async (req, res, next) => {
     }
     const emailStatus = await emailTaskUpdate(
       updated,
-      [task.assignedTo, task.createdBy],
+      [updated.assignedTo, updated.createdBy],
       req.user.id,
       req.user.firstName,
       'status',
       status,
       req
     );
-    res.json({ ...serializeTask(updated), emailStatus });
+    res.json({ ...serializeTasksFor(req)(updated), emailStatus });
   } catch (error) {
     next(error);
   }
@@ -2446,7 +2745,7 @@ app.post('/api/tasks/:id/comments', auth, async (req, res, next) => {
 app.get('/api/reports/tasks', auth, adminOnly, async (req, res, next) => {
   try {
     const range = body(taskReportRange, req.query);
-    res.json(await readTaskReport(req.company.id, range));
+    res.json(await readTaskReport(req.company.id, range, { timeZone: req.company.timeZone ?? 'UTC' }));
   } catch (error) {
     next(error);
   }
@@ -2459,18 +2758,41 @@ app.get('/api/reports/workforce', auth, adminOnly, async (req, res, next) => {
   }
 });
 app.get('/api/dashboard/admin', auth, adminOnly, async (req, res) => { const [employees, tasks] = await Promise.all([query("SELECT COUNT(*)::int AS count FROM users WHERE company_id=$1 AND role='employee' AND active=true", [req.company.id]), query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND archived_at IS NULL`, [req.company.id])]); const list = tasks.rows; res.json({ company: { name: req.company.name, slug: req.company.slug }, employees: employees.rows[0].count, totalTasks: list.length, newTasks: counts(list).newTask, activeTasks: counts(list).active, completedTasks: counts(list).completed, failedTasks: counts(list).failed }); });
-app.get('/api/dashboard/employee', auth, async (req, res) => { if (req.user.role !== 'employee') return res.status(403).json({ message: 'Employee dashboard is only available to employees' }); const { rows } = await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND assigned_to=$2 AND archived_at IS NULL ORDER BY created_at DESC`, [req.company.id, req.user.id]); res.json({ user: safeUser(req.user), company: { name: req.company.name, slug: req.company.slug }, tasks: rows.map(serializeTask), taskCounts: counts(rows) }); });
+app.get('/api/dashboard/employee', auth, async (req, res) => { if (req.user.role !== 'employee') return res.status(403).json({ message: 'Employee dashboard is only available to employees' }); const { rows } = await query(`SELECT ${taskFields} FROM tasks WHERE company_id=$1 AND assigned_to=$2 AND archived_at IS NULL ORDER BY created_at DESC`, [req.company.id, req.user.id]); res.json({ user: safeUser(req.user), company: { name: req.company.name, slug: req.company.slug }, tasks: rows.map(serializeTasksFor(req)), taskCounts: counts(rows) }); });
 
 app.use((req, res) => res.status(404).json({ message: 'Route not found', requestId: req.id }));
-app.use((error, req, res, _next) => { console.error('Request failed:', { requestId: req.id, method: req.method, path: req.path, message: error.message }); const status = Number.isInteger(error.status) ? error.status : 500; res.status(status).json({ message: status >= 500 ? 'An unexpected error occurred' : error.message, requestId: req.id }); });
-
-const shutdown = signal => { console.log(`${signal} received; closing PostgreSQL pool.`); pool.end().finally(() => process.exit(0)); };
+app.use((error, req, res, next) => {
+  const status = Number.isInteger(error.status) ? error.status : 500;
+  const route = typeof req.route?.path === 'string' ? req.route.path : 'unmatched';
+  console.error('Request failed:', { requestId: req.id, method: req.method, route, status, code: error.code });
+  if (res.headersSent) return next(error);
+  res.status(status).json({ message: status >= 500 ? 'An unexpected error occurred' : error.message, requestId: req.id });
+});
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
-  process.once('SIGINT', () => shutdown('SIGINT'));
   initialiseDatabase()
-    .then(() => app.listen(config.PORT, () => console.log(`EMS API running on port ${config.PORT} (${config.NODE_ENV})`)))
+    .then(() => {
+      const purgeChats = () => purgeExpiredAiConversations().catch(error => {
+        console.error('Chat retention cleanup failed', { code: error.code });
+      });
+      const server = app.listen(config.PORT, () => console.log(`EMS API running on port ${config.PORT} (${config.NODE_ENV})`));
+      purgeChats();
+      const cleanup = setInterval(purgeChats, 60 * 60 * 1000).unref();
+      let closing = false;
+      const shutdown = signal => {
+        if (closing) return;
+        closing = true;
+        console.log(`${signal} received. Draining HTTP connections.`);
+        clearInterval(cleanup);
+        const deadline = setTimeout(() => server.closeAllConnections(), 5_000).unref();
+        server.close(() => {
+          clearTimeout(deadline);
+          pool.end().finally(() => process.exit(0));
+        });
+      };
+      process.once('SIGTERM', () => shutdown('SIGTERM'));
+      process.once('SIGINT', () => shutdown('SIGINT'));
+    })
     .catch(error => {
       console.error('PostgreSQL connection failed:', error.message);
       process.exit(1);

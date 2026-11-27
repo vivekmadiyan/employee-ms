@@ -7,11 +7,15 @@ export function localDateKey(date) {
   return `${year}-${month}-${day}`;
 }
 
-export function groupFocusTasks(tasks, now = new Date()) {
-  const today = localDateKey(now);
-  const weekEnd = new Date(now);
-  weekEnd.setDate(weekEnd.getDate() + 7);
-  const nextWeek = localDateKey(weekEnd);
+export function workspaceDateKey(timeZone = 'UTC', date = new Date()) {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+export function groupFocusTasks(tasks, now = new Date(), timeZone) {
+  const today = timeZone ? workspaceDateKey(timeZone, now) : localDateKey(now);
+  const weekEnd = new Date(`${today}T00:00:00Z`);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
+  const nextWeek = weekEnd.toISOString().slice(0, 10);
   const groups = { overdue: [], today: [], upcoming: [] };
 
   for (const task of tasks) {

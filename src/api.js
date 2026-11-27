@@ -1,5 +1,13 @@
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:5000/api' : '');
 
+function expireSession(token) {
+  if (localStorage.getItem('ems_token') !== token) return false;
+  localStorage.removeItem('ems_token');
+  localStorage.removeItem('ems_user');
+  window.dispatchEvent(new Event('ems:session-expired'));
+  return true;
+}
+
 export const api = async (path, options = {}) => {
   if (!API_URL) {
     throw new Error('The API is not configured. Set VITE_API_URL for this deployment.');
@@ -15,17 +23,16 @@ export const api = async (path, options = {}) => {
     }
   });
   const data = await response.json().catch(() => ({}));
-  if (response.status === 401) {
-    localStorage.removeItem('ems_token');
-    localStorage.removeItem('ems_user');
-    window.dispatchEvent(new Event('ems:session-expired'));
-  }
-  if (!response.ok) throw new Error(data.message || 'Request failed');
+  if (response.status === 401) expireSession(token);
+  if (!response.ok) throw Object.assign(new Error(data.message || 'Request failed'), { status: response.status });
   return data;
 };
 
 export const loginApi = (email, password, mfaCode) => api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(mfaCode ? { mfaCode } : {}) }) });
+export const logoutApi = () => api('/auth/logout', { method: 'POST' });
 export const updateProfileApi = payload => api('/auth/me', { method: 'PATCH', body: JSON.stringify(payload) });
+export const requestEmailChangeApi = payload => api('/auth/email/request', { method: 'POST', body: JSON.stringify(payload) });
+export const confirmEmailChangeApi = code => api('/auth/email/confirm', { method: 'POST', body: JSON.stringify({ code }) });
 export const getMfaStatusApi = () => api('/auth/mfa');
 export const setupMfaApi = currentPassword => api('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ currentPassword }) });
 export const enableMfaApi = code => api('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
@@ -37,22 +44,32 @@ export const requestPasswordResetApi = email => api('/auth/forgot-password', { m
 export const resetPasswordApi = (token, password) => api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
 export const getEmployeeDashboard = () => api('/dashboard/employee');
 export const getEmployees = () => api('/employees');
-export const getOffboardingsApi = () => api('/offboardings');
+export const getOffboardingsApi = options => api('/offboardings', options);
+export const getAssignedOffboardingItemsApi = options => api('/offboardings/assigned', options);
 export const createEmployeeOffboardingApi = (id, payload) => api(`/employees/${id}/offboarding`, { method: 'POST', body: JSON.stringify(payload) });
 export const reviseOffboardingApi = (id, payload) => api(`/offboardings/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+export const updateOffboardingStatusApi = (id, status) => api(`/offboardings/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
 export const updateOffboardingItemApi = (offboardingId, itemId, completed) => api(`/offboardings/${offboardingId}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify({ completed }) });
 export const updateOffboardingItemOwnerApi = (offboardingId, itemId, ownerId) => api(`/offboardings/${offboardingId}/items/${itemId}/owner`, { method: 'PATCH', body: JSON.stringify({ ownerId }) });
-export const getDirectReportsApi = () => api('/team/direct-reports');
+export const getDirectReportsApi = signal => api('/team/direct-reports', { signal });
 export const getAdminDashboard = () => api('/dashboard/admin');
-export const getTaskReportApi = filters => {
+export const getTaskReportApi = (filters, signal) => {
   const search = new URLSearchParams(filters);
-  return api(`/reports/tasks?${search.toString()}`);
+  return api(`/reports/tasks?${search.toString()}`, { signal });
 };
 export const getWorkforceReportApi = () => api('/reports/workforce');
-export const getTasksApi = (filters = {}) => {
+export const getTasksApi = (filters = {}, options) => {
   const search = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '' && value !== undefined && value !== null));
   const query = search.toString();
-  return api(`/tasks${query ? `?${query}` : ''}`);
+  return api(`/tasks${query ? `?${query}` : ''}`, options);
+};
+export const getTaskPageApi = async ({ page, pageSize, ...filters }, options) => {
+  const result = await getTasksApi({ ...filters, page, pageSize }, options);
+  if (!Array.isArray(result)) return result;
+  // Vercel and Render may serve adjacent releases briefly during deployment.
+  const items = filters.taskId ? result.filter(task => task.id === filters.taskId) : result;
+  const offset = (page - 1) * pageSize;
+  return { tasks: items.slice(offset, offset + pageSize), total: items.length, truncated: items.length === 200 };
 };
 export const createTaskApi = (payload) => api('/tasks', {method:'POST', body:JSON.stringify(payload)});
 export const updateTaskApi = (id, payload) => api(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -104,10 +121,8 @@ export const subscribeNotificationsApi = (onUpdate, onError = () => {}) => {
           signal: controller.signal
         });
         if (response.status === 401) {
-          localStorage.removeItem('ems_token');
-          localStorage.removeItem('ems_user');
-          window.dispatchEvent(new Event('ems:session-expired'));
-          return;
+          if (expireSession(token)) return;
+          continue;
         }
         if (!response.ok || !response.body) {
           const data = await response.json().catch(() => ({}));
@@ -162,3 +177,5 @@ export const getAiConversationApi = id => api(`/ai/conversations/${encodeURIComp
 export const deleteAiConversationApi = id => api(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const getAiToolsApi = () => api('/ai/tools');
 export const generateAiReportApi = payload => api('/ai/report', { method: 'POST', body: JSON.stringify(payload) });
+export const getWorkspaceSettingsApi = () => api('/workspace/settings');
+export const saveWorkspaceSettingsApi = payload => api('/workspace/settings', { method: 'PUT', body: JSON.stringify(payload) });

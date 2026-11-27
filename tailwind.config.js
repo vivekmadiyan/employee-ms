@@ -1,6 +1,12 @@
 // tailwind.config.js
 const { fontFamily } = require('tailwindcss/defaultTheme');
 
+const brand = {
+  50: '#edf5ef', 100: '#dfede3', 200: '#c0ddcb', 300: '#a0cdb2',
+  400: '#6daa8a', 500: '#297b5b', 600: '#165a45', 700: '#104634',
+  800: '#123b2c', 900: '#142f24'
+};
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: 'class',
@@ -10,21 +16,9 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: {
-          50: '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
-          DEFAULT: '#4f46e5',
-          hover: '#4338ca',
-          focus: '#818cf8',
-        },
+        indigo: brand,
+        primary: { ...brand, DEFAULT: brand[600], hover: brand[700], focus: brand[500] },
+        slate: { 400: '#5e7367', 500: '#4e6357' },
         neutral: {
           100: '#F8FAFC', // slate-50  (Light BG)
           200: '#F1F5F9', // slate-100 (Light Subtle BG)
@@ -56,7 +50,7 @@ module.exports = {
         'card': '0 2px 8px -2px rgba(15, 23, 42, 0.06), 0 1px 3px -1px rgba(15, 23, 42, 0.04)',
         'card-hover': '0 12px 28px -6px rgba(15, 23, 42, 0.1), 0 4px 10px -2px rgba(15, 23, 42, 0.04)',
         'popover': '0 20px 40px -8px rgba(15, 23, 42, 0.12), 0 6px 14px -3px rgba(15, 23, 42, 0.06)',
-        'brand': '0 8px 24px -4px rgba(79, 70, 229, 0.3)',
+        'brand': '0 8px 24px -4px rgba(22, 90, 69, 0.3)',
       },
       animation: {
         'fade-in': 'fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards',

@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useEffect, useState } from 'react';
 import {
   getEmployeeDashboard,
   getEmployees,
+  logoutApi,
   updateTaskStatusApi
 } from '../api';
 
@@ -142,7 +143,18 @@ const AuthProvider = ({ children }) => {
       });
   };
 
-  const logout = () => {
+  const replaceSessionToken = token => {
+    if (token) localStorage.setItem('ems_token', token);
+  };
+
+  const logout = async () => {
+    if (localStorage.getItem('ems_token')) {
+      try {
+        await logoutApi();
+      } catch (error) {
+        if (error.status !== 401) throw error;
+      }
+    }
     localStorage.removeItem('ems_token');
     localStorage.removeItem('ems_user');
     setCurrentUser(null);
@@ -158,6 +170,7 @@ const AuthProvider = ({ children }) => {
         currentUser,
         dataError,
         setSession,
+        replaceSessionToken,
         logout,
         updateTaskStatus,
         updateCurrentUser,

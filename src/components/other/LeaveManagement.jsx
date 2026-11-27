@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useId, useState } from 'react';
 import { FaCalendarDays, FaCheck, FaXmark } from 'react-icons/fa6';
 import {
   cancelLeaveRequestApi,
@@ -11,6 +11,8 @@ import {
   updateLeavePoliciesApi
 } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
+import { workspaceDateKey } from '../../utils/workFocus';
 
 const leaveTypes = {
   vacation: 'Vacation',
@@ -26,12 +28,7 @@ const statusStyles = {
   cancelled: 'bg-slate-100 text-slate-500'
 };
 
-const today = () => {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
-const initialForm = () => ({ startDate: today(), endDate: today(), leaveType: 'vacation', reason: '' });
+const initialForm = today => ({ startDate: today, endDate: today, leaveType: 'vacation', reason: '' });
 const leaveTypeEntries = Object.entries(leaveTypes);
 const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const monthGridStart = date => {
@@ -50,16 +47,19 @@ const emailStatusMessage = status => ({
 
 export default function LeaveManagement({ isManager = false }) {
   const { currentUser } = useContext(AuthContext);
+  const { settings } = useContext(WorkspaceSettingsContext);
+  const today = workspaceDateKey(settings.timeZone);
+  const formId = useId();
   const isAdmin = currentUser?.role === 'admin';
   const canReview = isAdmin || isManager;
   const [requests, setRequests] = useState([]);
   const [policyDraft, setPolicyDraft] = useState(emptyPolicies);
   const [balance, setBalance] = useState([]);
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(`${today.slice(0, 7)}-01T00:00:00`));
   const [calendarAbsences, setCalendarAbsences] = useState([]);
   const [calendarError, setCalendarError] = useState('');
   const [savingPolicies, setSavingPolicies] = useState(false);
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState(() => initialForm(today));
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
@@ -133,7 +133,7 @@ export default function LeaveManagement({ isManager = false }) {
     setNotice('');
     try {
       const result = await createLeaveRequestApi(form);
-      setForm(initialForm());
+      setForm(initialForm(today));
       setNotice(`Leave request submitted successfully for approval. ${emailStatusMessage(result.emailStatus)}`.trim());
       window.dispatchEvent(new Event('ems:workspace-updated'));
       await loadRequests();
@@ -163,12 +163,13 @@ export default function LeaveManagement({ isManager = false }) {
   };
 
   const cancelRequest = async leave => {
+    if (leave.status === 'approved' && !window.confirm('Withdraw this approved leave and return the days to your balance?')) return;
     setBusyId(leave.id);
     setError('');
     setNotice('');
     try {
       await cancelLeaveRequestApi(leave.id);
-      setNotice('Pending leave request cancelled.');
+      setNotice(leave.status === 'approved' ? 'Approved leave withdrawn and allowance restored.' : 'Pending leave request cancelled.');
       window.dispatchEvent(new Event('ems:workspace-updated'));
       await loadRequests();
       await loadPoliciesAndBalance();
@@ -210,6 +211,7 @@ export default function LeaveManagement({ isManager = false }) {
       absences: calendarAbsences.filter(leave => leave.startDate <= key && leave.endDate >= key)
     };
   });
+  const agenda = calendarDays.filter(day => day.inMonth && day.absences.length);
 
   return (
     <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm" aria-labelledby="leave-management-heading">
@@ -300,7 +302,7 @@ export default function LeaveManagement({ isManager = false }) {
           </div>
         </div>
         {calendarError && <p className="mb-3 text-xs text-rose-600" role="alert">{calendarError}</p>}
-        <div className="overflow-x-auto">
+        <div className="hidden overflow-x-auto md:block" tabIndex={0} role="region" aria-label="Monthly absence calendar">
           <div role="grid" aria-label="Approved team absences" className="min-w-[630px]">
             <div role="row" className="grid grid-cols-7 border-b border-slate-100">
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
@@ -313,10 +315,10 @@ export default function LeaveManagement({ isManager = false }) {
                   <div
                     role="gridcell"
                     key={day.key}
-                    aria-label={`${day.key}${day.absences.length ? `, ${day.absences.length} approved absences` : ''}`}
+                    aria-label={`${day.key}, day ${day.date.getDate()}${day.absences.length ? `, ${day.absences.map(item => item.employeeName).join(', ')}` : ''}`}
                     className={`min-h-20 border-b border-r border-slate-100 p-1.5 ${day.inMonth ? 'bg-white' : 'bg-slate-50/60'}`}
                   >
-                    <span className={`text-[10px] font-semibold ${day.inMonth ? 'text-slate-700' : 'text-slate-300'}`}>{day.date.getDate()}</span>
+                    <span className={`text-[10px] font-semibold ${day.inMonth ? 'text-slate-700' : 'text-slate-500'}`}>{day.date.getDate()}</span>
                     <div className="mt-1 space-y-0.5">
                       {day.absences.slice(0, 2).map((absence, index) => (
                         <p key={`${absence.userId}-${index}`} title={`${absence.employeeName} · ${absence.department}`} className="truncate rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-800">
@@ -331,15 +333,27 @@ export default function LeaveManagement({ isManager = false }) {
             ))}
           </div>
         </div>
+        <div className="md:hidden">
+          {agenda.length ? (
+            <ul aria-label="Approved team absences" className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+              {agenda.map(day => (
+                <li key={day.key} className="flex flex-wrap justify-between gap-x-3 gap-y-1 px-3 py-2 text-xs">
+                  <time dateTime={day.key} className="font-bold text-slate-800">{day.date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}</time>
+                  <span className="text-slate-600">{day.absences.map(item => item.employeeName).join(', ')}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-xs text-slate-600">No approved absences this month.</p>}
+        </div>
       </div>
 
       {!isAdmin && (
         <form onSubmit={submitRequest} className="grid gap-3.5 border-b border-slate-100 p-5 sm:grid-cols-2 sm:p-6 bg-slate-50/40">
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
+            <label htmlFor={`${formId}-type`} className="block text-xs font-bold text-slate-700 mb-1">
               Leave Type
             </label>
-            <select 
+            <select id={`${formId}-type`}
               value={form.leaveType} 
               onChange={event => setForm(current => ({ ...current, leaveType: event.target.value }))} 
               className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
@@ -350,10 +364,10 @@ export default function LeaveManagement({ isManager = false }) {
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
+              <label htmlFor={`${formId}-start`} className="block text-xs font-bold text-slate-700 mb-1">
                 Start Date
               </label>
-              <input 
+              <input id={`${formId}-start`}
                 type="date" 
                 required 
                 value={form.startDate} 
@@ -362,10 +376,10 @@ export default function LeaveManagement({ isManager = false }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
+              <label htmlFor={`${formId}-end`} className="block text-xs font-bold text-slate-700 mb-1">
                 End Date
               </label>
-              <input 
+              <input id={`${formId}-end`}
                 type="date" 
                 required 
                 min={form.startDate} 
@@ -377,10 +391,10 @@ export default function LeaveManagement({ isManager = false }) {
           </div>
 
           <div className="sm:col-span-2">
-            <label className="block text-xs font-bold text-slate-700 mb-1">
+            <label htmlFor={`${formId}-reason`} className="block text-xs font-bold text-slate-700 mb-1">
               Note for Manager
             </label>
-            <textarea 
+            <textarea id={`${formId}-reason`}
               required 
               minLength={2} 
               maxLength={500} 
@@ -467,14 +481,14 @@ export default function LeaveManagement({ isManager = false }) {
                     </button>
                   </>
                 )}
-                {leave.userId === currentUser?.id && leave.status === 'pending' && (
+                {leave.userId === currentUser?.id && (leave.status === 'pending' || (leave.status === 'approved' && leave.startDate > today)) && (
                   <button 
                     type="button" 
                     onClick={() => cancelRequest(leave)} 
                     disabled={busyId === leave.id} 
                     className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                   >
-                    Cancel request
+                    {leave.status === 'approved' ? 'Withdraw leave' : 'Cancel request'}
                   </button>
                 )}
               </div>

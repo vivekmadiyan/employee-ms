@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { FaClipboardCheck } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
 import {
@@ -6,7 +6,8 @@ import {
   getOffboardingsApi,
   reviseOffboardingApi,
   updateOffboardingItemApi,
-  updateOffboardingItemOwnerApi
+  updateOffboardingItemOwnerApi,
+  updateOffboardingStatusApi
 } from '../../api';
 
 export default function OffboardingManagement() {
@@ -19,11 +20,13 @@ export default function OffboardingManagement() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [dateDrafts, setDateDrafts] = useState({});
+  const [cancelPlanId, setCancelPlanId] = useState(null);
+  const request = useRef(null);
 
   const availableEmployees = useMemo(() => (userData || []).filter(employee =>
     employee.role === 'employee' &&
     employee.active &&
-    !offboardings.some(offboarding => offboarding.employeeId === employee.id)
+    !offboardings.some(offboarding => offboarding.employeeId === employee.id && offboarding.status === 'in_progress')
   ), [offboardings, userData]);
   const ownerOptions = useMemo(
     () => (userData || []).filter(employee => employee.role === 'employee'),
@@ -31,19 +34,29 @@ export default function OffboardingManagement() {
   );
 
   const loadOffboardings = useCallback(async () => {
-    setLoading(true);
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     try {
-      setOffboardings(await getOffboardingsApi());
-      setError('');
+      const plans = await getOffboardingsApi({ signal: controller.signal });
+      if (!controller.signal.aborted) {
+        setOffboardings(plans);
+        setError('');
+      }
     } catch (requestError) {
-      setError(requestError.message || 'Could not load offboarding plans.');
+      if (!controller.signal.aborted) setError(requestError.message || 'Could not load offboarding plans.');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     loadOffboardings();
+    window.addEventListener('ems:workspace-updated', loadOffboardings);
+    return () => {
+      request.current?.abort();
+      window.removeEventListener('ems:workspace-updated', loadOffboardings);
+    };
   }, [loadOffboardings]);
 
   const startOffboarding = async event => {
@@ -129,6 +142,22 @@ export default function OffboardingManagement() {
     }
   };
 
+  const closePlan = async (offboarding, status) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await updateOffboardingStatusApi(offboarding.id, status);
+      setCancelPlanId(null);
+      setNotice(status === 'completed' ? 'Offboarding plan completed. Account access can be managed in Team & Invites.' : 'Offboarding plan cancelled. Its checklist stays in the plan history.');
+      await loadOffboardings();
+    } catch (requestError) {
+      setError(requestError.message || 'Could not close the offboarding plan.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="dashboard-card overflow-hidden rounded-2xl shadow-sm" aria-labelledby="offboarding-heading">
       <div className="flex items-center gap-3 border-b border-slate-100 p-5 sm:p-6">
@@ -177,7 +206,7 @@ export default function OffboardingManagement() {
           {busy ? 'Saving…' : 'Start checklist'}
         </button>
         {availableEmployees.length === 0 && (
-          <p className="text-[11px] text-slate-500 sm:col-span-3">There are no active employees without an offboarding plan.</p>
+          <p className="text-[11px] text-slate-500 sm:col-span-3">No active employees are available to start a plan.</p>
         )}
       </form>
 
@@ -200,7 +229,7 @@ export default function OffboardingManagement() {
                         type="date"
                         aria-label={`Last working date for ${offboarding.firstName}`}
                         value={dateDrafts[offboarding.id] ?? offboarding.lastWorkingDate}
-                        disabled={busy || offboarding.status === 'completed'}
+                        disabled={busy || offboarding.status !== 'in_progress'}
                         onChange={event => setDateDrafts(current => ({ ...current, [offboarding.id]: event.target.value }))}
                         className="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 disabled:bg-slate-100"
                       />
@@ -208,7 +237,7 @@ export default function OffboardingManagement() {
                     <button
                       type="button"
                       aria-label={`Save last working date for ${offboarding.firstName}`}
-                      disabled={busy || offboarding.status === 'completed' ||
+                      disabled={busy || offboarding.status !== 'in_progress' ||
                         (dateDrafts[offboarding.id] ?? offboarding.lastWorkingDate) === offboarding.lastWorkingDate}
                       onClick={() => updateLastWorkingDate(offboarding)}
                       className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -220,7 +249,7 @@ export default function OffboardingManagement() {
                 <div className="text-right">
                   <p className="text-[11px] font-semibold text-slate-600">Revision {offboarding.revision}</p>
                   <span className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ${
-                    offboarding.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'
+                    offboarding.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : offboarding.status === 'cancelled' ? 'bg-slate-100 text-slate-700' : 'bg-amber-50 text-amber-800'
                   }`}>
                     {offboarding.status.replace('_', ' ')}
                   </span>
@@ -230,12 +259,12 @@ export default function OffboardingManagement() {
                 {offboarding.items.map(item => (
                   <li key={item.id} className="space-y-2 rounded-lg border border-slate-100 p-3">
                     <label className={`flex items-start gap-2 rounded-lg border border-slate-100 p-3 text-xs ${
-                      offboarding.status === 'completed' ? 'text-slate-500' : 'text-slate-700'
+                      offboarding.status !== 'in_progress' ? 'text-slate-500' : 'text-slate-700'
                     }`}>
                       <input
                         type="checkbox"
                         checked={item.completed}
-                        disabled={busy || offboarding.status === 'completed'}
+                        disabled={busy || offboarding.status !== 'in_progress'}
                         onChange={event => updateItem(offboarding, item, event.target.checked)}
                         className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
@@ -246,7 +275,7 @@ export default function OffboardingManagement() {
                       <select
                         aria-label={`Owner for ${item.title}`}
                         value={item.ownerId ?? ''}
-                        disabled={busy || offboarding.status === 'completed'}
+                        disabled={busy || offboarding.status !== 'in_progress'}
                         onChange={event => updateItemOwner(
                           offboarding,
                           item,
@@ -265,6 +294,20 @@ export default function OffboardingManagement() {
                   </li>
                 ))}
               </ul>
+              {offboarding.status === 'in_progress' && (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {offboarding.items.every(item => item.completed) && (
+                    <button type="button" className="workspace-action" disabled={busy} onClick={() => closePlan(offboarding, 'completed')}>Complete plan</button>
+                  )}
+                  {cancelPlanId === offboarding.id ? (
+                    <>
+                      <p className="text-xs text-slate-700">Remove these handoffs from employee queues?</p>
+                      <button type="button" className="workspace-action workspace-action--secondary" disabled={busy} onClick={() => closePlan(offboarding, 'cancelled')}>Confirm cancellation</button>
+                      <button type="button" className="workspace-action workspace-action--secondary" disabled={busy} onClick={() => setCancelPlanId(null)}>Keep plan</button>
+                    </>
+                  ) : <button type="button" className="workspace-action workspace-action--secondary" disabled={busy} onClick={() => setCancelPlanId(offboarding.id)}>Cancel plan</button>}
+                </div>
+              )}
             </article>
           ))}
         </div>

@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { FaCalendarDay, FaListCheck, FaUserGroup, FaWandMagicSparkles } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import { getDirectReportsApi } from '../../api';
 import Header from '../other/Header';
 import TaskListNumbers from '../other/TaskListNumbers';
@@ -8,10 +9,12 @@ import TaskList from '../TaskList/TaskList';
 import LeaveManagement from '../other/LeaveManagement';
 import AIAssistant from '../other/AIAssistant';
 import WorkFocus from '../other/WorkFocus';
+import OffboardingAssignments from '../other/OffboardingAssignments';
 import './Workspace.css';
 
 const EmployeeDashboard = (props) => {
   const { userData, loading, dataError, refresh, currentUser } = useContext(AuthContext);
+  const { settings } = useContext(WorkspaceSettingsContext);
   const [activeTab, setActiveTab] = useState('tasks');
   const [hasOpenedAi, setHasOpenedAi] = useState(false);
   const [directReports, setDirectReports] = useState([]);
@@ -20,11 +23,27 @@ const EmployeeDashboard = (props) => {
   const taskListRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    getDirectReportsApi()
-      .then(reports => { if (!cancelled) setDirectReports(reports); })
-      .catch(error => { if (!cancelled) setTeamError(error.message || 'Could not load your direct reports.'); });
-    return () => { cancelled = true; };
+    let request;
+    const loadReports = async () => {
+      request?.abort();
+      const controller = new AbortController();
+      request = controller;
+      try {
+        const reports = await getDirectReportsApi(controller.signal);
+        if (controller.signal.aborted) return;
+        setDirectReports(reports);
+        setTeamError('');
+        if (!reports.length) setActiveTab(current => current === 'team' ? 'tasks' : current);
+      } catch (error) {
+        if (!controller.signal.aborted) setTeamError(error.message || 'Could not load your direct reports.');
+      }
+    };
+    loadReports();
+    window.addEventListener('ems:workspace-updated', loadReports);
+    return () => {
+      request?.abort();
+      window.removeEventListener('ems:workspace-updated', loadReports);
+    };
   }, [currentUser?.id]);
 
   const employeeData =
@@ -43,7 +62,8 @@ const EmployeeDashboard = (props) => {
   const todayFormatted = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'short',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: settings.timeZone
   });
 
   const openTask = task => {
@@ -131,6 +151,7 @@ const EmployeeDashboard = (props) => {
             {activeTab === 'tasks' && (
               <div className="workspace-stack">
                 <WorkFocus tasks={employeeData?.tasks} onOpenTasks={openTask} />
+                <OffboardingAssignments />
                 <TaskListNumbers data={employeeData} />
                 <div className="workspace-jump" tabIndex={-1} ref={taskListRef} aria-label="Assigned Tasks">
                   <TaskList data={employeeData} focusRequest={focusRequest} />

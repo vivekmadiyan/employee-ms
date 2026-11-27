@@ -1,25 +1,42 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { FaChartColumn, FaDownload } from 'react-icons/fa6';
 import { getTaskReportApi } from '../../api';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
+import { encodeCsv } from '../../utils/csv';
+import { workspaceDateKey } from '../../utils/workFocus';
 import PdfExportButton from './PdfExportButton';
 
-const localDate = date => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+const defaultRange = timeZone => {
+  const to = workspaceDateKey(timeZone);
+  const from = new Date(`${to}T00:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - 29);
+  return { from: from.toISOString().slice(0, 10), to };
 };
 
-const defaultRange = () => {
-  const to = new Date();
-  const from = new Date(to);
-  from.setDate(from.getDate() - 29);
-  return { from: localDate(from), to: localDate(to) };
-};
-
-const csvCell = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
 const statusNames = { new: 'New', active: 'In progress', completed: 'Completed', failed: 'Needs attention' };
 const priorityNames = { high: 'High', medium: 'Medium', low: 'Low' };
+const coverageLabels = { complete: 'Full period tracked', partial: 'Partial period tracked', unavailable: 'No tracking coverage' };
+
+function CompletionActivity({ activity, timeZone }) {
+  const started = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone })
+    .format(new Date(activity.coverageStartedAt));
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs" aria-labelledby="completion-activity-heading">
+      <h3 id="completion-activity-heading" className="text-sm font-bold text-slate-900">Completion activity</h3>
+      <p className="mt-1 text-xs text-slate-600">Tasks that moved to Completed during each period. Tracking began {started} ({timeZone}).</p>
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        {[['Selected period', activity.current], ['Previous period', activity.previous]].map(([label, period]) => (
+          <div key={label} className="rounded-xl border border-slate-200 p-3">
+            <dt className="text-xs font-semibold text-slate-700">{label} <span className="block font-normal">{period.from} through {period.to}</span></dt>
+            <dd className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+              {period.completed ?? '—'} <span className="block text-xs font-normal text-slate-600">{coverageLabels[period.coverage]}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
 
 function Breakdown({ title, rows, labelFor, total, tone = 'bg-indigo-500' }) {
   return (
@@ -49,42 +66,49 @@ function Breakdown({ title, rows, labelFor, total, tone = 'bg-indigo-500' }) {
 }
 
 export default function TaskReports() {
+  const { settings } = useContext(WorkspaceSettingsContext);
+  const timeZone = settings.timeZone;
   const reportRef = useRef(null);
-  const [range, setRange] = useState(defaultRange);
-  const [report, setReport] = useState(null);
+  const [customRange, setRange] = useState(null);
+  const [savedReport, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const { from, to } = customRange || defaultRange(timeZone);
+  const validRange = Boolean(from && to && from <= to);
+  const report = savedReport?.range.from === from && savedReport.range.to === to ? savedReport : null;
 
-  const loadReport = useCallback(async () => {
+  useEffect(() => {
+    if (!validRange) return undefined;
+    const request = new AbortController();
     setLoading(true);
-    try {
-      setReport(await getTaskReportApi(range));
-      setError('');
-    } catch (requestError) {
-      setError(requestError.message || 'Could not load task reporting.');
-    } finally {
-      setLoading(false);
-    }
-  }, [range]);
+    setError('');
+    getTaskReportApi({ from, to }, request.signal).then(result => {
+      if (!request.signal.aborted) setReport(result);
+    }).catch(requestError => {
+      if (!request.signal.aborted) setError(requestError.message || 'Could not load task reporting.');
+    }).finally(() => {
+      if (!request.signal.aborted) setLoading(false);
+    });
+    return () => request.abort();
+  }, [from, to, validRange, timeZone, revision]);
 
   useEffect(() => {
-    loadReport();
-  }, [loadReport]);
-
-  useEffect(() => {
-    window.addEventListener('ems:workspace-updated', loadReport);
-    return () => window.removeEventListener('ems:workspace-updated', loadReport);
-  }, [loadReport]);
+    const refresh = () => setRevision(current => current + 1);
+    window.addEventListener('ems:workspace-updated', refresh);
+    return () => window.removeEventListener('ems:workspace-updated', refresh);
+  }, []);
 
   const updateRange = event => {
     const { name, value } = event.target;
-    setRange(current => ({ ...current, [name]: value }));
+    setRange(current => ({ ...(current || { from, to }), [name]: value }));
   };
 
   const downloadCsv = () => {
     if (!report) return;
     const rows = [
       ['EmployeeMS task report'],
+      ['Workspace time zone', report.timeZone || timeZone],
       ['Created from', report.range.from],
       ['Created through', report.range.to],
       [],
@@ -114,7 +138,14 @@ export default function TaskReports() {
       row.completedTasks,
       row.overdueTasks
     ]));
-    const csv = rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+    if (report.completionActivity) {
+      const { current, previous, coverageStartedAt } = report.completionActivity;
+      rows.push([], ['Completion activity tracking started (UTC)', coverageStartedAt],
+        ['Period', 'From', 'Through', 'Completed', 'Coverage'],
+        ['Selected', current.from, current.to, current.completed, coverageLabels[current.coverage]],
+        ['Previous', previous.from, previous.to, previous.completed, coverageLabels[previous.coverage]]);
+    }
+    const csv = encodeCsv(rows);
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
@@ -137,7 +168,7 @@ export default function TaskReports() {
             <p className="text-[10px] font-bold uppercase tracking-wider">Analytics & Trends</p>
           </div>
           <h2 id="task-reports-heading" className="mt-1 text-base sm:text-lg font-bold tracking-tight text-slate-900">Task Performance Reports</h2>
-          <p className="mt-0.5 text-xs text-slate-500">Outcomes and velocity for deliverables created within the selected date window.</p>
+          <p className="mt-0.5 text-xs text-slate-500">Review tasks created in a date range and compare recorded completions.</p>
         </div>
         <div className="print-export-control flex flex-wrap items-end gap-2.5">
           <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
@@ -145,8 +176,8 @@ export default function TaskReports() {
             <input 
               type="date" 
               name="from" 
-              value={range.from} 
-              max={range.to} 
+              value={from}
+              max={to}
               onChange={updateRange} 
               className="mt-1 block rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 shadow-xs focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" 
             />
@@ -156,8 +187,8 @@ export default function TaskReports() {
             <input 
               type="date" 
               name="to" 
-              value={range.to} 
-              min={range.from} 
+              value={to}
+              min={from}
               onChange={updateRange} 
               className="mt-1 block rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 shadow-xs focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" 
             />
@@ -165,19 +196,20 @@ export default function TaskReports() {
           <button 
             type="button" 
             onClick={downloadCsv} 
-            disabled={!report || loading} 
+            disabled={!report || loading || Boolean(error)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FaDownload aria-hidden="true" className="text-xs text-slate-400" /> 
             <span>Export CSV</span>
           </button>
-          <PdfExportButton targetRef={reportRef} />
+          {report && !loading && !error && <PdfExportButton targetRef={reportRef} />}
         </div>
       </div>
 
-      {error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
+      {!validRange && <p role="alert" className="text-xs text-rose-700">Select a valid start and end date.</p>}
+      {validRange && error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
 
-      {loading && !report ? (
+      {validRange && (loading && !report ? (
         <div role="status" className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-400">
           <span className="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mb-2" />
           <p className="text-xs">Compiling reporting insights…</p>
@@ -185,12 +217,12 @@ export default function TaskReports() {
       ) : report && (
         <div className="space-y-4 animate-fade-in">
           <p className="text-[11px] text-slate-500" aria-live="polite">
-            {loading ? 'Updating report… ' : ''}Analyzing tasks created {report.range.from} through {report.range.to}.
+            {loading ? 'Updating report… ' : ''}Current status of tasks created {report.range.from} through {report.range.to} ({report.timeZone || timeZone}).
           </p>
           <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
             {[
               ['Tasks Created', summary.totalTasks, 'text-indigo-600', 'bg-indigo-50/70 border-indigo-100'],
-              ['Completion Rate', `${completionRate}%`, 'text-emerald-600', 'bg-emerald-50/70 border-emerald-100'],
+              ['Created tasks completed', `${completionRate}%`, 'text-emerald-600', 'bg-emerald-50/70 border-emerald-100'],
               ['In Progress', summary.activeTasks, 'text-violet-600', 'bg-violet-50/70 border-violet-100'],
               ['Overdue Open', summary.overdueTasks, summary.overdueTasks ? 'text-rose-600' : 'text-slate-700', summary.overdueTasks ? 'bg-rose-50/70 border-rose-100' : 'bg-slate-50/70 border-slate-200']
             ].map(([label, value, textColor, cardBg]) => (
@@ -200,6 +232,8 @@ export default function TaskReports() {
               </article>
             ))}
           </div>
+
+          {report.completionActivity && <CompletionActivity activity={report.completionActivity} timeZone={report.timeZone || timeZone} />}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Breakdown title="Status Breakdown" rows={report.statusBreakdown} labelFor={row => statusNames[row.status] || row.status} total={summary.totalTasks} tone="bg-indigo-600" />
@@ -243,7 +277,7 @@ export default function TaskReports() {
             </section>
           </div>
         </div>
-      )}
+      ))}
     </section>
   );
 }

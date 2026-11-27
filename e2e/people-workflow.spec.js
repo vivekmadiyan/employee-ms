@@ -18,8 +18,18 @@ const createInvitation = async (page, adminToken, invitation) => {
   return response.json();
 };
 
+const logoutInBrowser = async page => {
+  const button = page.getByRole('button', { name: 'Log out' });
+  const [response] = await Promise.all([
+    page.waitForResponse(result => result.url() === `${apiUrl}/auth/logout`),
+    button.click()
+  ]);
+  expect(response.status()).toBe(204);
+  await expect(button).toHaveCount(0);
+};
+
 const acceptInvitationInBrowser = async (page, inviteUrl, expectedName) => {
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await logoutInBrowser(page);
   await page.goto(inviteUrl);
   await expect(page.getByText(expectedName, { exact: false })).toBeVisible();
   await page.getByLabel('Create password').fill(password);
@@ -62,8 +72,11 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
   const adminSession = await readSession(page);
   expect(adminSession.user.role).toBe('admin');
+  const adminLogin = await page.request.post(`${apiUrl}/auth/login`, { data: { email: adminEmail, password } });
+  expect(adminLogin.ok()).toBeTruthy();
+  const adminSetup = await adminLogin.json();
 
-  const managerInvite = await createInvitation(page, adminSession.token, {
+  const managerInvite = await createInvitation(page, adminSetup.token, {
     firstName: 'E2E Manager',
     email: managerEmail,
     department: 'Engineering',
@@ -71,8 +84,10 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     team: 'Platform'
   });
   const managerSession = await acceptInvitationInBrowser(page, managerInvite.inviteUrl, 'E2E Manager');
+  const revokedAdminSession = await page.request.get(`${apiUrl}/auth/me`, { headers: { Authorization: `Bearer ${adminSession.token}` } });
+  expect(revokedAdminSession.status()).toBe(401);
 
-  const employeeInvite = await createInvitation(page, adminSession.token, {
+  const employeeInvite = await createInvitation(page, adminSetup.token, {
     firstName: 'E2E Teammate',
     email: employeeEmail,
     department: 'Engineering',
@@ -85,19 +100,19 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   const start = new Date();
   start.setDate(start.getDate() + 5);
   const startDate = start.toISOString().slice(0, 10);
-  const leaveResponse = await page.request.post(`${apiUrl}/leave-requests`, {
-    headers: { Authorization: `Bearer ${employeeSession.token}` },
-    data: {
-      startDate,
-      endDate: startDate,
-      leaveType: 'vacation',
-      reason: 'E2E manager approval'
-    }
-  });
+  await page.getByRole('button', { name: 'Time off' }).click();
+  await page.getByLabel('Leave Type').selectOption('vacation');
+  await page.getByLabel('Start Date').fill(startDate);
+  await page.getByLabel('End Date').fill(startDate);
+  await page.getByLabel('Note for Manager').fill('E2E manager approval');
+  const [leaveResponse] = await Promise.all([
+    page.waitForResponse(response => response.url() === `${apiUrl}/leave-requests` && response.request().method() === 'POST'),
+    page.getByRole('button', { name: 'Submit Leave Request' }).click()
+  ]);
   expect(leaveResponse.status()).toBe(201);
   const leaveRequest = await leaveResponse.json();
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await logoutInBrowser(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await page.getByLabel('Work Email').fill(managerEmail);
@@ -141,6 +156,12 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   });
   expect(savedRequest.ok()).toBeTruthy();
   expect((await savedRequest.json()).find(item => item.id === leaveRequest.id)?.status).toBe('approved');
+  const employeeLoginAgain = await page.request.post(`${apiUrl}/auth/login`, { data: { email: employeeEmail, password } });
+  expect(employeeLoginAgain.ok()).toBeTruthy();
+  const employeeAuth = { Authorization: `Bearer ${(await employeeLoginAgain.json()).token}` };
+  const withdrawnLeave = await page.request.delete(`${apiUrl}/leave-requests/${leaveRequest.id}`, { headers: employeeAuth });
+  expect(withdrawnLeave.status()).toBe(204);
+  await expect(absenceDay.getByText('E2E Teammate')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'AI', exact: true }).click();
   const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
@@ -156,7 +177,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   const [chat] = (await chats.json()).conversations;
   expect(chat.title).toBe(reportQuestion);
   const chatUrl = `${apiUrl}/ai/conversations/${chat.id}`;
-  const otherUserHeaders = { Authorization: `Bearer ${adminSession.token}` };
+  const otherUserHeaders = { Authorization: `Bearer ${adminSetup.token}` };
   expect((await page.request.get(chatUrl, { headers: otherUserHeaders })).status()).toBe(404);
   expect((await page.request.delete(chatUrl, { headers: otherUserHeaders })).status()).toBe(404);
   expect((await page.request.post(`${apiUrl}/ai/ask`, {
@@ -181,7 +202,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   expect((await page.request.get(chatUrl, { headers: { Authorization: `Bearer ${manager.token}` } })).status()).toBe(404);
   await history.getByRole('button', { name: 'Close chat history' }).click();
 
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await logoutInBrowser(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await page.getByLabel('Work Email').fill(adminEmail);
@@ -207,7 +228,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await page.getByRole('button', { name: 'Create onboarding checklist for E2E Teammate' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Created 2 onboarding tasks for E2E Teammate.' })).toBeVisible();
   const onboardedEmployees = await page.request.get(`${apiUrl}/employees`, {
-    headers: { Authorization: `Bearer ${adminSession.token}` }
+    headers: { Authorization: `Bearer ${adminSetup.token}` }
   });
   expect(onboardedEmployees.ok()).toBeTruthy();
   const onboardedTeammate = (await onboardedEmployees.json()).find(employee => employee.id === employeeSession.user.id);
@@ -265,8 +286,30 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   });
   expect(duplicatePlan.status()).toBe(409);
 
+  const handoffPath = `${apiUrl}/offboardings/${plan.id}/items/${plan.items[0].id}`;
+  const managerLoginAgain = await page.request.post(`${apiUrl}/auth/login`, { data: { email: managerEmail, password } });
+  expect(managerLoginAgain.ok()).toBeTruthy();
+  const managerAuth = { Authorization: `Bearer ${(await managerLoginAgain.json()).token}` };
+  const assigned = await page.request.get(`${apiUrl}/offboardings/assigned`, {
+    headers: managerAuth
+  });
+  expect(assigned.ok()).toBeTruthy();
+  const assignedItems = await assigned.json();
+  expect(assignedItems).toHaveLength(1);
+  expect(assignedItems[0]).toMatchObject({ id: plan.items[0].id, offboardingId: plan.id, lastWorkingDate: revisedDateValue });
+  expect(assignedItems[0]).not.toHaveProperty('email');
+  const deniedHandoff = await page.request.patch(handoffPath, {
+    headers: employeeAuth, data: { completed: true }
+  });
+  expect(deniedHandoff.status()).toBe(404);
+  const completedHandoff = await page.request.patch(handoffPath, {
+    headers: managerAuth, data: { completed: true }
+  });
+  expect(completedHandoff.ok()).toBeTruthy();
+  expect(await completedHandoff.json()).toMatchObject({ status: 'in_progress', item: { completed: true } });
+  await expect(offboarding.getByLabel('Complete role and knowledge handover', { exact: true })).toBeChecked({ timeout: 10_000 });
+
   for (const item of [
-    'Complete role and knowledge handover',
     'Reassign active tasks and responsibilities',
     'Recover company equipment and property',
     'Revoke company-system access',
@@ -292,6 +335,16 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     data: { ownerId: null }
   });
   expect(reassignCompletedItem.status()).toBe(409);
+  const newCycle = await page.request.post(`${apiUrl}/employees/${employeeSession.user.id}/offboarding`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` }, data: { lastWorkingDate: revisedDateValue }
+  });
+  expect(newCycle.status()).toBe(201);
+  const nextPlan = await newCycle.json();
+  expect(nextPlan.id).not.toBe(plan.id);
+  const cancelled = await page.request.patch(`${apiUrl}/offboardings/${nextPlan.id}/status`, {
+    headers: { Authorization: `Bearer ${updatedAdminSession.token}` }, data: { status: 'cancelled' }
+  });
+  expect(cancelled.ok()).toBeTruthy();
   const employees = await page.request.get(`${apiUrl}/employees`, {
     headers: { Authorization: `Bearer ${updatedAdminSession.token}` }
   });
@@ -304,6 +357,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   const workforceReport = await workforceResponse.json();
   expect(workforceReport.headcount).toMatchObject({ total: 2, activeEmployees: 2, inactiveEmployees: 0 });
   expect(workforceReport.offboardingPlans).toContainEqual({ status: 'completed', count: 1 });
+  expect(workforceReport.offboardingPlans).toContainEqual({ status: 'cancelled', count: 1 });
   await page.getByRole('button', { name: 'Reports' }).click();
   await expect(page.getByRole('heading', { name: 'Workforce overview' })).toBeVisible();
   await expect(page.getByText('Active accounts', { exact: true })).toBeVisible();

@@ -4,8 +4,8 @@ import { config } from './config.js';
 const { Pool } = pg;
 
 export const pool = new Pool({
-  connectionString: config.DATABASE_URL,
-  ssl: config.PGSSL ? { rejectUnauthorized: false } : false,
+  connectionString: verifiedConnectionString(config.DATABASE_URL),
+  ssl: config.PGSSL ? { rejectUnauthorized: true } : false,
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000
@@ -14,9 +14,19 @@ export const pool = new Pool({
 pool.on('error', error => console.error('Unexpected PostgreSQL pool error:', error));
 export const query = (text, params) => pool.query(text, params);
 
+function verifiedConnectionString(value) {
+  if (!config.PGSSL) return value;
+  const url = new URL(value);
+  url.searchParams.set('sslmode', 'verify-full');
+  return url.toString();
+}
+
 export async function initialiseDatabase() {
   await query(`
     CREATE TABLE IF NOT EXISTS companies (id SERIAL PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, industry TEXT NOT NULL DEFAULT 'General', size TEXT NOT NULL DEFAULT '1-10', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS time_zone TEXT NOT NULL DEFAULT 'UTC';
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE companies ALTER COLUMN ai_enabled SET DEFAULT FALSE;
     CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, first_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('admin', 'employee')), department TEXT NOT NULL DEFAULT 'General', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_type TEXT NOT NULL DEFAULT 'unspecified' CHECK (employment_type IN ('full_time','part_time','contractor','temporary','intern','unspecified'));
@@ -26,6 +36,20 @@ export async function initialiseDatabase() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS auth_session_revocations (
+      token_id UUID PRIMARY KEY,
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS auth_session_revocations_expiry_idx ON auth_session_revocations(expires_at);
+    CREATE TABLE IF NOT EXISTS auth_email_changes (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      requested_email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      token_id UUID NOT NULL,
+      auth_version INTEGER NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS ai_conversations (
       id UUID PRIMARY KEY,
       company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -43,7 +67,35 @@ export async function initialiseDatabase() {
     ALTER TABLE invitations ADD COLUMN IF NOT EXISTS team TEXT NOT NULL DEFAULT 'General';
     ALTER TABLE invitations ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS tasks_report_created_idx ON tasks(company_id,created_at) WHERE archived_at IS NULL;
+    CREATE TABLE IF NOT EXISTS task_status_events (
+      id BIGSERIAL PRIMARY KEY,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      assigned_to INTEGER NOT NULL,
+      from_status TEXT NOT NULL,
+      to_status TEXT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    );
+    CREATE INDEX IF NOT EXISTS task_completion_period_idx ON task_status_events(company_id,occurred_at)
+      WHERE to_status='completed';
+    CREATE TABLE IF NOT EXISTS task_report_coverage (
+      singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+      started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    );
+    CREATE OR REPLACE FUNCTION record_task_status_event() RETURNS trigger AS $$
+    BEGIN
+      INSERT INTO task_status_events(task_id,company_id,assigned_to,from_status,to_status)
+      VALUES (NEW.id,NEW.company_id,NEW.assigned_to,OLD.status,NEW.status);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS task_status_history ON tasks;
+    CREATE TRIGGER task_status_history AFTER UPDATE OF status ON tasks FOR EACH ROW
+      WHEN (OLD.status IS DISTINCT FROM NEW.status) EXECUTE FUNCTION record_task_status_event();
+    INSERT INTO task_report_coverage(singleton) VALUES(TRUE) ON CONFLICT DO NOTHING;
     CREATE TABLE IF NOT EXISTS password_resets (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, token_hash TEXT NOT NULL UNIQUE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    ALTER TABLE password_resets ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0;
     CREATE TABLE IF NOT EXISTS notifications (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL, type TEXT NOT NULL CHECK (type IN ('assigned', 'status', 'comment', 'due', 'overdue')), message TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE, read_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS task_comments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS audit_events (id BIGSERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT, details JSONB NOT NULL DEFAULT '{}'::jsonb, request_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
@@ -54,7 +106,17 @@ export async function initialiseDatabase() {
     CREATE UNIQUE INDEX IF NOT EXISTS company_onboarding_templates_company_name_idx ON company_onboarding_templates(company_id,lower(name));
     CREATE TABLE IF NOT EXISTS employee_onboarding (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, employee_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, template_id INTEGER REFERENCES company_onboarding_templates(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     ALTER TABLE employee_onboarding ADD COLUMN IF NOT EXISTS template_id INTEGER REFERENCES company_onboarding_templates(id) ON DELETE SET NULL;
-    CREATE TABLE IF NOT EXISTS employee_offboardings (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, employee_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, last_working_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress','completed')), revision INTEGER NOT NULL DEFAULT 1, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS employee_offboardings (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, employee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, last_working_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress','completed','cancelled')), revision INTEGER NOT NULL DEFAULT 1, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='employee_offboardings'::regclass AND conname='employee_offboardings_employee_id_key') THEN
+        ALTER TABLE employee_offboardings DROP CONSTRAINT employee_offboardings_employee_id_key;
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='employee_offboardings'::regclass AND conname='employee_offboardings_status_check' AND pg_get_constraintdef(oid) NOT LIKE '%cancelled%') THEN
+        ALTER TABLE employee_offboardings DROP CONSTRAINT employee_offboardings_status_check;
+        ALTER TABLE employee_offboardings ADD CONSTRAINT employee_offboardings_status_check CHECK (status IN ('in_progress','completed','cancelled'));
+      END IF;
+    END $$;
+    CREATE UNIQUE INDEX IF NOT EXISTS employee_open_offboarding_idx ON employee_offboardings(employee_id) WHERE status='in_progress';
     ALTER TABLE employee_offboardings ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
     CREATE TABLE IF NOT EXISTS employee_offboarding_items (id SERIAL PRIMARY KEY, offboarding_id INTEGER NOT NULL REFERENCES employee_offboardings(id) ON DELETE CASCADE, item_key TEXT NOT NULL, title TEXT NOT NULL, position INTEGER NOT NULL, completed BOOLEAN NOT NULL DEFAULT FALSE, completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL, completed_at TIMESTAMPTZ, owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, UNIQUE(offboarding_id,item_key));
     ALTER TABLE employee_offboarding_items ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
@@ -94,6 +156,7 @@ export async function initialiseDatabase() {
     INSERT INTO workspace_activity(company_id) SELECT id FROM companies ON CONFLICT(company_id) DO NOTHING;
     CREATE INDEX IF NOT EXISTS users_company_id_idx ON users(company_id);
     CREATE INDEX IF NOT EXISTS ai_conversations_owner_idx ON ai_conversations(company_id, user_id, owner_role, updated_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS ai_conversations_expiry_idx ON ai_conversations(updated_at);
     CREATE INDEX IF NOT EXISTS users_active_manager_idx ON users(company_id, manager_id, id) WHERE role='employee' AND active=true;
     CREATE INDEX IF NOT EXISTS tasks_company_id_idx ON tasks(company_id);
     CREATE INDEX IF NOT EXISTS tasks_active_company_due_idx ON tasks(company_id, task_date) WHERE archived_at IS NULL;
@@ -105,5 +168,6 @@ export async function initialiseDatabase() {
     CREATE INDEX IF NOT EXISTS leave_requests_company_created_idx ON leave_requests(company_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS leave_requests_user_status_idx ON leave_requests(user_id, status, start_date);
     CREATE INDEX IF NOT EXISTS employee_offboardings_company_created_idx ON employee_offboardings(company_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS employee_offboarding_open_owner_idx ON employee_offboarding_items(owner_id, offboarding_id) WHERE completed=false;
   `);
 }

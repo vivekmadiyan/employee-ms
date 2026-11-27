@@ -15,6 +15,7 @@ import BulkInviteEmployees from '../other/BulkInviteEmployees';
 import AuditTrail from '../other/AuditTrail';
 import LeaveManagement from '../other/LeaveManagement';
 import SlackIntegration from '../other/SlackIntegration';
+import WorkspaceSettings from '../other/WorkspaceSettings';
 import OffboardingManagement from '../other/OffboardingManagement';
 import WorkforceReports from '../other/WorkforceReports';
 import AIAssistant from '../other/AIAssistant';
@@ -179,7 +180,7 @@ const AdminDashboard = ({ changeUser, data }) => {
               {tab === 'leaves' && <LeaveManagement />}
               {tab === 'reports' && <><WorkforceReports /><TaskReports /></>}
               {tab === 'audit' && <AuditTrail />}
-              {tab === 'integrations' && <SlackIntegration />}
+              {tab === 'integrations' && <><WorkspaceSettings /><SlackIntegration /></>}
             </div>
           ))}
         </main>

@@ -4,12 +4,13 @@ import App from './App';
 import './index.css';
 import AuthProvider from './context/AuthProvider';
 import { ThemeProvider } from './context/ThemeContext';
+import WorkspaceSettingsProvider from './context/WorkspaceSettingsContext';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ThemeProvider>
       <AuthProvider>
-        <App />
+        <WorkspaceSettingsProvider><App /></WorkspaceSettingsProvider>
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>

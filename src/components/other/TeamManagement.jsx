@@ -11,6 +11,7 @@ import {
   updateEmployeeStatusApi
 } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
+import { encodeCsv } from '../../utils/csv';
 import { HelpIcon } from './Tooltip';
 import PdfExportButton from './PdfExportButton';
 
@@ -280,9 +281,7 @@ export default function TeamManagement() {
       (e.taskCounts?.newTask || 0) + (e.taskCounts?.active || 0),
       e.taskCounts?.completed || 0,
     ]);
-    const csv = [headers, ...rows]
-      .map(row => row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(','))
-      .join('\r\n');
+    const csv = encodeCsv([headers, ...rows]);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -515,8 +514,8 @@ export default function TeamManagement() {
             No employees have joined yet. Invite a teammate to get started.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-100">
-            <table className="min-w-[1320px] w-full text-left text-xs">
+          <div className="team-roster-scroll overflow-x-auto rounded-xl border border-slate-100" role="region" aria-label="Employee roster" tabIndex={0}>
+            <table className="team-roster min-w-[1320px] w-full text-left text-xs">
               <thead className="bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
                 <tr>
                   <th scope="col" className="px-4 py-3">Employee</th>
@@ -536,7 +535,7 @@ export default function TeamManagement() {
                   const initial = employee.firstName?.slice(0, 1).toUpperCase() || 'U';
                   const openCount = (employee.taskCounts?.newTask || 0) + (employee.taskCounts?.active || 0);
                   return (
-                    <tr key={employee.id} className={!employee.active ? 'opacity-60 bg-slate-50/30' : 'hover:bg-slate-50/60'}>
+                    <tr key={employee.id} className={!employee.active ? 'bg-slate-50/30' : 'hover:bg-slate-50/60'}>
                       <td className="px-4 py-3.5">
                         {editId === employee.id ? (
                           <form id={`edit-employee-${employee.id}`} onSubmit={saveEmployee} className="flex gap-2">
@@ -563,7 +562,7 @@ export default function TeamManagement() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td data-label="Department" className="px-4 py-3.5 text-slate-600">
                         {editId === employee.id ? (
                           <div>
                             <label className="sr-only" htmlFor={`employee-department-${employee.id}`}>Department</label>
@@ -583,12 +582,12 @@ export default function TeamManagement() {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td data-label="Team" className="px-4 py-3.5 text-slate-600">
                         {editId === employee.id ? (
                           <input form={`edit-employee-${employee.id}`} aria-label="Team" required minLength={2} maxLength={80} value={editForm.team} onChange={event => setEditForm(current => ({ ...current, team: event.target.value }))} className="w-36 rounded-lg border border-slate-200 p-1.5 text-xs text-slate-900" />
                         ) : <span className="inline-flex rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{employee.team || 'General'}</span>}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td data-label="Reports to" className="px-4 py-3.5 text-slate-600">
                         {editId === employee.id ? (
                           <select
                             form={`edit-employee-${employee.id}`}
@@ -611,7 +610,7 @@ export default function TeamManagement() {
                           <span>{userData.find(manager => manager.id === employee.managerId)?.firstName || 'Unavailable manager'}</span>
                         ) : <span className="text-slate-400">No manager</span>}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td data-label="Job title" className="px-4 py-3.5 text-slate-600">
                         {editId === employee.id ? (
                           <input
                             form={`edit-employee-${employee.id}`}
@@ -623,7 +622,7 @@ export default function TeamManagement() {
                           />
                         ) : employee.jobTitle || <span className="text-slate-400">Not set</span>}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td data-label="Employment type" className="px-4 py-3.5 text-slate-600">
                         {editId === employee.id ? (
                           <select
                             form={`edit-employee-${employee.id}`}
@@ -641,7 +640,7 @@ export default function TeamManagement() {
                           </select>
                         ) : <span className="capitalize">{(employee.employmentType || 'unspecified').replace('_', ' ')}</span>}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td data-label="Hire date" className="px-4 py-3.5 text-slate-600">
                         {editId === employee.id ? (
                           <input
                             form={`edit-employee-${employee.id}`}
@@ -653,10 +652,10 @@ export default function TeamManagement() {
                           />
                         ) : employee.hireDate || <span className="text-slate-400">Not set</span>}
                       </td>
-                      <td className="px-4 py-3.5 text-center font-semibold text-slate-700">
+                      <td data-label="Open tasks" className="px-4 py-3.5 text-center font-semibold text-slate-700">
                         {openCount}
                       </td>
-                      <td className="px-4 py-3.5 text-center">
+                      <td data-label="Status" className="px-4 py-3.5 text-center">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
                           employee.active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/50' : 'bg-slate-100 text-slate-500'
                         }`}>

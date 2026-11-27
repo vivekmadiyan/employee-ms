@@ -15,6 +15,8 @@ const Header = ({ changeUser, data, onOpenTask }) => {
   const [openingTask, setOpeningTask] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const [signingOut, setSigningOut] = useState(false);
   const notifRef = useRef(null);
   const notifButton = useRef(null);
   const closeSettings = useCallback(() => setShowSettings(false), []);
@@ -95,10 +97,16 @@ const Header = ({ changeUser, data, onOpenTask }) => {
     }
   };
 
-  const logOutUser = () => {
-    localStorage.removeItem('ems_token');
-    localStorage.removeItem('ems_user');
-    changeUser();
+  const logOutUser = async () => {
+    setSignOutError('');
+    setSigningOut(true);
+    try {
+      await changeUser();
+    } catch {
+      setSignOutError('Could not end your session. Try logging out again.');
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   const userName = currentUser?.firstName || data?.firstName || 'User';
@@ -243,6 +251,7 @@ const Header = ({ changeUser, data, onOpenTask }) => {
             type="button"
             onClick={logOutUser}
             aria-label="Log out"
+            disabled={signingOut}
             className="workspace-icon workspace-icon--logout"
           >
             <FaArrowRightFromBracket aria-hidden="true" />
@@ -250,6 +259,7 @@ const Header = ({ changeUser, data, onOpenTask }) => {
           </button>
         </div>
       </header>
+      {signOutError && <p className="px-2 pb-2 text-xs text-rose-700" role="alert">{signOutError}</p>}
       {showSettings && <AccountSettings onClose={closeSettings} />}
     </>
   );

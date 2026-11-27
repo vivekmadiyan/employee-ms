@@ -5,7 +5,8 @@ import {
 } from 'react-icons/fa6';
 import { askAiApi, createTaskApi, getAiToolsApi, updateTaskStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
-import { localDateKey } from '../../utils/workFocus';
+import { workspaceDateKey } from '../../utils/workFocus';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import AIChatHistory from './AIChatHistory';
 import AIReports, { ReportResult } from './AIReports';
 import './AIAssistant.css';
@@ -63,6 +64,7 @@ function ActionPreview({ turn, busy, isToolEnabled, confirm, dismiss, onOpenTask
 
 export default function AIAssistant({ onOpenTask }) {
   const { currentUser, refresh } = useContext(AuthContext);
+  const { settings } = useContext(WorkspaceSettingsContext);
   const [mode, setMode] = useState('chat');
   const [question, setQuestion] = useState('');
   const [turns, setTurns] = useState([]);
@@ -106,7 +108,7 @@ export default function AIAssistant({ onOpenTask }) {
       if (!cancelled) setToolState('error');
     });
     return () => { cancelled = true; };
-  }, [toolLoadAttempt]);
+  }, [toolLoadAttempt, settings.aiEnabled]);
 
   useEffect(() => {
     const conversation = log.current;
@@ -206,14 +208,14 @@ export default function AIAssistant({ onOpenTask }) {
 
     try {
       const result = await askAiApi({
-        question: text, today: localDateKey(new Date()), mode, history,
+        question: text, today: workspaceDateKey(settings.timeZone), mode, history,
         ...(mode === 'chat' ? { tools: enabledTools, conversationId } : {}),
         ...(reportContext && { reportContext })
       });
       if (!result.answer) throw new Error('No answer was returned. Try again.');
       if (mode === 'chat') {
-        const reportReply = result.source === 'workspace' && (result.report || result.reportIntent === true);
-        if (!modelSources.has(result.source) && !reportReply) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
+        const workspaceReply = result.source === 'workspace' && (result.report || result.reportIntent === true || result.taskSummary === true);
+        if (!modelSources.has(result.source) && !workspaceReply) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
         const turn = { ...result, question: text, id: ++sequence.current, actionState: 'ready' };
         if (result.conversationId) setConversationId(result.conversationId);
         setTurns(current => [...current, turn].slice(-12));
@@ -352,8 +354,8 @@ export default function AIAssistant({ onOpenTask }) {
                 </form>
                 <div className="ai-composer-meta">
                   <p id="ai-context-note" className="ai-note">
-                    Chat and visible task details are sent to the AI service.
-                    {enabledTools.includes('create_task') && ' Creating tasks also shares eligible assignee names.'}
+                    {settings.aiEnabled ? 'AI requests may send relevant task details and recent messages to your workspace’s provider.' : 'External AI is disabled. Task summaries and report figures are available.'}
+                    {settings.aiEnabled && enabledTools.includes('create_task') && ' Task drafts may share eligible assignee names.'}
                     {' Changes require your approval.'}
                   </p>
                   <span className="ai-keyboard-hint"><kbd>Enter</kbd> to send</span>

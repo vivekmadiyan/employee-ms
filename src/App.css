@@ -1,17 +1,30 @@
 /* Modern SaaS App Design System */
 
 :root {
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --primary-light: #eef2ff;
-  --primary-ring: rgba(79, 70, 229, 0.25);
-  --ink-900: #0f172a;
-  --ink-700: #334155;
-  --ink-500: #64748b;
-  --surface: #ffffff;
-  --surface-subtle: #f8fafc;
-  --border: #e2e8f0;
-  --border-focus: #818cf8;
+  --primary: var(--ui-accent);
+  --primary-hover: var(--ui-accent-hover);
+  --primary-light: var(--ui-wash);
+  --primary-ring: color-mix(in srgb, var(--ui-accent) 25%, transparent);
+  --ink-900: var(--ui-ink);
+  --ink-700: var(--ui-ink);
+  --ink-500: var(--ui-muted);
+  --surface: var(--ui-surface);
+  --surface-subtle: var(--ui-canvas);
+  --border: var(--ui-line);
+  --border-focus: var(--ui-focus);
+}
+
+@media screen and (max-width: 767px) {
+  .team-roster-scroll { overflow: visible; }
+  .team-roster { min-width: 0; }
+  .team-roster thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .team-roster tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: .65rem; gap: .15rem; }
+  .team-roster td { min-width: 0; padding: .35rem; text-align: start; overflow-wrap: anywhere; }
+  .team-roster td:first-child, .team-roster td:last-child { grid-column: 1 / -1; }
+  .team-roster td[data-label]::before { content: attr(data-label); display: block; color: var(--ui-muted); font-size: .68rem; margin-bottom: .2rem; }
+  .team-roster td :is(input, select) { max-width: 100%; }
+  .team-roster td:last-child > div { flex-wrap: wrap; justify-content: flex-start; }
+  .team-roster td:last-child button { min-height: 40px; }
 }
 
 #root {

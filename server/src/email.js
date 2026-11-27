@@ -106,6 +106,19 @@ export async function sendPasswordResetEmail({
   });
 }
 
+export async function sendEmailChangeEmail({ apiKey, senderEmail, senderName, recipientEmail, code, fetchImpl = fetch }) {
+  return sendBrevoEmail({
+    apiKey, senderEmail, senderName, recipientEmail, fetchImpl,
+    payload: code ? {
+      subject: 'Verify your new EmployeeMS email',
+      textContent: `Enter this code in EmployeeMS Account Settings to confirm your new address: ${code}\n\nThis code expires in 15 minutes. If you did not request this change, ignore this email.`
+    } : {
+      subject: 'Your EmployeeMS email changed',
+      textContent: 'Your EmployeeMS sign-in email was changed. If you did not request this change, contact your workspace administrator.'
+    }
+  });
+}
+
 export async function sendTaskAssignedEmail({
   apiKey,
   senderEmail,

@@ -1,32 +1,19 @@
 .workspace-release {
-  --desk-canvas: #f4f6f1;
-  --desk-surface: #fff;
-  --desk-ink: #1a2a21;
-  --desk-muted: #526359;
-  --desk-line: #dce5dd;
-  --desk-wash: #e7f0e8;
-  --desk-accent: #165a45;
-  --desk-accent-hover: #104634;
-  --desk-button: #fff;
-  --desk-focus: #187652;
+  --desk-canvas: var(--ui-canvas);
+  --desk-surface: var(--ui-surface);
+  --desk-ink: var(--ui-ink);
+  --desk-muted: var(--ui-muted);
+  --desk-line: var(--ui-line);
+  --desk-wash: var(--ui-wash);
+  --desk-accent: var(--ui-accent);
+  --desk-accent-hover: var(--ui-accent-hover);
+  --desk-button: var(--ui-on-accent);
+  --desk-focus: var(--ui-focus);
   --desk-width: 1480px;
   --desk-pad: clamp(.85rem, 3vw, 2.6rem);
   min-height: 100dvh;
   background: var(--desk-canvas);
   color: var(--desk-ink);
-}
-
-html.dark .workspace-release {
-  --desk-canvas: #101a16;
-  --desk-surface: #192823;
-  --desk-ink: #eff7ef;
-  --desk-muted: #afc3b6;
-  --desk-line: #394d43;
-  --desk-wash: #243b30;
-  --desk-accent: #a6e4c4;
-  --desk-accent-hover: #c2f1d5;
-  --desk-button: #14261e;
-  --desk-focus: #a6e4c4;
 }
 
 .workspace-topbar {

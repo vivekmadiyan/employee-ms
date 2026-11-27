@@ -1,0 +1,62 @@
+@media (max-width: 639px) {
+  .task-hub-table, .task-hub-table tbody, .task-hub-detail, .task-hub-detail > td {
+    display: block;
+  }
+
+  .task-hub-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .4rem .8rem;
+    padding: .9rem 1rem .2rem;
+  }
+
+  .task-hub-row > td {
+    min-width: 0;
+    padding: .2rem 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .task-hub-row > .task-hub-select {
+    position: absolute;
+    inset: 1rem auto auto 1rem;
+    padding: 0;
+  }
+
+  .task-hub-row > .task-hub-summary, .task-hub-actions {
+    grid-column: 1 / -1;
+  }
+
+  .task-hub-row > .task-hub-summary {
+    max-width: none;
+    padding-inline-start: 1.5rem;
+  }
+
+  .task-hub-summary > p {
+    max-width: none;
+    white-space: normal;
+  }
+
+  .task-hub-summary > p:nth-child(2) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .task-hub-meta {
+    display: block;
+    margin-bottom: .24rem;
+    font-size: .68rem;
+    font-weight: 600;
+  }
+
+  .task-hub-actions > div {
+    flex-wrap: wrap;
+  }
+
+  .task-hub-actions button {
+    min-height: 2.75rem;
+    padding: .25rem .55rem;
+  }
+}

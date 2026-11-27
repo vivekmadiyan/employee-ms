@@ -28,3 +28,11 @@ test('Work Focus excludes closed or archived assignments and orders open work by
   ];
   assert.deepEqual(groupFocusTasks(tasks, new Date(2026, 10, 28)).overdue.map(task => task.id), [3, 2, 1]);
 });
+
+test('Work Focus treats the same deadline consistently across a workspace midnight', () => {
+  const now = new Date('2026-11-27T18:45:00Z');
+  const tasks = [{ id: 1, taskDate: '2026-11-27' }, { id: 2, taskDate: '2026-11-28' }];
+  assert.deepEqual(groupFocusTasks(tasks, now, 'UTC').today.map(task => task.id), [1]);
+  assert.deepEqual(groupFocusTasks(tasks, now, 'Asia/Kolkata').overdue.map(task => task.id), [1]);
+  assert.deepEqual(groupFocusTasks(tasks, now, 'Asia/Kolkata').today.map(task => task.id), [2]);
+});

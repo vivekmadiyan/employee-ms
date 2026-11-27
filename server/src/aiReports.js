@@ -62,17 +62,17 @@ export function findExplicitReportRequest(question, today, previousReport) {
   return range ? { kind: 'tasks', ...range } : null;
 }
 
-export async function generateAiReport({ companyId, user, kind, range, question, requestId }) {
+export async function generateAiReport({ companyId, user, kind, range, question, requestId, aiEnabled = true, timeZone = 'UTC' }) {
   if (kind === 'workforce' && user.role !== 'admin') return null;
   const report = kind === 'workforce'
     ? formatWorkforceAiReport(await readWorkforceReport(companyId))
     : formatTaskAiReport(await readTaskReport(companyId, range, {
       employeeId: user.role === 'admin' ? undefined : user.id,
-      includeAssignees: false
+      includeAssignees: false, timeZone
     }), user.role === 'admin');
 
   let analysis = null;
-  if (config.GEMINI_API_KEY || config.GROQ_API_KEY) {
+  if (aiEnabled && (config.GEMINI_API_KEY || config.GROQ_API_KEY)) {
     const modelReport = { ...report, sections: report.sections.filter(section => modelSections.has(section.title)) };
     const result = await generateWorkspaceAnswer({
       apiKey: config.GEMINI_API_KEY, model: config.GEMINI_MODEL, groqKey: config.GROQ_API_KEY,

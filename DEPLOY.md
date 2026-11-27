@@ -16,7 +16,7 @@ The app consists of a Vite frontend, an Express API, and PostgreSQL. Deploy each
 3. Set `DATABASE_URL` to the current provider-generated PostgreSQL connection URI and keep it secret.
 4. Set a unique `JWT_SECRET` of at least 32 characters. Render can generate this value.
 5. Set `CLIENT_URL` and `ALLOWED_ORIGINS` to the exact public frontend origin, without a trailing slash. The blueprint defaults to this project's Vercel URL.
-6. Keep `PGSSL=true` for a managed PostgreSQL provider.
+6. Keep `PGSSL=true` for a managed PostgreSQL provider. The API enforces `sslmode=verify-full` and verifies the database certificate and hostname. Use the provider's DNS hostname and trusted CA.
 7. Deploy; the API creates the required tables and applies the additive task-archive column migration at startup.
 8. Confirm `https://your-api.onrender.com/api/health` reports `{"status":"ok","database":true}`.
 9. To verify the exact backend release, compare the `X-EmployeeMS-Revision` response header from `/api/health/live` with the commit deployed to Render.
@@ -41,15 +41,22 @@ Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transacti
 
 Set `GEMINI_API_KEY` in the Render backend environment. `GEMINI_MODEL` is optional and defaults to `gemini-3.5-flash-lite`. Keep these keys out of frontend variables and Git.
 
-To enable a separate provider when Gemini is unavailable, add a `GROQ_API_KEY` in the same Render service and redeploy. The app uses Groq's `openai/gpt-oss-20b` model. If only Groq is configured, it serves the chat directly. Each enabled provider can receive the current question, the last four exchanges, and up to 100 visible task records (ID, title, due date, status, and priority). Check the provider's data policies and quotas before enabling it for a workspace.
+To enable a separate provider when Gemini is unavailable, add a `GROQ_API_KEY` in the same Render service and redeploy. The app uses Groq's `openai/gpt-oss-20b` model. If only Groq is configured, it serves the chat directly. New workspaces opt in from **Integrations → Workspace settings**. Each enabled provider can receive the current question, the last four exchanges, and up to 24 ranked task records the user can access. Review provider data controls before enabling AI for employee information.
 
-Use **AI chat** to test a task question and a follow-up. Model replies identify the provider and can link to referenced tasks. **Task summaries** use the database directly and do not call a model.
+Use **AI chat** to test a task question and a follow-up. Replies can link to referenced tasks. Built-in task summary prompts use the database directly in both chat and **Task summaries**.
 
 The **AI** tab has a tool picker. Employees can enable **Update task status** for their assignments. Admins can also enable **Create a task** for active teammates. With that tool enabled, active teammate names and IDs are included in the model context so it can resolve assignments. Review the proposed changes, then select **Confirm action** to save through the normal task API. The usual permissions, notifications, and audit trail apply.
 
 **AI chat** and **AI reports** use the same database figures as the standard reports. Ask in chat for a task report, then ask a follow-up to change its dates or explain the results. Employees can report on their own tasks, and admins can report across the workspace and generate a workforce overview. Reports are read-only. The model receives aggregate counts and the report period for analysis. The app shows the verified figures and supports a text download for supported report requests when the provider is unavailable.
 
-Chat history is stored in PostgreSQL and scoped to the signed-in account, workspace, and role. The app retains up to 20 recent chats with 12 turns each. Users can reopen or delete their saved chats. Reopening a chat loads its transcript and report figures. A new draft is required to review a task change again.
+Chat history is stored in PostgreSQL and scoped to the signed-in account, workspace, and role. The app retains up to 20 recent chats with 12 turns each and expires chats after 30 days of inactivity. Users can reopen or delete their saved chats. Reopening a chat loads its transcript and report figures. A new draft is required to review a task change again.
+
+## Account and reporting changes
+
+- Existing browser sessions issued by an earlier release require a fresh sign-in. Changing recovery email requires a verified Brevo sender, the account password, an authenticator code when enabled, and a code received at the new email address.
+- Set the workspace time zone in **Integrations → Workspace settings**. It defaults to UTC and applies to deadline calculations and task reports.
+- Completion activity measures recorded status transitions. Periods before tracking began show unavailable coverage. Existing task summaries still report tasks created in the selected period.
+- Update the `connect-src` origin in `vercel.json` for deployments that use a separate API hostname.
 
 ## Production checks
 

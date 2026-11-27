@@ -1,20 +1,22 @@
-import React, { useId, useRef, useState } from 'react';
+import React, { useContext, useId, useRef, useState } from 'react';
 import { FaArrowRight, FaChartColumn, FaDownload, FaWandMagicSparkles } from 'react-icons/fa6';
 import { generateAiReportApi } from '../../api';
-import { localDateKey } from '../../utils/workFocus';
+import { localDateKey, workspaceDateKey } from '../../utils/workFocus';
+import { encodeCsv } from '../../utils/csv';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import './AIReports.css';
 
 const numberFormat = new Intl.NumberFormat();
 const unavailableAnalysis = 'AI analysis is currently unavailable. The workspace figures below are still available.';
 
-function defaultRange() {
-  const to = new Date();
-  const from = new Date(to);
-  from.setDate(to.getDate() - 29);
-  return { from: localDateKey(from), to: localDateKey(to) };
+function defaultRange(timeZone) {
+  const to = workspaceDateKey(timeZone);
+  const from = new Date(`${to}T00:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - 29);
+  return { from: from.toISOString().slice(0, 10), to };
 }
 
-function downloadReport(report) {
+function downloadReport(report, csv = false) {
   const text = [
     'EmployeeMS AI',
     report.title,
@@ -31,10 +33,15 @@ function downloadReport(report) {
       ...(rows.length ? rows.map(({ label, count }) => `${label}: ${numberFormat.format(count)}`) : ['No records for this report.'])
     ])
   ].join('\r\n');
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  const figures = () => encodeCsv([
+    [report.title, report.period], ['Section', 'Label', 'Count'],
+    ...report.metrics.map(({ label, value }) => ['Verified workspace figures', label, value]),
+    ...report.sections.flatMap(({ title, rows }) => rows.map(({ label, count }) => [title, label, count]))
+  ]);
+  const url = URL.createObjectURL(new Blob([csv ? `\uFEFF${figures()}` : text], { type: csv ? 'text/csv;charset=utf-8' : 'text/plain;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
-  link.download = `employeems-${report.kind}-report-${localDateKey(new Date())}.txt`;
+  link.download = `employeems-${report.kind}-report-${localDateKey(new Date())}.${csv ? 'csv' : 'txt'}`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
@@ -69,9 +76,12 @@ export function ReportResult({ report, inChat = false }) {
           <Title id={titleId} className="ai-report-title">{report.title}</Title>
           <p>{report.period}</p>
         </div>
-        <button type="button" className="ai-quiet" onClick={() => downloadReport(report)}>
-          <FaDownload aria-hidden="true" /> Download report
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="ai-quiet" onClick={() => downloadReport(report)}>
+            <FaDownload aria-hidden="true" /> Download report
+          </button>
+          <button type="button" className="ai-quiet" onClick={() => downloadReport(report, true)}>Download CSV</button>
+        </div>
       </div>
       <section className="ai-report-insight" aria-labelledby={analysisId}>
         <Heading id={analysisId} className="ai-report-insight-heading"><FaWandMagicSparkles aria-hidden="true" /> EmployeeMS AI analysis</Heading>
@@ -96,19 +106,21 @@ export function ReportResult({ report, inChat = false }) {
 }
 
 export default function AIReports({ isAdmin, hidden }) {
+  const { settings } = useContext(WorkspaceSettingsContext);
   const [selectedKind, setSelectedKind] = useState('tasks');
-  const [range, setRange] = useState(defaultRange);
+  const [range, setRange] = useState(null);
+  const selectedRange = range ?? defaultRange(settings.timeZone);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const generating = useRef(false);
   const kind = isAdmin ? selectedKind : 'tasks';
-  const validRange = Boolean(range.from && range.to && range.from <= range.to);
+  const validRange = Boolean(selectedRange.from && selectedRange.to && selectedRange.from <= selectedRange.to);
   const canGenerate = !loading && (kind === 'workforce' || validRange);
 
   function updateRange(event) {
     const { name, value } = event.target;
-    setRange(current => ({ ...current, [name]: value }));
+    setRange({ ...selectedRange, [name]: value });
     setReport(null);
     setError('');
   }
@@ -127,7 +139,7 @@ export default function AIReports({ isAdmin, hidden }) {
     setError('');
     setReport(null);
     try {
-      const payload = kind === 'tasks' ? { kind, ...range } : { kind };
+      const payload = kind === 'tasks' ? { kind, ...selectedRange } : { kind };
       setReport(await generateAiReportApi(payload));
     } catch (requestError) {
       setError(requestError.message || 'Could not generate the report.');
@@ -162,11 +174,11 @@ export default function AIReports({ isAdmin, hidden }) {
             <>
               <label>
                 <span>From</span>
-                <input type="date" name="from" required value={range.from} max={range.to || undefined} disabled={loading} onChange={updateRange} />
+                <input type="date" name="from" required value={selectedRange.from} max={selectedRange.to || undefined} disabled={loading} onChange={updateRange} />
               </label>
               <label>
                 <span>To</span>
-                <input type="date" name="to" required value={range.to} min={range.from || undefined} disabled={loading} onChange={updateRange} />
+                <input type="date" name="to" required value={selectedRange.to} min={selectedRange.from || undefined} disabled={loading} onChange={updateRange} />
               </label>
             </>
           )}

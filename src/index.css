@@ -35,6 +35,37 @@
 }
 
 @layer base {
+  :root {
+    --ui-canvas: #f4f6f1;
+    --ui-surface: #fff;
+    --ui-ink: #192921;
+    --ui-muted: #4e6357;
+    --ui-line: #d7e2d9;
+    --ui-wash: #e7f0e8;
+    --ui-accent: #165a45;
+    --ui-accent-hover: #104634;
+    --ui-on-accent: #fff;
+    --ui-focus: #187652;
+    --ui-danger: #962f26;
+    --ui-danger-bg: #fbe9e3;
+  }
+
+  html.dark {
+    color-scheme: dark;
+    --ui-canvas: #101a16;
+    --ui-surface: #192823;
+    --ui-ink: #eff7ef;
+    --ui-muted: #b7cbbf;
+    --ui-line: #3b5146;
+    --ui-wash: #243b30;
+    --ui-accent: #a6e4c4;
+    --ui-accent-hover: #c2f1d5;
+    --ui-on-accent: #14261e;
+    --ui-focus: #a6e4c4;
+    --ui-danger: #ffc4b6;
+    --ui-danger-bg: #492a28;
+  }
+
   html, body, #root {
     min-height: 100%;
   }
@@ -46,8 +77,8 @@
   }
 
   body {
-    background-color: #f8fafc;
-    color: #1e293b;
+    background-color: var(--ui-canvas);
+    color: var(--ui-ink);
     min-width: 320px;
     margin: 0;
     font-size: 14px;
@@ -58,66 +89,74 @@
 
   /* ── Dark mode overrides ── */
   html.dark body {
-    background-color: #0f172a;
-    color: #e2e8f0;
+    background-color: var(--ui-canvas);
+    color: var(--ui-ink);
   }
 
   html.dark .dashboard-shell,
   html.dark .bg-\[\#f8fafc\] {
-    background-color: #0f172a !important;
+    background-color: var(--ui-canvas) !important;
   }
 
   html.dark .dashboard-card,
   html.dark .bg-white {
-    background-color: #1e293b !important;
-    border-color: #334155 !important;
-    color: #e2e8f0;
+    background-color: var(--ui-surface) !important;
+    border-color: var(--ui-line) !important;
+    color: var(--ui-ink);
   }
 
   html.dark .bg-slate-50,
   html.dark .bg-slate-50\/40,
   html.dark .bg-slate-50\/60,
   html.dark .bg-slate-50\/70 {
-    background-color: #1e293b !important;
+    background-color: var(--ui-surface) !important;
   }
 
   html.dark .border-slate-100,
   html.dark .border-slate-200,
   html.dark .border-slate-200\/80,
   html.dark .border-slate-200\/90 {
-    border-color: #334155 !important;
+    border-color: var(--ui-line) !important;
   }
 
-  html.dark .text-slate-900 { color: #f1f5f9 !important; }
-  html.dark .text-slate-800 { color: #e2e8f0 !important; }
-  html.dark .text-slate-700 { color: #cbd5e1 !important; }
-  html.dark .text-slate-600 { color: #94a3b8 !important; }
-  html.dark .text-slate-500 { color: #a8b6ca !important; }
-  html.dark .text-slate-400 { color: #94a3b8 !important; }
+  html.dark :is(.text-slate-800, .text-slate-900) { color: var(--ui-ink) !important; }
+  html.dark :is(.text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700) { color: var(--ui-muted) !important; }
+  html.dark .bg-slate-100 { background-color: var(--ui-wash) !important; }
 
-  html.dark .bg-slate-100 { background-color: #334155 !important; }
-  html.dark .text-slate-600 { color: #94a3b8 !important; }
+  html.dark :is(.bg-indigo-50, .bg-indigo-50\/30, .bg-indigo-50\/40, .bg-indigo-50\/50, .bg-indigo-50\/70, .bg-indigo-100) { background-color: var(--ui-wash); }
+  html.dark :is(.text-indigo-500, .text-indigo-600, .text-indigo-700, .text-indigo-800) { color: var(--ui-accent); }
+  html.dark :is(.border-indigo-100, .border-indigo-100\/70) { border-color: var(--ui-line); }
+  html.dark :is(.bg-rose-50, .bg-rose-50\/70, .bg-rose-100) { background-color: var(--ui-danger-bg); }
+  html.dark :is(.text-rose-500, .text-rose-600, .text-rose-700, .text-rose-800) { color: var(--ui-danger); }
+  html.dark :is(.bg-amber-50, .bg-amber-50\/70, .bg-amber-50\/80) { background-color: #3e321e; }
+  html.dark :is(.text-amber-500, .text-amber-700, .text-amber-800, .text-amber-900, .text-amber-950) { color: #f7d596; }
+  html.dark :is(.bg-emerald-50, .bg-emerald-50\/70, .bg-emerald-50\/80) { background-color: #203a2e; }
+  html.dark :is(.text-emerald-500, .text-emerald-600, .text-emerald-700, .text-emerald-800, .text-emerald-900, .text-emerald-950) { color: #a6e4c4; }
+  html.dark .bg-sky-50 { background-color: #233742; }
+  html.dark .text-sky-700 { color: #b6dff4; }
+  html.dark :is(.hover\:bg-indigo-50, .hover\:bg-slate-50, .hover\:bg-slate-100):hover { background-color: var(--ui-wash); }
+  html.dark :is(.hover\:bg-rose-50, .hover\:bg-rose-100):hover { background-color: var(--ui-danger-bg); }
 
   html.dark input,
   html.dark select,
   html.dark textarea {
-    background-color: #0f172a !important;
-    border-color: #334155 !important;
-    color: #e2e8f0 !important;
+    background-color: var(--ui-canvas) !important;
+    border-color: var(--ui-line) !important;
+    color: var(--ui-ink) !important;
   }
 
   html.dark .rounded-2xl.border.border-slate-200\/90 {
-    background-color: #1e293b !important;
-    border-color: #334155 !important;
+    background-color: var(--ui-surface) !important;
+    border-color: var(--ui-line) !important;
   }
 
   html.dark nav.bg-white\/70 {
-    background-color: rgba(30,41,59,0.85) !important;
+    background-color: var(--ui-surface) !important;
   }
 
   html.dark .dashboard-topbar {
-    background-color: #1e293b !important;
-    border-color: #334155 !important;
+    background-color: var(--ui-surface) !important;
+    border-color: var(--ui-line) !important;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -127,6 +166,11 @@
 
   button, input, select, textarea {
     font-family: inherit;
+  }
+
+  :is(button, a, input, select, textarea, summary, [tabindex="0"]):focus-visible {
+    outline: 2px solid var(--ui-focus);
+    outline-offset: 2px;
   }
 }
 

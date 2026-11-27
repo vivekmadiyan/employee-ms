@@ -46,6 +46,10 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   expect(registered.status()).toBe(201);
   const admin = await registered.json();
   const headers = { Authorization: `Bearer ${admin.token}` };
+  const workspaceSettings = await page.request.put(`${api}/workspace/settings`, {
+    headers, data: { timeZone: 'UTC', aiEnabled: true }
+  });
+  expect(workspaceSettings.ok()).toBeTruthy();
 
   const invite = await page.request.post(`${api}/invitations`, {
     headers,
@@ -318,7 +322,13 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
     }
   });
   expect(followUp.status()).toBe(201);
-  await page.getByRole('button', { name: 'Log out' }).click();
+  const signOut = page.getByRole('button', { name: 'Log out' });
+  const [logoutResponse] = await Promise.all([
+    page.waitForResponse(result => result.url() === `${api}/auth/logout`),
+    signOut.click()
+  ]);
+  expect(logoutResponse.status()).toBe(204);
+  await expect(signOut).toHaveCount(0);
   await page.goto('/');
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await page.getByLabel('Work Email').fill(admin.user.email);
@@ -436,11 +446,22 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(page.getByText('Admin follow-up', { exact: true })).toHaveCount(0);
 
   for (const status of ['active', 'failed']) {
-    const update = await page.request.patch(`${api}/tasks/${laterTaskId}/status`, { headers: employeeHeaders, data: { status } });
+    const update = await page.request.patch(`${api}/tasks/${laterTaskId}/status`, { headers, data: { status } });
     expect(update.ok()).toBe(true);
   }
   await page.getByRole('button', { name: 'Show all tasks' }).click();
   const laterTask = page.getByRole('row').filter({ hasText: 'A later handoff with the same title' });
   await laterTask.getByRole('button', { name: 'Resume work' }).click();
   await expect(laterTask.getByText('In progress')).toBeVisible();
+  const taskTable = page.getByRole('table', { name: 'Matching tasks' });
+  expect(await taskTable.evaluate(table => table.scrollWidth <= table.clientWidth)).toBe(true);
+
+  const taskPriorityFilter = page.getByLabel('Filter by priority');
+  await taskPriorityFilter.selectOption('high');
+  await page.getByRole('button', { name: 'Save current view' }).click();
+  await taskPriorityFilter.selectOption('low');
+  await page.getByRole('button', { name: 'Restore saved view' }).click();
+  await expect(taskPriorityFilter).toHaveValue('high');
+  await page.getByRole('button', { name: 'Clear saved view' }).click();
+  await expect(page.getByRole('button', { name: 'Restore saved view' })).toHaveCount(0);
 });

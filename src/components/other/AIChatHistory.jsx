@@ -82,7 +82,7 @@ export default function AIChatHistory({ currentId, onOpen, onDelete, onClose }) 
           disabled={Boolean(pending)} onClick={() => dialog.current.close()}><FaXmark aria-hidden="true" /></button>
       </div>
       <div className="ai-history-content" aria-busy={Boolean(pending)}>
-        <p className="ai-history-retention">Private to your account. Up to 20 chats, with the latest 12 exchanges in each.</p>
+        <p className="ai-history-retention">Private to your account. Up to 20 chats with 12 exchanges each. Inactive chats expire after 30 days.</p>
         {error && <p className="ai-error" role="alert">{error}</p>}
         {chats === null && (error ? (
           <button type="button" className="ai-quiet ai-history-retry" onClick={() => {

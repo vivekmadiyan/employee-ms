@@ -1,29 +1,15 @@
 .entry-surface, .login-shell {
-  --entry-bg: #f4f6f1;
-  --entry-ink: #192921;
-  --entry-muted: #4d6256;
-  --entry-line: #d7e2d9;
-  --entry-card: #fff;
-  --entry-wash: #e7f1e8;
-  --entry-brand: #165a45;
-  --entry-on-brand: #fff;
-  --entry-hover: #114736;
-  --entry-urgent: #9c382a;
-  --entry-urgent-bg: #fbe9e3;
-}
-
-html.dark :is(.entry-surface, .login-shell) {
-  --entry-bg: #101a16;
-  --entry-ink: #eff7ef;
-  --entry-muted: #afc3b6;
-  --entry-line: #3a5145;
-  --entry-card: #192823;
-  --entry-wash: #243c31;
-  --entry-brand: #a6e4c4;
-  --entry-on-brand: #14261e;
-  --entry-hover: #c2f1d5;
-  --entry-urgent: #ffbaab;
-  --entry-urgent-bg: #49302a;
+  --entry-bg: var(--ui-canvas);
+  --entry-ink: var(--ui-ink);
+  --entry-muted: var(--ui-muted);
+  --entry-line: var(--ui-line);
+  --entry-card: var(--ui-surface);
+  --entry-wash: var(--ui-wash);
+  --entry-brand: var(--ui-accent);
+  --entry-on-brand: var(--ui-on-accent);
+  --entry-hover: var(--ui-accent-hover);
+  --entry-urgent: var(--ui-danger);
+  --entry-urgent-bg: var(--ui-danger-bg);
 }
 
 .entry-surface {

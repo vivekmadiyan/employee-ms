@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { pool, query } from './db.js';
 
 const ownership = 'company_id=$1 AND user_id=$2 AND owner_role=$3';
+const recent = "updated_at > NOW() - INTERVAL '30 days'";
 const ownerParams = user => [user.companyId, user.id, user.role];
 const listFields = 'id, title, updated_at AS "updatedAt"';
 const conversationLimit = 20;
@@ -9,14 +10,14 @@ const turnLimit = 12;
 
 export async function listAiConversations(user) {
   const result = await query(
-    `SELECT ${listFields} FROM ai_conversations WHERE ${ownership} ORDER BY updated_at DESC, id DESC LIMIT $4`,
+    `SELECT ${listFields} FROM ai_conversations WHERE ${ownership} AND ${recent} ORDER BY updated_at DESC, id DESC LIMIT $4`,
     [...ownerParams(user), conversationLimit]
   );
   return result.rows;
 }
 
 export async function readAiConversation(user, id) {
-  const result = await query(`SELECT ${listFields}, turns FROM ai_conversations WHERE ${ownership} AND id=$4`, [...ownerParams(user), id]);
+  const result = await query(`SELECT ${listFields}, turns FROM ai_conversations WHERE ${ownership} AND id=$4 AND ${recent}`, [...ownerParams(user), id]);
   return result.rows[0];
 }
 
@@ -37,7 +38,7 @@ export async function saveAiTurn(user, id, question, reply) {
          SELECT jsonb_agg(value ORDER BY position)
          FROM jsonb_array_elements(turns || $5::jsonb) WITH ORDINALITY AS turn(value, position)
          WHERE position > jsonb_array_length(turns || $5::jsonb) - $6::int
-       ), updated_at=clock_timestamp() WHERE ${ownership} AND id=$4 RETURNING id`,
+       ), updated_at=clock_timestamp() WHERE ${ownership} AND id=$4 AND ${recent} RETURNING id`,
       [...owner, id, turns, turnLimit]
     );
     return result.rows[0]?.id;
@@ -69,3 +70,5 @@ export async function saveAiTurn(user, id, question, reply) {
     client.release();
   }
 }
+
+export const purgeExpiredAiConversations = () => query(`DELETE FROM ai_conversations WHERE NOT (${recent})`);

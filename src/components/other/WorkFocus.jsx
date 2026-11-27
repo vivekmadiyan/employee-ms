@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import {
   FaArrowRight, FaCalendarDay, FaCalendarWeek, FaCircleCheck, FaClock, FaCrosshairs
 } from 'react-icons/fa6';
 import { groupFocusTasks } from '../../utils/workFocus';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import './WorkFocus.css';
 
 const buckets = [
@@ -16,7 +17,8 @@ const previewLimit = 5;
 
 export default function WorkFocus({ admin = false, employees = [], tasks = [], onOpenTasks }) {
   const [selected, setSelected] = useState(null);
-  const groups = groupFocusTasks(admin ? employees.flatMap(employee => employee.tasks || []) : tasks);
+  const { settings } = useContext(WorkspaceSettingsContext);
+  const groups = groupFocusTasks(admin ? employees.flatMap(employee => employee.tasks || []) : tasks, new Date(), settings.timeZone);
   const owners = new Map(employees.map(employee => [employee.id, employee.firstName]));
   const bucket = buckets.find(({ id }) => id === selected)
     || buckets.find(({ id }) => groups[id].length > 0) || buckets[0];
