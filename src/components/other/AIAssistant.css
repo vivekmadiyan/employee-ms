@@ -48,6 +48,8 @@ html.dark .ai-panel {
 }
 .ai-symbol { width: 2.6rem; border: 1px solid #b1f3cb63; border-radius: .85rem; color: #c0f3d3; background: #b9f1d324; box-shadow: inset 0 0 1rem #acf7c71e; }
 .ai-title { flex: 1; min-width: 0; }
+.ai-kicker { display: flex; align-items: center; gap: .38rem; margin-bottom: .28rem; color: var(--ai-banner-note); font-size: .62rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.ai-status-dot { width: .4rem; height: .4rem; border-radius: 50%; background: #9fe1c0; box-shadow: 0 0 0 .2rem #9fe1c022; }
 .ai-title h2 { font-size: clamp(1rem, 1.8vw, 1.27rem); color: var(--ai-banner-ink); font-weight: 850; line-height: 1.15; }
 .ai-title p { margin-top: .28rem; color: var(--ai-banner-note); font-size: .77rem; line-height: 1.33; }
 .ai-header-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
@@ -68,7 +70,7 @@ html.dark .ai-panel {
 .ai-chat.ai-chat--reports { grid-template-rows: auto minmax(0, 1fr); }
 .ai-modes {
   display: flex; flex-wrap: wrap; gap: .3rem; padding: .45rem clamp(.85rem, 2.1vw, 1.5rem);
-  border-bottom: 1px solid var(--ai-line); background: var(--ai-paper);
+  border-bottom: 1px solid var(--ai-line); background: linear-gradient(180deg, var(--ai-paper), color-mix(in srgb, var(--ai-paper) 92%, var(--ai-rail)));
 }
 .ai-modes button {
   display: inline-flex; align-items: center; gap: .48rem; min-height: 39px;
@@ -78,13 +80,15 @@ html.dark .ai-panel {
 .ai-modes button:hover { border-color: var(--desk-line); color: var(--desk-accent); background: var(--ai-rail); }
 
 .ai-log { min-height: 0; overflow-y: auto; padding: clamp(.6rem, 2vw, 1.4rem); overscroll-behavior: contain; }
+.ai-log:not(.ai-log-empty) { background: radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--ai-tint) 38%, transparent), transparent 28rem); }
 .ai-log-empty { display: flex; }
 .ai-log:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: -3px; }
 .ai-welcome { width: min(100%, 46rem); margin: auto; container-type: inline-size; }
 .ai-welcome-hero {
   position: relative; isolation: isolate; overflow: hidden; padding: clamp(1rem, 3.2vw, 2.35rem);
   border: 1px solid var(--ai-line); border-radius: 1.05rem;
-  background: radial-gradient(ellipse at 88% 10%, var(--ai-tint), transparent 75%), var(--ai-rail);
+  background: radial-gradient(ellipse at 88% 10%, color-mix(in srgb, var(--ai-tint) 90%, transparent), transparent 75%), linear-gradient(135deg, var(--ai-rail), var(--ai-paper));
+  box-shadow: 0 24px 50px -42px var(--desk-ink);
 }
 .ai-welcome-hero::after {
   position: absolute; z-index: -1; inset: 0; content: ''; pointer-events: none;
@@ -96,6 +100,7 @@ html.dark .ai-panel {
   border-radius: .85rem; background: var(--ai-paper); color: var(--desk-accent); font-size: 1.18rem;
   box-shadow: 0 10px 20px -15px #175b45ab;
 }
+.ai-welcome-eyebrow { margin: 0 0 .45rem !important; color: var(--desk-accent) !important; font-size: .66rem !important; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
 .ai-welcome h3 { max-width: 20ch; color: var(--desk-ink); font-size: clamp(1.65rem, 3.25vw, 2.72rem); font-weight: 850; letter-spacing: -.062em; line-height: 1.04; }
 .ai-welcome p { margin-top: .55rem; color: var(--desk-muted); font-size: .85rem; }
 .ai-starters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: .65rem; }
@@ -120,9 +125,9 @@ html.dark .ai-panel {
 .ai-user {
   width: fit-content; max-width: min(90%, 38rem); margin: 0 0 .55rem auto; padding: .65rem .85rem;
   border: 1px solid var(--ai-line); border-radius: 1rem 1rem .25rem 1rem;
-  background: var(--ai-tint); color: var(--desk-ink); overflow-wrap: anywhere; white-space: pre-wrap;
+  background: linear-gradient(135deg, var(--ai-tint), color-mix(in srgb, var(--ai-tint) 70%, var(--ai-paper))); color: var(--desk-ink); overflow-wrap: anywhere; white-space: pre-wrap;
 }
-.ai-reply { max-width: 45rem; padding: .85rem; border: 1px solid var(--ai-line); border-radius: .25rem 1rem 1rem; color: var(--desk-ink); }
+.ai-reply { max-width: 45rem; padding: .95rem 1rem; border: 1px solid var(--ai-line); border-radius: .25rem 1rem 1rem; background: color-mix(in srgb, var(--ai-paper) 96%, var(--ai-rail)); color: var(--desk-ink); box-shadow: 0 12px 30px -28px var(--desk-ink); }
 .ai-reply-by {
   display: inline-flex; align-items: center; gap: .35rem; margin-bottom: .4rem;
   color: var(--desk-accent); font-size: .75rem; font-weight: 800;
@@ -189,7 +194,7 @@ html.dark .ai-error { color: #ffb6a6; background: #49302a; }
   text-align: left; font-size: .8rem; font-weight: 750;
 }
 .ai-options button:hover { background: var(--ai-tint); }
-.ai-tools { min-width: 0; min-height: 0; overflow: auto; padding: clamp(.8rem, 1.7vw, 1.2rem); border-left: 1px solid var(--ai-line); background: var(--ai-rail); }
+.ai-tools { min-width: 0; min-height: 0; overflow: auto; padding: clamp(.8rem, 1.7vw, 1.2rem); border-left: 1px solid var(--ai-line); background: linear-gradient(180deg, var(--ai-rail), color-mix(in srgb, var(--ai-rail) 82%, var(--ai-paper))); }
 .ai-tools--hidden { display: none; }
 .ai-tools-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .4rem; }
 .ai-tools h3 { display: flex; align-items: center; gap: .42rem; color: var(--desk-ink); font-size: .94rem; font-weight: 850; }
@@ -197,6 +202,8 @@ html.dark .ai-error { color: #ffb6a6; background: #49302a; }
 .ai-tool-total { padding: .2rem .45rem; border-radius: 999px; color: var(--desk-accent); background: var(--ai-tint); font-size: .68rem; font-weight: 750; }
 .ai-tool-list { display: grid; gap: .6rem; margin-top: .85rem; }
 .ai-tool-list li { min-width: 0; padding: .7rem; border: 1px solid var(--ai-line); border-radius: .85rem; background: var(--ai-paper); }
+.ai-tool-list li { box-shadow: 0 10px 26px -26px var(--desk-ink); transition: border-color .18s, transform .18s, box-shadow .18s; }
+.ai-tool-list li:hover { transform: translateY(-1px); box-shadow: 0 14px 28px -24px var(--desk-ink); }
 .ai-tool-list li[data-enabled="true"] { border-color: color-mix(in srgb, var(--desk-accent) 48%, var(--ai-line)); }
 .ai-tool-list label {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .44rem;

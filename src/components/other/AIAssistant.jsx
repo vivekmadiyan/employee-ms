@@ -237,6 +237,7 @@ export default function AIAssistant({ onOpenTask }) {
       <header className="ai-panel-header">
         <span className="ai-symbol"><FaWandMagicSparkles aria-hidden="true" /></span>
         <div className="ai-title">
+          <span className="ai-kicker"><span className="ai-status-dot" aria-hidden="true" /> Workspace intelligence</span>
           <h2>EmployeeMS AI</h2>
           <p>Plan work, prepare task changes, and generate reports.</p>
         </div>
@@ -280,6 +281,7 @@ export default function AIAssistant({ onOpenTask }) {
                   <div className="ai-welcome">
                     <div className="ai-welcome-hero">
                       <span className="ai-welcome-mark"><FaWandMagicSparkles aria-hidden="true" /></span>
+                      <p className="ai-welcome-eyebrow">Your work, in context</p>
                       <h3>Start with what matters.</h3>
                       <p>Ask a question or pick a starting point.</p>
                     </div>
