@@ -36,6 +36,8 @@ process.env.ALLOWED_ORIGINS = 'https://employee-ms.test';
 process.env.BREVO_API_KEY = 'test-brevo-key';
 process.env.BREVO_SENDER_EMAIL = 'no-reply@example.test';
 process.env.METRICS_TOKEN = 'test-metrics-token-that-is-at-least-32-chars';
+process.env.GEMINI_API_KEY = 'test-gemini-key';
+process.env.GEMINI_MODEL = 'gemini-2.5-flash';
 
 const { app } = await import('./server.js');
 const { createTotpCode, decryptSecret, decryptTotpSecret } = await import('./mfa.js');
@@ -82,6 +84,9 @@ const normalize = sql => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 function installQueryMock() {
   mocks.query.mockImplementation(async (sql, params = []) => {
     const text = normalize(sql);
+    if (text.startsWith('select task_title as title, task_date as due_date') && Number(params[0]) === company.id) {
+      return result([]);
+    }
     if (text.startsWith('insert into audit_events(')) {
       if (failAuditWrites) throw new Error('audit storage unavailable');
       auditEvents.push({
@@ -1034,6 +1039,34 @@ beforeEach(() => {
 });
 
 describe('authenticated API workflows', () => {
+  it('answers with Flash-Lite when Gemini rejects the old configured model', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 }))
+      .mockResolvedValueOnce(Response.json({
+        candidates: [{ content: { parts: [{ text: 'No tasks need attention.' }] } }]
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const response = await request(app).post('/api/ai/ask')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ question: 'What needs attention this week?' })
+        .expect(200);
+
+      expect(response.body).toEqual({ answer: 'No tasks need attention.' });
+      expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+        '/v1beta/models/gemini-2.5-flash:generateContent',
+        '/v1beta/models/gemini-3.5-flash-lite:generateContent'
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('exposes low-cardinality Prometheus metrics only with a configured secret', async () => {
     await request(app).get('/api/metrics').expect(404);
     const metrics = await request(app).get('/api/metrics')

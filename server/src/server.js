@@ -9,7 +9,7 @@ import crypto from 'crypto';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { initialiseDatabase, pool, query } from './db.js';
-import { allowedOrigins, config } from './config.js';
+import { allowedOrigins, config, defaultGeminiModel } from './config.js';
 import { auth, adminOnly } from './middleware/auth.js';
 import {
   sendInvitationEmail,
@@ -490,7 +490,19 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
     const taskParams = req.user.role === 'admin' ? [req.company.id] : [req.company.id, req.user.id];
     const tasks = (await query(`SELECT task_title AS title, task_date AS due_date, status, priority FROM tasks WHERE ${taskScope} AND archived_at IS NULL ORDER BY task_date ASC LIMIT 100`, taskParams)).rows;
     const prompt = `You are the EmployeeMS workspace assistant. Answer in 2-5 short sentences with practical next steps. Use only the supplied task data. Never invent names, numbers, dates, or permissions. If the data does not answer the question, say so. User question: ${question}\nTask data: ${JSON.stringify(tasks)}`;
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(config.GEMINI_API_KEY)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+    const generateContent = model => fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.GEMINI_API_KEY },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      }
+    );
+    let response = await generateContent(config.GEMINI_MODEL);
+    if (response.status === 404 && config.GEMINI_MODEL === 'gemini-2.5-flash') {
+      await response.body?.cancel();
+      response = await generateContent(defaultGeminiModel);
+    }
     const data = await response.json();
     if (!response.ok) {
       const providerMessage = typeof data.error?.message === 'string' ? data.error.message : 'The AI provider rejected the request.';
