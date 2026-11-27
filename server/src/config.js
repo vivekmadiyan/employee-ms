@@ -15,7 +15,9 @@ const schema = z.object({
   TRUST_PROXY: booleanFromEnv,
   BREVO_API_KEY: z.string().optional(),
   BREVO_SENDER_EMAIL: z.string().email().optional(),
-  BREVO_SENDER_NAME: z.string().trim().min(1).default('EmployeeMS')
+  BREVO_SENDER_NAME: z.string().trim().min(1).default('EmployeeMS'),
+  GEMINI_API_KEY: z.string().trim().min(1).optional(),
+  GEMINI_MODEL: z.string().trim().min(1).default('gemini-2.5-flash')
 });
 
 const parsed = schema.safeParse(process.env);

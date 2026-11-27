@@ -6,6 +6,7 @@ import Header from '../other/Header';
 import TaskListNumbers from '../other/TaskListNumbers';
 import TaskList from '../TaskList/TaskList';
 import LeaveManagement from '../other/LeaveManagement';
+import AIAssistant from '../other/AIAssistant';
 
 const EmployeeDashboard = (props) => {
   const { userData, loading, dataError, refresh, currentUser } = useContext(AuthContext);
@@ -83,6 +84,7 @@ const EmployeeDashboard = (props) => {
           </div>
         ) : (
           <div className="space-y-6">
+            <AIAssistant />
             {/* Metric counters */}
             <TaskListNumbers data={employeeData} />
 

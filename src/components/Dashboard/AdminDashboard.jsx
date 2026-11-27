@@ -25,6 +25,7 @@ import LeaveManagement from '../other/LeaveManagement';
 import SlackIntegration from '../other/SlackIntegration';
 import OffboardingManagement from '../other/OffboardingManagement';
 import WorkforceReports from '../other/WorkforceReports';
+import AIAssistant from '../other/AIAssistant';
 
 const AdminDashboard = (props) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
@@ -214,6 +215,7 @@ const AdminDashboard = (props) => {
             {/* OVERVIEW TAB */}
             {activeTab === 'overview' && (
               <div className="space-y-6 animate-fade-in">
+                <AIAssistant />
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
                   <div className="lg:col-span-5">
                     <CreateTask />

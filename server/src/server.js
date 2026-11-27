@@ -481,6 +481,23 @@ const schemas = {
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
 app.get('/api/health/live', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/health', async (req, res) => { try { await query('SELECT 1'); res.json({ status: 'ok', database: true }); } catch { res.status(503).json({ status: 'error', database: false }); } });
+const aiLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'AI request limit reached. Try again later.' } });
+app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
+  try {
+    const { question } = body(z.object({ question: z.string().trim().min(3).max(500) }), req.body);
+    if (!config.GEMINI_API_KEY) return res.status(503).json({ message: 'AI is not configured yet.' });
+    const taskScope = req.user.role === 'admin' ? 'company_id=$1' : 'company_id=$1 AND assigned_to=$2';
+    const taskParams = req.user.role === 'admin' ? [req.company.id] : [req.company.id, req.user.id];
+    const tasks = (await query(`SELECT task_title AS title, task_date AS due_date, status, priority FROM tasks WHERE ${taskScope} AND archived_at IS NULL ORDER BY task_date ASC LIMIT 100`, taskParams)).rows;
+    const prompt = `You are the EmployeeMS workspace assistant. Answer in 2-5 short sentences with practical next steps. Use only the supplied task data. Never invent names, numbers, dates, or permissions. If the data does not answer the question, say so. User question: ${question}\nTask data: ${JSON.stringify(tasks)}`;
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(config.GEMINI_API_KEY)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+    const data = await response.json();
+    if (!response.ok) return res.status(response.status === 429 ? 429 : 502).json({ message: 'AI provider request failed. Try again later.' });
+    const answer = data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
+    if (!answer) return res.status(502).json({ message: 'AI returned an empty response.' });
+    res.json({ answer });
+  } catch (error) { next(error); }
+});
 app.get('/api/metrics', (req, res) => {
   if (!config.METRICS_TOKEN) return res.sendStatus(404);
   const expected = Buffer.from(`Bearer ${config.METRICS_TOKEN}`);
