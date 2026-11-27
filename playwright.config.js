@@ -42,7 +42,8 @@ export default defineConfig({
         JWT_SECRET: jwtSecret,
         CLIENT_URL: clientUrl,
         ALLOWED_ORIGINS: clientUrl,
-        GEMINI_API_KEY: ''
+        GEMINI_API_KEY: '',
+        GROQ_API_KEY: ''
       }
     },
     {

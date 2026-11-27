@@ -115,7 +115,7 @@ const EmployeeDashboard = (props) => {
                 <div className="workspace-jump" tabIndex={-1} ref={taskListRef} aria-label="Assigned Tasks">
                   <TaskList data={employeeData} focusRequest={focusRequest} />
                 </div>
-                <AIAssistant />
+                <AIAssistant onOpenTask={openTask} />
               </div>
             ) : activeTab === 'leaves' ? (
               <div className="animate-fade-in">

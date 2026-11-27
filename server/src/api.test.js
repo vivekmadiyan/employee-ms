@@ -38,6 +38,7 @@ process.env.BREVO_SENDER_EMAIL = 'no-reply@example.test';
 process.env.METRICS_TOKEN = 'test-metrics-token-that-is-at-least-32-chars';
 process.env.GEMINI_API_KEY = 'test-gemini-key';
 process.env.GEMINI_MODEL = 'gemini-2.5-flash';
+process.env.GROQ_API_KEY = '';
 
 const { app } = await import('./server.js');
 const { config } = await import('./config.js');
@@ -1058,7 +1059,9 @@ describe('authenticated API workflows', () => {
         .send({ question: 'What needs attention this week?' })
         .expect(200);
 
-      expect(response.body).toEqual({ answer: 'No tasks need attention.', source: 'gemini' });
+      expect(response.body).toEqual({
+        answer: 'No tasks need attention.', source: 'gemini', model: 'gemini-3.5-flash-lite', references: []
+      });
       expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
         '/v1beta/models/gemini-2.5-flash:generateContent',
         '/v1beta/models/gemini-3.5-flash-lite:generateContent'
@@ -1078,7 +1081,7 @@ describe('authenticated API workflows', () => {
       { title: 'Review the handoff', due_date: '2026-11-25', status: 'active', total: 1 }
     ]));
     mocks.query.mockImplementation((sql, params) =>
-      sql.includes('COUNT(*) OVER()') ? snapshotQuery(sql, params) : defaultQuery(sql, params));
+      sql.includes('AS total') && sql.includes('COUNT(*) OVER()') ? snapshotQuery(sql, params) : defaultQuery(sql, params));
     const oldModel = config.GEMINI_MODEL;
     config.GEMINI_MODEL = 'gemini-3.5-flash-lite';
     const fetchMock = vi.fn().mockImplementation(async () => new Response('Overloaded', { status: 503 }));
@@ -1107,7 +1110,7 @@ describe('authenticated API workflows', () => {
     }
   });
 
-  it('does not retry a quota error or substitute a summary for an arbitrary question', async () => {
+  it('does not substitute a task summary for a chat reply when quota runs out', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'admin@example.test',
       password: 'correct-horse-battery-123'
@@ -1118,11 +1121,56 @@ describe('authenticated API workflows', () => {
     try {
       const response = await request(app).post('/api/ai/ask')
         .set('Authorization', `Bearer ${login.body.token}`)
-        .send({ question: 'Why is this project taking so long?' })
+        .send({ question: 'Which tasks are overdue?', mode: 'chat' })
         .expect(429);
       expect(response.body.message).toContain('AI usage limit reached');
       expect(fetchMock).toHaveBeenCalledOnce();
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps conversation context and validates task references during provider failover', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const defaultQuery = mocks.query.getMockImplementation();
+    const taskQuery = vi.fn().mockResolvedValue(result([
+      { id: 31, title: 'Review checklist', due_date: '2026-11-27', status: 'active', priority: 'high', scope_total: 1 }
+    ]));
+    mocks.query.mockImplementation((sql, params) => sql.includes('AS scope_total') ? taskQuery(sql, params) : defaultQuery(sql, params));
+    config.GROQ_API_KEY = 'test-groq-key';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('Rate limited', { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: 'Start with the checklist [T31]. [T999]' } }] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const response = await request(app).post('/api/ai/ask')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({
+          mode: 'chat', question: 'Which one should I start with?',
+          history: [{ question: 'What is open?', answer: 'The checklist is still open.' }]
+        })
+        .expect(200);
+      expect(response.body).toEqual({
+        answer: 'Start with the checklist.', source: 'groq', model: 'openai/gpt-oss-20b',
+        references: [{ id: 31, title: 'Review checklist' }]
+      });
+      expect(taskQuery).toHaveBeenCalledWith(expect.stringContaining('company_id=$1 AND assigned_to=$2'), [company.id, login.body.user.id]);
+      const [, [url, options]] = fetchMock.mock.calls;
+      expect(url).toBe('https://api.groq.com/openai/v1/chat/completions');
+      const messages = JSON.parse(options.body).messages;
+      expect(messages.slice(1, 3)).toEqual([
+        { role: 'user', content: 'What is open?' }, { role: 'assistant', content: 'The checklist is still open.' }
+      ]);
+      expect(JSON.parse(messages[3].content).tasks).toEqual([
+        { id: 31, title: 'Review checklist', due_date: '2026-11-27', status: 'active', priority: 'high' }
+      ]);
+    } finally {
+      config.GROQ_API_KEY = undefined;
+      mocks.query.mockImplementation(defaultQuery);
       vi.unstubAllGlobals();
     }
   });

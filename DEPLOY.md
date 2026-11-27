@@ -37,6 +37,14 @@ If email is not configured or Brevo rejects a message, the invitation/task still
 
 Brevo's sender and API setup: https://developers.brevo.com/docs/send-a-transactional-email
 
+## Workspace AI
+
+Set `GEMINI_API_KEY` in the Render backend environment. `GEMINI_MODEL` is optional and defaults to `gemini-3.5-flash-lite`. Keep these keys out of frontend variables and Git.
+
+To enable a separate provider when Gemini is unavailable, add a `GROQ_API_KEY` in the same Render service and redeploy. The app uses Groq's `openai/gpt-oss-20b` model. If only Groq is configured, it serves the chat directly. Each enabled provider can receive the current question, the last four exchanges, and up to 100 visible task records (ID, title, due date, status, and priority). Check the provider's data policies and quotas before enabling it for a workspace.
+
+Use **AI chat** to test a task question and a follow-up. Model replies identify the provider and can link to referenced tasks. **Task summaries** use the database directly and do not call a model.
+
 ## Production checks
 
 - The frontend bundle must use the public API URL, not `localhost`.

@@ -58,6 +58,7 @@ const AdminDashboard = ({ changeUser, data }) => {
     { label: 'Completed', value: totals.completed, note: 'Tasks delivered', icon: FaClipboardCheck },
     { label: 'Needs follow-up', value: totals.failed, note: 'Tasks marked failed', icon: FaChartLine }
   ];
+  const openTaskHub = task => setView({ tab: 'tasks', taskId: task?.id, jump: 'heading' });
 
   useEffect(() => {
     if (!view.jump) return;
@@ -126,10 +127,9 @@ const AdminDashboard = ({ changeUser, data }) => {
                       </div>
                     ))}
                   </dl>
-                  <WorkFocus admin employees={employees}
-                    onOpenTasks={task => setView({ tab: 'tasks', taskId: task?.id, jump: 'heading' })} />
+                  <WorkFocus admin employees={employees} onOpenTasks={openTaskHub} />
                   {employees.length > 0 ? (
-                    <div className="workspace-support"><AllTask /><AIAssistant /></div>
+                    <div className="workspace-support"><AllTask /><AIAssistant onOpenTask={openTaskHub} /></div>
                   ) : (
                     <section className="dashboard-card workspace-onboard">
                       <span className="workspace-onboard-icon"><FaUserPlus aria-hidden="true" /></span>

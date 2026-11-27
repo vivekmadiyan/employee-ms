@@ -53,6 +53,7 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   overdue.setUTCDate(overdue.getUTCDate() - 3);
   const fartherOut = new Date();
   fartherOut.setUTCDate(fartherOut.getUTCDate() + 25);
+  let overdueTaskId;
   for (const [due, description] of [[overdue, 'The overdue handoff'], [fartherOut, 'A later handoff with the same title']]) {
     const task = await page.request.post(`${api}/tasks`, {
       headers,
@@ -62,6 +63,7 @@ test('Work Focus leads admins and employees to the right task on a phone', async
       }
     });
     expect(task.status()).toBe(201);
+    if (due === overdue) overdueTaskId = (await task.json()).id;
   }
 
   await page.reload();
@@ -76,17 +78,47 @@ test('Work Focus leads admins and employees to the right task on a phone', async
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  await assistant.getByRole('button', { name: 'Task summaries' }).click();
   await assistant.getByRole('button', { name: 'Which tasks are overdue?' }).click();
-  await assistant.getByRole('button', { name: 'Ask AI' }).click();
   await expect(assistant.getByRole('status')).toContainText('Workspace summary');
   await expect(assistant.getByRole('status')).toContainText('1 overdue task.');
   await expect(assistant.getByRole('status')).toContainText('Review shift handoff');
   await assistant.getByRole('button', { name: 'What needs attention in the next 7 days?' }).click();
-  await assistant.getByRole('button', { name: 'Ask AI' }).click();
   await expect(assistant.getByRole('status')).toContainText('1 task needs attention.');
   await assistant.getByRole('button', { name: 'Summarize my open work' }).click();
-  await assistant.getByRole('button', { name: 'Ask AI' }).click();
   await expect(assistant.getByRole('status')).toContainText('2 open tasks.');
+  await assistant.getByRole('button', { name: 'AI chat' }).click();
+  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Which tasks are overdue?');
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('alert')).toContainText('The AI provider is unavailable');
+  await expect(assistant.getByText('Workspace summary')).toHaveCount(0);
+
+  const chatInputs = [];
+  await page.route('**/api/ai/ask', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    chatInputs.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: {
+        answer: chatInputs.length === 1 ? 'Review the overdue shift handoff first.' : 'Tell the next shift to review the handoff.',
+        source: 'gemini',
+        model: 'gemini-3.5-flash-lite',
+        references: [{ id: overdueTaskId, title: 'Review shift handoff' }]
+      }
+    });
+  });
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('log')).toContainText('Review the overdue shift handoff first.');
+  await expect(assistant.getByRole('log')).toContainText('Gemini');
+  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Draft a handoff for it.');
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('log')).toContainText('Tell the next shift to review the handoff.');
+  expect(chatInputs[1].history).toEqual([{
+    question: 'Which tasks are overdue?', answer: 'Review the overdue shift handoff first.'
+  }]);
+  await assistant.getByRole('button', { name: 'Review shift handoff' }).last().click();
+  await expect(page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' })).toBeFocused();
+  await page.unroute('**/api/ai/ask');
+
   await workFocus.getByRole('button', { name: /Review shift handoff/ }).click();
   const employeeTask = page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' });
   await expect(employeeTask).toBeFocused();

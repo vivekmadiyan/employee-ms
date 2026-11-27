@@ -155,4 +155,4 @@ export const markNotificationReadApi = id => api(`/notifications/${id}/read`, { 
 export const markAllNotificationsReadApi = () => api('/notifications/read-all', { method: 'PATCH', body: '{}' });
 export const getTaskCommentsApi = id => api(`/tasks/${id}/comments`);
 export const createTaskCommentApi = (id, content) => api(`/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
-export const askAiApi = (question, today) => api('/ai/ask', { method: 'POST', body: JSON.stringify({ question, today }) });
+export const askAiApi = payload => api('/ai/ask', { method: 'POST', body: JSON.stringify(payload) });

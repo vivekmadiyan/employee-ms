@@ -1,72 +1,151 @@
-import React, { useContext, useState } from 'react';
-import { FaWandMagicSparkles } from 'react-icons/fa6';
+import React, { useContext, useEffect, useRef, useState } from 'react';
+import { FaArrowUpRightFromSquare, FaWandMagicSparkles } from 'react-icons/fa6';
 import { askAiApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { localDateKey } from '../../utils/workFocus';
+import './AIAssistant.css';
 
-export default function AIAssistant() {
+const providerNames = { gemini: 'Gemini', groq: 'Groq' };
+
+export default function AIAssistant({ onOpenTask }) {
   const { currentUser } = useContext(AuthContext);
+  const [mode, setMode] = useState('chat');
   const [question, setQuestion] = useState('');
-  const [result, setResult] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [turns, setTurns] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [pending, setPending] = useState('');
   const [error, setError] = useState('');
-  const suggestions = [
+  const log = useRef(null);
+  const input = useRef(null);
+  const summaries = [
+    'Which tasks are overdue?',
     'What needs attention in the next 7 days?',
-    currentUser?.role === 'admin' ? 'Summarize the team’s open work' : 'Summarize my open work',
-    'Which tasks are overdue?'
+    currentUser?.role === 'admin' ? 'Summarize the team’s open work' : 'Summarize my open work'
   ];
-  const canAsk = question.trim().length >= 3 && !busy;
+  const starters = [summaries[1], 'Draft a handoff using the open tasks.'];
 
-  const ask = async event => {
-    event.preventDefault();
-    if (!canAsk) return;
-    setBusy(true);
+  useEffect(() => {
+    if (log.current) log.current.scrollTop = log.current.scrollHeight;
+  }, [turns, pending, mode]);
+
+  function switchMode(nextMode) {
+    setMode(nextMode);
     setError('');
-    setResult(null);
+  }
+
+  async function sendQuestion(nextQuestion) {
+    const text = nextQuestion.trim();
+    if (pending || text.length < 3) return;
+    setPending(text);
+    setError('');
+    const history = mode === 'chat'
+      ? turns.slice(-4).map(turn => ({ question: turn.question, answer: turn.answer.slice(0, 2500) }))
+      : [];
+
     try {
-      setResult(await askAiApi(question.trim(), localDateKey(new Date())));
+      const result = await askAiApi({ question: text, today: localDateKey(new Date()), mode, history });
+      if (!result.answer) throw new Error('No answer was returned. Try again.');
+      if (mode === 'chat') {
+        if (!providerNames[result.source]) throw new Error('The AI provider is unavailable. You can still open Task summaries.');
+        setTurns(current => [...current, { ...result, question: text }].slice(-12));
+        setQuestion('');
+      } else {
+        if (result.source !== 'workspace') throw new Error('Task summaries are temporarily unavailable.');
+        setSummary({ question: text, answer: result.answer });
+      }
     } catch (requestError) {
       setError(requestError.message);
     } finally {
-      setBusy(false);
+      setPending('');
     }
-  };
+  }
 
   return (
-    <section className="dashboard-card p-5 sm:p-6" aria-labelledby="ai-assistant-heading">
-      <div className="flex items-center gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
-          <FaWandMagicSparkles aria-hidden="true" />
-        </span>
-        <div>
-          <h2 id="ai-assistant-heading" className="dashboard-card-heading">AI workspace assistant</h2>
-          <p className="text-xs text-slate-500">Get a quick read on your current work and next steps.</p>
-        </div>
+    <section className="dashboard-card ai-panel" aria-labelledby="ai-assistant-heading">
+      <header className="ai-panel-header">
+        <span className="ai-symbol"><FaWandMagicSparkles aria-hidden="true" /></span>
+        <h2 id="ai-assistant-heading" className="dashboard-card-heading">AI workspace assistant</h2>
+      </header>
+      <div className="ai-modes" role="group" aria-label="Assistant mode">
+        <button type="button" disabled={Boolean(pending)} aria-pressed={mode === 'chat'} onClick={() => switchMode('chat')}>AI chat</button>
+        <button type="button" disabled={Boolean(pending)} aria-pressed={mode === 'summary'} onClick={() => switchMode('summary')}>Task summaries</button>
       </div>
-      <form onSubmit={ask} className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <input aria-label="Ask about tasks" value={question} maxLength={500} readOnly={busy}
-          onChange={event => setQuestion(event.target.value)}
-          placeholder={suggestions[0]} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />
-        <button type="submit" disabled={!canAsk}
-          className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
-          {busy ? 'Thinking…' : 'Ask AI'}
-        </button>
-      </form>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {suggestions.map(suggestion => (
-          <button key={suggestion} type="button" disabled={busy} onClick={() => setQuestion(suggestion)}
-            className="rounded-full border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
-            {suggestion}
-          </button>
-        ))}
-      </div>
-      {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
-      {result && (
-        <div role="status" className="mt-4 rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
-          {result.source === 'workspace' && <p className="mb-1 text-xs font-semibold">Workspace summary · AI unavailable</p>}
-          <p className="whitespace-pre-wrap break-words">{result.answer}</p>
-        </div>
+
+      {mode === 'chat' ? (
+        <>
+          {turns.length > 0 && (
+            <button type="button" className="ai-reset" disabled={Boolean(pending)} onClick={() => {
+              setTurns([]);
+              setQuestion('');
+              setError('');
+              input.current?.focus();
+            }}>New chat</button>
+          )}
+          {(turns.length > 0 || pending) && (
+            <div ref={log} className="ai-log" role="log" aria-label="Assistant conversation" tabIndex={0}>
+              {turns.map((turn, index) => (
+                <article key={index} className="ai-turn">
+                  <p className="ai-user"><span className="sr-only">You: </span>{turn.question}</p>
+                  <div className="ai-reply">
+                    <p className="ai-reply-by" title={turn.model}>{providerNames[turn.source]}</p>
+                    <p className="ai-text">{turn.answer}</p>
+                    {turn.references?.length > 0 && (
+                      <ul className="ai-references" aria-label="Referenced tasks">
+                        {turn.references.map(task => (
+                          <li key={task.id}>
+                            <button type="button" onClick={() => onOpenTask(task)}>
+                              {task.title} <FaArrowUpRightFromSquare aria-hidden="true" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {pending && <p className="ai-reply-by">Waiting for the AI provider…</p>}
+            </div>
+          )}
+          {turns.length === 0 && (
+            <div className="ai-options">
+              {starters.map(starter => (
+                <button key={starter} type="button" disabled={Boolean(pending)} onClick={() => {
+                  setQuestion(starter);
+                  input.current?.focus();
+                }}>{starter}</button>
+              ))}
+            </div>
+          )}
+          <form className="ai-form" onSubmit={event => { event.preventDefault(); sendQuestion(question); }}>
+            <textarea ref={input} rows={2} aria-label="Ask about tasks" aria-describedby="ai-context-note"
+              value={question} maxLength={500} readOnly={Boolean(pending)}
+              onChange={event => setQuestion(event.target.value)}
+              placeholder={turns.length ? 'Ask a follow-up…' : 'Ask about tasks or draft an update…'} />
+            <button type="submit" disabled={Boolean(pending) || question.trim().length < 3} className="workspace-action">
+              {pending ? 'Thinking…' : 'Ask AI'}
+            </button>
+          </form>
+          <p id="ai-context-note" className="ai-note">AI chat sends your question, recent replies, and visible task details to the configured provider.</p>
+        </>
+      ) : (
+        <>
+          <p className="ai-note">Get a count and up to five matching tasks from the workspace.</p>
+          <div className="ai-options">
+            {summaries.map(option => (
+              <button key={option} type="button" disabled={Boolean(pending)}
+                onClick={() => { setSummary(null); sendQuestion(option); }}>{option}</button>
+            ))}
+          </div>
+          {pending && <p className="ai-note" role="status">Loading tasks…</p>}
+          {summary && (
+            <div className="ai-reply" role="status">
+              <p className="ai-reply-by">Workspace summary</p>
+              <p className="ai-text">{summary.answer}</p>
+            </div>
+          )}
+        </>
       )}
+      {error && <p role="alert" className="ai-error">{error}</p>}
     </section>
   );
 }
