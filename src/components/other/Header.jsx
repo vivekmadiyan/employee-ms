@@ -135,7 +135,7 @@ const Header = ({ changeUser, data }) => {
 
             {showNotifications && (
               <section 
-                className="absolute right-0 z-50 mt-2 w-[min(92vw,360px)] overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xl shadow-slate-900/10 transition-all animate-fade-in" 
+                className="notification-panel absolute right-0 z-50 mt-2 w-[min(92vw,360px)] overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xl shadow-slate-900/10 transition-all animate-fade-in"
                 aria-label="Notifications"
               >
                 <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-3">
@@ -231,6 +231,7 @@ const Header = ({ changeUser, data }) => {
           <button
             type="button"
             onClick={logOutUser}
+            aria-label="Log out"
             className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
           >
             <FaArrowRightFromBracket className="text-xs text-slate-400" aria-hidden="true" />
