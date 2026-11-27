@@ -18,7 +18,7 @@ const schema = z.object({
   BREVO_API_KEY: z.string().optional(),
   BREVO_SENDER_EMAIL: z.string().email().optional(),
   BREVO_SENDER_NAME: z.string().trim().min(1).default('EmployeeMS'),
-  GEMINI_API_KEY: z.string().trim().min(1).optional(),
+  GEMINI_API_KEY: z.string().trim().optional().transform(value => value || undefined),
   GEMINI_MODEL: z.string().trim().min(1).default(defaultGeminiModel)
 });
 

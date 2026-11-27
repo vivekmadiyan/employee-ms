@@ -41,7 +41,8 @@ export default defineConfig({
         DATABASE_URL: databaseUrl,
         JWT_SECRET: jwtSecret,
         CLIENT_URL: clientUrl,
-        ALLOWED_ORIGINS: clientUrl
+        ALLOWED_ORIGINS: clientUrl,
+        GEMINI_API_KEY: ''
       }
     },
     {

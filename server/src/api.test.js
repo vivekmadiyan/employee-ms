@@ -40,6 +40,7 @@ process.env.GEMINI_API_KEY = 'test-gemini-key';
 process.env.GEMINI_MODEL = 'gemini-2.5-flash';
 
 const { app } = await import('./server.js');
+const { config } = await import('./config.js');
 const { createTotpCode, decryptSecret, decryptTotpSecret } = await import('./mfa.js');
 
 const company = { id: 1, name: 'Test Workspace', slug: 'test-workspace', industry: 'General', size: '1-10', active: true };
@@ -84,7 +85,7 @@ const normalize = sql => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 function installQueryMock() {
   mocks.query.mockImplementation(async (sql, params = []) => {
     const text = normalize(sql);
-    if (text.startsWith('select task_title as title, task_date as due_date') && Number(params[0]) === company.id) {
+    if (text.startsWith('select task_title as title, task_date::text as due_date, status, priority') && Number(params[0]) === company.id) {
       return result([]);
     }
     if (text.startsWith('insert into audit_events(')) {
@@ -1057,11 +1058,70 @@ describe('authenticated API workflows', () => {
         .send({ question: 'What needs attention this week?' })
         .expect(200);
 
-      expect(response.body).toEqual({ answer: 'No tasks need attention.' });
+      expect(response.body).toEqual({ answer: 'No tasks need attention.', source: 'gemini' });
       expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
         '/v1beta/models/gemini-2.5-flash:generateContent',
         '/v1beta/models/gemini-3.5-flash-lite:generateContent'
       ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('retrieves a scoped task summary after two overloaded model attempts', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const defaultQuery = mocks.query.getMockImplementation();
+    const snapshotQuery = vi.fn().mockResolvedValue(result([
+      { title: 'Review the handoff', due_date: '2026-11-25', status: 'active', total: 1 }
+    ]));
+    mocks.query.mockImplementation((sql, params) =>
+      sql.includes('COUNT(*) OVER()') ? snapshotQuery(sql, params) : defaultQuery(sql, params));
+    const oldModel = config.GEMINI_MODEL;
+    config.GEMINI_MODEL = 'gemini-3.5-flash-lite';
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('Overloaded', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const response = await request(app).post('/api/ai/ask')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ question: 'Which tasks are overdue?', today: '2026-11-27' })
+        .expect(200);
+
+      expect(response.body).toEqual({ answer: '1 overdue task.\n• Review the handoff — due 2026-11-25 (in progress)', source: 'workspace' });
+      expect(snapshotQuery).toHaveBeenCalledOnce();
+      expect(snapshotQuery).toHaveBeenCalledWith(
+        expect.stringContaining("company_id=$1 AND assigned_to=$2 AND archived_at IS NULL AND status IN ('new','active') AND task_date < $3"),
+        [company.id, login.body.user.id, '2026-11-27']
+      );
+      expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+        '/v1beta/models/gemini-3.5-flash-lite:generateContent',
+        '/v1beta/models/gemini-3.1-flash-lite:generateContent'
+      ]);
+    } finally {
+      config.GEMINI_MODEL = oldModel;
+      mocks.query.mockImplementation(defaultQuery);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not retry a quota error or substitute a summary for an arbitrary question', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'admin@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const fetchMock = vi.fn().mockResolvedValue(new Response('Quota exceeded', { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const response = await request(app).post('/api/ai/ask')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .send({ question: 'Why is this project taking so long?' })
+        .expect(429);
+      expect(response.body.message).toContain('AI usage limit reached');
+      expect(fetchMock).toHaveBeenCalledOnce();
     } finally {
       vi.unstubAllGlobals();
     }

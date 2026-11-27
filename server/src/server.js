@@ -9,7 +9,8 @@ import crypto from 'crypto';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { initialiseDatabase, pool, query } from './db.js';
-import { allowedOrigins, config, defaultGeminiModel } from './config.js';
+import { allowedOrigins, config } from './config.js';
+import { formatTaskSnapshot, generateWorkspaceAnswer, taskSnapshotFilter } from './workspaceAssistant.js';
 import { auth, adminOnly } from './middleware/auth.js';
 import {
   sendInvitationEmail,
@@ -488,34 +489,39 @@ app.get('/api/health', async (req, res) => { try { await query('SELECT 1'); res.
 const aiLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'AI request limit reached. Try again later.' } });
 app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
   try {
-    const { question } = body(z.object({ question: z.string().trim().min(3).max(500) }), req.body);
-    if (!config.GEMINI_API_KEY) return res.status(503).json({ message: 'AI is not configured yet.' });
+    const { question, today = new Date().toISOString().slice(0, 10) } = body(z.object({
+      question: z.string().trim().min(3).max(500),
+      today: isoDate.optional()
+    }), req.body);
     const taskScope = req.user.role === 'admin' ? 'company_id=$1' : 'company_id=$1 AND assigned_to=$2';
     const taskParams = req.user.role === 'admin' ? [req.company.id] : [req.company.id, req.user.id];
-    const tasks = (await query(`SELECT task_title AS title, task_date AS due_date, status, priority FROM tasks WHERE ${taskScope} AND archived_at IS NULL ORDER BY task_date ASC LIMIT 100`, taskParams)).rows;
-    const prompt = `You are the EmployeeMS workspace assistant. Answer in 2-5 short sentences with practical next steps. Use only the supplied task data. Never invent names, numbers, dates, or permissions. If the data does not answer the question, say so. User question: ${question}\nTask data: ${JSON.stringify(tasks)}`;
-    const generateContent = model => fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.GEMINI_API_KEY },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      }
-    );
-    let response = await generateContent(config.GEMINI_MODEL);
-    if (response.status === 404 && config.GEMINI_MODEL === 'gemini-2.5-flash') {
-      await response.body?.cancel();
-      response = await generateContent(defaultGeminiModel);
+    let result;
+    if (config.GEMINI_API_KEY) {
+      const tasks = (await query(
+        `SELECT task_title AS title, task_date::text AS due_date, status, priority
+         FROM tasks WHERE ${taskScope} AND archived_at IS NULL
+         ORDER BY CASE WHEN status='completed' THEN 1 ELSE 0 END, task_date ASC, id ASC LIMIT 100`,
+        taskParams
+      )).rows;
+      const prompt = `You are the EmployeeMS workspace assistant. Today is ${today}. Answer in 2-5 short sentences using only the supplied task data. Never invent names, numbers, dates, or permissions. The data may be limited to 100 tasks; do not present a partial total as complete. If the data does not answer the question, say so. User question: ${question}\nTask data: ${JSON.stringify(tasks)}`;
+      result = await generateWorkspaceAnswer({ apiKey: config.GEMINI_API_KEY, model: config.GEMINI_MODEL, prompt });
+      if (result.answer) return res.json({ answer: result.answer, source: 'gemini' });
+      console.warn('Gemini response unavailable', { requestId: req.id, status: result.status });
     }
-    const data = await response.json();
-    if (!response.ok) {
-      const providerMessage = typeof data.error?.message === 'string' ? data.error.message : 'The AI provider rejected the request.';
-      console.error('Gemini request failed:', { requestId: req.id, status: response.status, message: providerMessage });
-      return res.status(response.status === 429 ? 429 : 502).json({ message: `AI provider request failed: ${providerMessage}` });
+
+    const snapshot = taskSnapshotFilter(question, `$${taskParams.length + 1}`);
+    if (snapshot) {
+      const { rows } = await query(
+        `SELECT task_title AS title, task_date::text AS due_date, status, COUNT(*) OVER()::int AS total
+         FROM tasks WHERE ${taskScope} AND archived_at IS NULL AND ${snapshot.predicate}
+         ORDER BY task_date ASC, id ASC LIMIT 5`,
+        snapshot.needsDate ? [...taskParams, today] : taskParams
+      );
+      return res.json({ answer: formatTaskSnapshot(rows, snapshot.label), source: 'workspace' });
     }
-    const answer = data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
-    if (!answer) return res.status(502).json({ message: 'AI returned an empty response.' });
-    res.json({ answer });
+
+    if (result?.status === 429) return res.status(429).json({ message: 'AI usage limit reached. Try a suggested question or come back later.' });
+    res.status(503).json({ message: 'AI is temporarily unavailable. Try a suggested question or come back shortly.' });
   } catch (error) { next(error); }
 });
 app.get('/api/metrics', (req, res) => {

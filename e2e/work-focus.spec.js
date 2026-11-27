@@ -75,6 +75,18 @@ test('Work Focus leads admins and employees to the right task on a phone', async
   expect((await new AxeBuilder({ page }).include('.work-focus')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  await assistant.getByRole('button', { name: 'Which tasks are overdue?' }).click();
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('status')).toContainText('Workspace summary');
+  await expect(assistant.getByRole('status')).toContainText('1 overdue task.');
+  await expect(assistant.getByRole('status')).toContainText('Review shift handoff');
+  await assistant.getByRole('button', { name: 'What needs attention in the next 7 days?' }).click();
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('status')).toContainText('1 task needs attention.');
+  await assistant.getByRole('button', { name: 'Summarize my open work' }).click();
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('status')).toContainText('2 open tasks.');
   await workFocus.getByRole('button', { name: /Review shift handoff/ }).click();
   const employeeTask = page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' });
   await expect(employeeTask).toBeFocused();
