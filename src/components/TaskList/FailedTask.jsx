@@ -1,5 +1,6 @@
-import React from 'react';
-import { FaCalendarDay, FaCircleExclamation, FaFlag } from 'react-icons/fa6';
+import React, { useContext, useState } from 'react';
+import { FaCalendarDay, FaCircleExclamation, FaFlag, FaPlay } from 'react-icons/fa6';
+import { AuthContext } from '../../context/AuthProvider';
 import TaskComments from '../other/TaskComments';
 
 const priorityConfig = {
@@ -9,7 +10,22 @@ const priorityConfig = {
 };
 
 const FailedTask = ({ data }) => {
+  const { updateTaskStatus } = useContext(AuthContext);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const priority = priorityConfig[data.priority] || priorityConfig.medium;
+
+  const resumeTask = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await updateTaskStatus(data.id, 'active', 'failed');
+    } catch (requestError) {
+      setError(requestError.message || 'Could not resume this task.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="task-card flex flex-col justify-between rounded-2xl border border-rose-200 bg-white p-5 shadow-sm transition-all hover:shadow-md">
@@ -42,8 +58,14 @@ const FailedTask = ({ data }) => {
       <div className="pt-2">
         <div className="flex items-center justify-center gap-2 rounded-xl bg-rose-50 py-2.5 px-4 text-xs font-bold text-rose-700 border border-rose-100">
           <FaCircleExclamation className="text-sm text-rose-600" />
-          <span>Needs Attention / Failed</span>
+          <span>Needs attention</span>
         </div>
+
+        {error && <p role="alert" className="mt-2 rounded-lg bg-rose-50 p-2 text-xs text-rose-700">{error}</p>}
+        <button type="button" onClick={resumeTask} disabled={busy}
+          className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-60">
+          <FaPlay aria-hidden="true" /> {busy ? 'Resuming…' : 'Resume work'}
+        </button>
 
         <TaskComments taskId={data.id} />
       </div>

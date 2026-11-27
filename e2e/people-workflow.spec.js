@@ -127,14 +127,59 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await expect(page.getByRole('heading', { name: 'Team Leave Management' })).toBeVisible();
   const requestCard = page.getByRole('article').filter({ hasText: 'E2E manager approval' });
   await expect(requestCard).toBeVisible();
+  const calendar = page.getByRole('grid', { name: 'Approved team absences' });
+  const absenceDay = calendar.getByRole('gridcell', { name: new RegExp(`^${startDate}`) });
+  if (await absenceDay.count() === 0) await page.getByRole('button', { name: 'Next month' }).click();
+  await expect(absenceDay).toBeVisible();
+  await expect(absenceDay.getByText('E2E Teammate')).toHaveCount(0);
   await requestCard.getByRole('button', { name: 'Approve' }).click();
   await expect(requestCard.getByText('approved', { exact: true })).toBeVisible();
+  await expect(absenceDay.getByText('E2E Teammate')).toBeVisible();
 
   const savedRequest = await page.request.get(`${apiUrl}/leave-requests`, {
     headers: { Authorization: `Bearer ${manager.token}` }
   });
   expect(savedRequest.ok()).toBeTruthy();
   expect((await savedRequest.json()).find(item => item.id === leaveRequest.id)?.status).toBe('approved');
+
+  await page.getByRole('button', { name: 'AI', exact: true }).click();
+  const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  const reportQuestion = 'Generate a task report for the last 30 days';
+  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill(reportQuestion);
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('heading', { name: 'My task report' })).toBeVisible();
+
+  const chats = await page.request.get(`${apiUrl}/ai/conversations`, {
+    headers: { Authorization: `Bearer ${manager.token}` }
+  });
+  expect(chats.ok()).toBeTruthy();
+  const [chat] = (await chats.json()).conversations;
+  expect(chat.title).toBe(reportQuestion);
+  const chatUrl = `${apiUrl}/ai/conversations/${chat.id}`;
+  const otherUserHeaders = { Authorization: `Bearer ${adminSession.token}` };
+  expect((await page.request.get(chatUrl, { headers: otherUserHeaders })).status()).toBe(404);
+  expect((await page.request.delete(chatUrl, { headers: otherUserHeaders })).status()).toBe(404);
+  expect((await page.request.post(`${apiUrl}/ai/ask`, {
+    headers: otherUserHeaders, data: { question: 'Task report', mode: 'chat', conversationId: chat.id }
+  })).status()).toBe(404);
+
+  await page.reload();
+  await page.getByRole('button', { name: 'AI', exact: true }).click();
+  await assistant.getByRole('button', { name: 'History', exact: true }).click();
+  const history = page.getByRole('dialog', { name: 'Chat history' });
+  await history.getByRole('button', { name: `Open ${reportQuestion}` }).click();
+  await expect(assistant.getByText(reportQuestion)).toBeVisible();
+  await expect(assistant.getByRole('button', { name: 'Download report' })).toBeVisible();
+  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Same report for the last 7 days');
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('heading', { name: 'My task report' })).toHaveCount(2);
+
+  await assistant.getByRole('button', { name: 'History', exact: true }).click();
+  await history.getByRole('button', { name: `Delete ${reportQuestion}` }).click();
+  await history.getByRole('button', { name: 'Delete chat', exact: true }).click();
+  await expect(history.getByText('Saved chats appear here after the first reply.')).toBeVisible();
+  expect((await page.request.get(chatUrl, { headers: { Authorization: `Bearer ${manager.token}` } })).status()).toBe(404);
+  await history.getByRole('button', { name: 'Close chat history' }).click();
 
   await page.getByRole('button', { name: 'Log out' }).click();
   await page.goto('/');

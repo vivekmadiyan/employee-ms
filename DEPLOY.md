@@ -49,6 +49,8 @@ The **AI** tab has a tool picker. Employees can enable **Update task status** fo
 
 **AI chat** and **AI reports** use the same database figures as the standard reports. Ask in chat for a task report, then ask a follow-up to change its dates or explain the results. Employees can report on their own tasks, and admins can report across the workspace and generate a workforce overview. Reports are read-only. The model receives aggregate counts and the report period for analysis. The app shows the verified figures and supports a text download for supported report requests when the provider is unavailable.
 
+Chat history is stored in PostgreSQL and scoped to the signed-in account, workspace, and role. The app retains up to 20 recent chats with 12 turns each. Users can reopen or delete their saved chats. Reopening a chat loads its transcript and report figures. A new draft is required to review a task change again.
+
 ## Production checks
 
 - The frontend bundle must use the public API URL, not `localhost`.

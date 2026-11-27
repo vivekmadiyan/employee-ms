@@ -26,6 +26,15 @@ export async function initialiseDatabase() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes TEXT[] NOT NULL DEFAULT '{}';
+    CREATE TABLE IF NOT EXISTS ai_conversations (
+      id UUID PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      owner_role TEXT NOT NULL CHECK (owner_role IN ('admin', 'employee')),
+      title TEXT NOT NULL,
+      turns JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, task_title TEXT NOT NULL, task_description TEXT NOT NULL, task_date TEXT NOT NULL, category TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')), status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'active', 'completed', 'failed')), assigned_to INTEGER NOT NULL REFERENCES users(id), created_by INTEGER NOT NULL REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS invitations (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, email TEXT NOT NULL, first_name TEXT NOT NULL, department TEXT NOT NULL DEFAULT 'General', token_hash TEXT NOT NULL UNIQUE, expires_at TIMESTAMPTZ NOT NULL, accepted_at TIMESTAMPTZ, invited_by INTEGER NOT NULL REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     ALTER TABLE invitations ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT '';
@@ -84,6 +93,7 @@ export async function initialiseDatabase() {
     CREATE TRIGGER offboardings_workspace_activity AFTER INSERT OR UPDATE OR DELETE ON employee_offboardings FOR EACH ROW EXECUTE FUNCTION bump_workspace_activity();
     INSERT INTO workspace_activity(company_id) SELECT id FROM companies ON CONFLICT(company_id) DO NOTHING;
     CREATE INDEX IF NOT EXISTS users_company_id_idx ON users(company_id);
+    CREATE INDEX IF NOT EXISTS ai_conversations_owner_idx ON ai_conversations(company_id, user_id, owner_role, updated_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS users_active_manager_idx ON users(company_id, manager_id, id) WHERE role='employee' AND active=true;
     CREATE INDEX IF NOT EXISTS tasks_company_id_idx ON tasks(company_id);
     CREATE INDEX IF NOT EXISTS tasks_active_company_due_idx ON tasks(company_id, task_date) WHERE archived_at IS NULL;

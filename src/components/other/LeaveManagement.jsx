@@ -57,6 +57,7 @@ export default function LeaveManagement({ isManager = false }) {
   const [balance, setBalance] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [calendarAbsences, setCalendarAbsences] = useState([]);
+  const [calendarError, setCalendarError] = useState('');
   const [savingPolicies, setSavingPolicies] = useState(false);
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
@@ -103,9 +104,26 @@ export default function LeaveManagement({ isManager = false }) {
     const start = monthGridStart(calendarMonth);
     const end = new Date(start);
     end.setDate(start.getDate() + 41);
-    getLeaveCalendarApi(dateKey(start), dateKey(end))
-      .then(setCalendarAbsences)
-      .catch(requestError => setError(requestError.message || 'Could not load the team leave calendar.'));
+    let activeRequest;
+    const loadCalendar = async () => {
+      activeRequest?.abort();
+      const request = new AbortController();
+      activeRequest = request;
+      setCalendarError('');
+      try {
+        const absences = await getLeaveCalendarApi(dateKey(start), dateKey(end), request.signal);
+        if (!request.signal.aborted) setCalendarAbsences(absences);
+      } catch (requestError) {
+        if (!request.signal.aborted) setCalendarError(requestError.message || 'Could not load the team leave calendar.');
+      }
+    };
+    setCalendarAbsences([]);
+    loadCalendar();
+    window.addEventListener('ems:workspace-updated', loadCalendar);
+    return () => {
+      activeRequest?.abort();
+      window.removeEventListener('ems:workspace-updated', loadCalendar);
+    };
   }, [calendarMonth]);
 
   const submitRequest = async event => {
@@ -281,6 +299,7 @@ export default function LeaveManagement({ isManager = false }) {
             <button type="button" onClick={() => changeMonth(1)} aria-label="Next month" className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">›</button>
           </div>
         </div>
+        {calendarError && <p className="mb-3 text-xs text-rose-600" role="alert">{calendarError}</p>}
         <div className="overflow-x-auto">
           <div role="grid" aria-label="Approved team absences" className="min-w-[630px]">
             <div role="row" className="grid grid-cols-7 border-b border-slate-100">

@@ -12,6 +12,7 @@ import { initialiseDatabase, pool, query } from './db.js';
 import { allowedOrigins, config } from './config.js';
 import { formatChatAnswer, formatTaskSnapshot, generateWorkspaceAnswer, taskSnapshotFilter } from './workspaceAssistant.js';
 import { canChangeTaskStatus, prepareAssistantAction, statusUpdateSchema, toolsForRole } from './assistantTools.js';
+import { deleteAiConversation, listAiConversations, readAiConversation, saveAiTurn } from './aiConversations.js';
 import { defaultTaskReportPeriod, findExplicitReportRequest, generateAiReport, reportTool } from './aiReports.js';
 import { readTaskReport, readWorkforceReport } from './reports.js';
 import { auth, adminOnly } from './middleware/auth.js';
@@ -537,14 +538,37 @@ app.get('/api/ai/tools', auth, (req, res) => {
   const tools = toolsForRole(req.user.role).map(({ id, label, description, example }) => ({ id, label, description, example }));
   res.set('Cache-Control', 'no-store').json({ tools });
 });
+const conversationIdSchema = z.uuid();
+const missingConversation = { message: 'Chat not found.' };
+app.get('/api/ai/conversations', auth, async (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'no-store').json({ conversations: await listAiConversations(req.user) });
+  } catch (error) { next(error); }
+});
+app.get('/api/ai/conversations/:id', auth, async (req, res, next) => {
+  try {
+    const conversation = await readAiConversation(req.user, body(conversationIdSchema, req.params.id));
+    res.set('Cache-Control', 'no-store');
+    if (!conversation) return res.status(404).json(missingConversation);
+    res.json(conversation);
+  } catch (error) { next(error); }
+});
+app.delete('/api/ai/conversations/:id', auth, async (req, res, next) => {
+  try {
+    const removed = await deleteAiConversation(req.user, body(conversationIdSchema, req.params.id));
+    if (!removed) return res.status(404).json(missingConversation);
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
 app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
   try {
-    const { question, today = new Date().toISOString().slice(0, 10), mode, history = [], tools = [], reportContext } = body(z.object({
+    const { question, today = new Date().toISOString().slice(0, 10), mode, history: clientHistory = [], tools = [], reportContext: clientReportContext, conversationId } = body(z.object({
       question: z.string().trim().min(1, 'Enter a message.').max(500),
       today: isoDate.optional(),
       mode: z.enum(['chat', 'summary']).optional(),
       tools: z.array(z.string().max(64)).max(6).optional(),
       reportContext: reportContextSchema.optional(),
+      conversationId: conversationIdSchema.nullable().optional(),
       history: z.array(z.object({
         question: z.string().trim().min(1).max(500),
         answer: z.string().trim().min(1).max(2500)
@@ -552,9 +576,21 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
     }), req.body);
     res.set('Cache-Control', 'no-store');
     const isChat = mode === 'chat';
+    const saveConversation = isChat && conversationId !== undefined;
+    const conversation = saveConversation && conversationId ? await readAiConversation(req.user, conversationId) : null;
+    if (saveConversation && conversationId && !conversation) return res.status(404).json(missingConversation);
+    const history = saveConversation ? (conversation?.turns ?? []).slice(-4) : clientHistory;
+    const lastReport = conversation?.turns.findLast(turn => turn.report)?.report;
+    const reportContext = saveConversation ? lastReport && { kind: lastReport.kind, ...lastReport.range } : clientReportContext;
+    const respond = async reply => {
+      if (!saveConversation) return res.json(reply);
+      const id = await saveAiTurn(req.user, conversationId, question, reply);
+      if (!id) return res.status(404).json(missingConversation);
+      return res.json({ ...reply, conversationId: id });
+    };
     if (isChat) {
       const explicitReport = findExplicitReportRequest(question, today, reportContext);
-      if (explicitReport) return res.json(await answerReportRequest(req, explicitReport, today, reportContext, question));
+      if (explicitReport) return await respond(await answerReportRequest(req, explicitReport, today, reportContext, question));
     }
     const taskScope = req.user.role === 'admin' ? 'company_id=$1' : 'company_id=$1 AND assigned_to=$2';
     const taskParams = req.user.role === 'admin' ? [req.company.id] : [req.company.id, req.user.id];
@@ -593,12 +629,12 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
       if (result.calls?.length) {
         const [call] = result.calls;
         if (isChat && result.calls.length === 1 && call.name === reportTool.id) {
-          return res.json(await answerReportRequest(req, call.args, today, reportContext, question));
+          return await respond(await answerReportRequest(req, call.args, today, reportContext, question));
         }
         const action = result.calls.length === 1
           ? prepareAssistantAction(call, selectedTools, { tasks, assignees, taskSchema: schemas.task })
           : null;
-        return res.json({
+        return await respond({
           answer: action ? 'Review the proposed change before saving.' : 'I couldn’t prepare that action. Check the task, its current status, and the available tools, then ask for one change at a time.',
           references: [], source: result.provider, model: result.model,
           ...(action && { action })
@@ -606,7 +642,7 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
       }
       if (result.answer) {
         const reply = formatChatAnswer(result.answer, tasks);
-        if (reply.answer) return res.json({
+        if (reply.answer) return await respond({
           ...reply, source: result.provider, model: result.model
         });
       }

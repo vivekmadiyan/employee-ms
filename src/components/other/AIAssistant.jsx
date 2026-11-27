@@ -1,11 +1,12 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
-  FaArrowRight, FaArrowUp, FaArrowUpRightFromSquare, FaChartSimple, FaCircleCheck, FaClock,
+  FaArrowRight, FaArrowUp, FaArrowUpRightFromSquare, FaChartSimple, FaCircleCheck, FaClock, FaClockRotateLeft,
   FaCommentDots, FaFileLines, FaListCheck, FaPenToSquare, FaPlus, FaWandMagicSparkles, FaWrench
 } from 'react-icons/fa6';
 import { askAiApi, createTaskApi, getAiToolsApi, updateTaskStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { localDateKey } from '../../utils/workFocus';
+import AIChatHistory from './AIChatHistory';
 import AIReports, { ReportResult } from './AIReports';
 import './AIAssistant.css';
 
@@ -65,6 +66,8 @@ export default function AIAssistant({ onOpenTask }) {
   const [mode, setMode] = useState('chat');
   const [question, setQuestion] = useState('');
   const [turns, setTurns] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [summary, setSummary] = useState(null);
   const [pending, setPending] = useState('');
   const [saving, setSaving] = useState(false);
@@ -114,7 +117,7 @@ export default function AIAssistant({ onOpenTask }) {
     } else {
       conversation.scrollTop = conversation.scrollHeight;
     }
-  }, [turns.length, pending, mode]);
+  }, [conversationId, turns.length, pending, mode]);
 
   function switchMode(nextMode) {
     setMode(nextMode);
@@ -137,7 +140,17 @@ export default function AIAssistant({ onOpenTask }) {
 
   function resetChat() {
     switchMode('chat');
+    setConversationId(null);
     setTurns([]);
+    setQuestion('');
+    settledActions.current.clear();
+    window.requestAnimationFrame(() => input.current?.focus());
+  }
+
+  function resumeChat(conversation) {
+    switchMode('chat');
+    setConversationId(conversation.id);
+    setTurns(conversation.turns.map(turn => ({ ...turn, id: ++sequence.current, action: undefined })));
     setQuestion('');
     settledActions.current.clear();
     window.requestAnimationFrame(() => input.current?.focus());
@@ -194,7 +207,7 @@ export default function AIAssistant({ onOpenTask }) {
     try {
       const result = await askAiApi({
         question: text, today: localDateKey(new Date()), mode, history,
-        ...(mode === 'chat' ? { tools: enabledTools } : {}),
+        ...(mode === 'chat' ? { tools: enabledTools, conversationId } : {}),
         ...(reportContext && { reportContext })
       });
       if (!result.answer) throw new Error('No answer was returned. Try again.');
@@ -202,6 +215,7 @@ export default function AIAssistant({ onOpenTask }) {
         const reportReply = result.source === 'workspace' && (result.report || result.reportIntent === true);
         if (!modelSources.has(result.source) && !reportReply) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
         const turn = { ...result, question: text, id: ++sequence.current, actionState: 'ready' };
+        if (result.conversationId) setConversationId(result.conversationId);
         setTurns(current => [...current, turn].slice(-12));
         setQuestion('');
       } else {
@@ -229,11 +243,18 @@ export default function AIAssistant({ onOpenTask }) {
             <button type="button" className="ai-quiet ai-mobile-tools" aria-expanded={toolsOpen} aria-controls="ai-tools"
               onClick={() => setToolsOpen(open => !open)}><FaWrench aria-hidden="true" /> Tools</button>
           )}
+          <button type="button" className="ai-quiet" aria-haspopup="dialog" disabled={busy} onClick={() => setHistoryOpen(true)}>
+            <FaClockRotateLeft aria-hidden="true" /> History
+          </button>
           <button type="button" className="ai-quiet" disabled={busy} onClick={resetChat}>
             <FaPlus aria-hidden="true" /> New chat
           </button>
         </div>
       </header>
+      {historyOpen && (
+        <AIChatHistory currentId={conversationId} onOpen={resumeChat}
+          onDelete={id => { if (id === conversationId) resetChat(); }} onClose={() => setHistoryOpen(false)} />
+      )}
       <div className={mode === 'reports' ? 'ai-layout ai-layout--reports' : 'ai-layout'}>
         <div className={mode === 'reports' ? 'ai-chat ai-chat--reports' : 'ai-chat'}>
           <div className="ai-modes" role="group" aria-label="Assistant mode">

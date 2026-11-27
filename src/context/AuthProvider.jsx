@@ -97,8 +97,8 @@ const AuthProvider = ({ children }) => {
     };
   }, [currentUser, refresh]);
 
-  const updateTaskStatus = async (taskId, status) => {
-    const updatedTask = await updateTaskStatusApi(taskId, status);
+  const updateTaskStatus = async (taskId, status, expectedStatus) => {
+    const updatedTask = await updateTaskStatusApi(taskId, status, expectedStatus);
     setUserData(current => current?.map(employee => {
       if (employee.id !== updatedTask.assignedTo) return employee;
       const tasks = employee.tasks.map(task => task.id === updatedTask.id ? updatedTask : task);

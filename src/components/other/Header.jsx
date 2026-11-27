@@ -1,16 +1,18 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { FaArrowRightFromBracket, FaBell, FaGear, FaLayerGroup, FaMoon, FaSun } from 'react-icons/fa6';
-import { getNotificationsApi, markAllNotificationsReadApi, markNotificationReadApi, subscribeNotificationsApi } from '../../api';
+import { FaArrowRight, FaArrowRightFromBracket, FaBell, FaGear, FaLayerGroup, FaMoon, FaSun } from 'react-icons/fa6';
+import { getNotificationsApi, getTasksApi, markAllNotificationsReadApi, markNotificationReadApi, subscribeNotificationsApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { useTheme } from '../../context/ThemeContext';
 import AccountSettings from './AccountSettings';
 
-const Header = ({ changeUser, data }) => {
+const Header = ({ changeUser, data, onOpenTask }) => {
   const { currentUser } = useContext(AuthContext);
   const { darkMode, toggleDark } = useTheme();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationError, setNotificationError] = useState('');
+  const [taskOpenError, setTaskOpenError] = useState('');
+  const [openingTask, setOpeningTask] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const notifRef = useRef(null);
@@ -61,6 +63,26 @@ const Header = ({ changeUser, data }) => {
       await refreshNotifications();
     } catch (error) {
       setNotificationError(error.message);
+    }
+  };
+
+  const openNotification = async notification => {
+    setTaskOpenError('');
+    if (!notification.taskId || !onOpenTask) return markRead(notification);
+    setOpeningTask(true);
+    try {
+      const [tasks] = await Promise.all([getTasksApi({ taskId: notification.taskId }), markRead(notification)]);
+      const task = tasks.find(item => item.id === notification.taskId);
+      if (!task) {
+        setTaskOpenError('This task is no longer available.');
+        return;
+      }
+      await onOpenTask(task);
+      setShowNotifications(false);
+    } catch (error) {
+      setTaskOpenError(error.message || 'Could not open this task.');
+    } finally {
+      setOpeningTask(false);
     }
   };
 
@@ -122,7 +144,7 @@ const Header = ({ changeUser, data }) => {
             {showNotifications && (
               <section 
                 className="notification-panel absolute right-0 z-50 mt-2 w-[min(92vw,360px)] overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xl shadow-slate-900/10 transition-all animate-fade-in"
-                aria-label="Notifications"
+                aria-label="Notifications" aria-busy={openingTask}
               >
                 <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-3">
                   <div>
@@ -140,9 +162,9 @@ const Header = ({ changeUser, data }) => {
                   )}
                 </div>
 
-                {notificationError && (
+                {(taskOpenError || notificationError) && (
                   <p role="alert" className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
-                    {notificationError}
+                    {taskOpenError || notificationError}
                   </p>
                 )}
 
@@ -151,7 +173,8 @@ const Header = ({ changeUser, data }) => {
                     <button
                       type="button"
                       key={notification.id}
-                      onClick={() => markRead(notification)}
+                      onClick={() => openNotification(notification)}
+                      disabled={openingTask}
                       className={`block w-full px-4 py-3 text-left transition-colors hover:bg-slate-50 ${
                         notification.readAt ? 'bg-white' : 'bg-indigo-50/30'
                       }`}
@@ -168,6 +191,7 @@ const Header = ({ changeUser, data }) => {
                             {new Date(notification.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {new Date(notification.createdAt).toLocaleDateString()}
                           </time>
                         </div>
+                        {notification.taskId && onOpenTask && <FaArrowRight className="mt-1 shrink-0 text-xs text-slate-500" aria-hidden="true" />}
                       </div>
                     </button>
                   )) : (

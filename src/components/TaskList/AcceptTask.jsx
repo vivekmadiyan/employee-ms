@@ -91,7 +91,7 @@ const AcceptTask = ({ data }) => {
             className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-rose-700 transition-all hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <FaTriangleExclamation className="text-[11px]" />
-            <span>{busy ? 'Saving…' : 'Failed'}</span>
+            <span>{busy ? 'Saving…' : 'Needs attention'}</span>
           </button>
         </div>
 

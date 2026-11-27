@@ -62,11 +62,16 @@ const EmployeeDashboard = (props) => {
     setActiveTab(id);
   };
 
+  const openNotificationTask = async task => {
+    if (!employeeData?.tasks?.some(item => item.id === task.id)) await refresh();
+    openTask(task);
+  };
+
   return (
     <div className="workspace-release">
       <div className="workspace-topbar">
         <div className="workspace-topbar-inner">
-          <Header changeUser={props.changeUser} data={props.data} />
+          <Header changeUser={props.changeUser} data={props.data} onOpenTask={openNotificationTask} />
         </div>
       </div>
 

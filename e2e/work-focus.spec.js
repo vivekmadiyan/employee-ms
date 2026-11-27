@@ -91,7 +91,9 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
     }
   });
   expect(teammateTask.status()).toBe(201);
+  const { id: teammateTaskId } = await teammateTask.json();
   let overdueTaskId;
+  let laterTaskId;
   for (const [due, description] of [[overdue, 'The overdue handoff'], [fartherOut, 'A later handoff with the same title']]) {
     const task = await page.request.post(`${api}/tasks`, {
       headers,
@@ -101,7 +103,9 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
       }
     });
     expect(task.status()).toBe(201);
-    if (due === overdue) overdueTaskId = (await task.json()).id;
+    const { id } = await task.json();
+    if (due === overdue) overdueTaskId = id;
+    else laterTaskId = id;
   }
 
   await page.reload();
@@ -118,6 +122,13 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await workFocus.getByRole('button', { name: /Review shift handoff/ }).click();
   const employeeTask = page.getByRole('group', { name: 'Review shift handoff' }).filter({ hasText: 'The overdue handoff' });
   await expect(employeeTask).toBeFocused();
+  const notificationsButton = page.getByRole('button', { name: /^Notifications/ });
+  const notifications = page.getByRole('region', { name: 'Notifications' });
+  const overdueNotification = notifications.getByRole('button', { name: /^Task is overdue: Review shift handoff/ });
+  await notificationsButton.click();
+  await overdueNotification.click();
+  await expect(employeeTask).toBeFocused();
+  await expect(notifications).toHaveCount(0);
 
   const employeeNavigation = page.getByRole('navigation', { name: 'My workspace sections' });
   await expect(employeeNavigation.getByRole('button').first()).toHaveAccessibleName('AI');
@@ -273,8 +284,30 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(employeeTask).toBeFocused();
   await page.unroute('**/api/ai/ask');
 
+  await employeeTask.getByRole('button', { name: 'Needs attention' }).click();
+  await expect(employeeTask.getByRole('button', { name: 'Resume work' })).toBeVisible();
+  expect(await readTask(overdueTaskId)).toMatchObject({ failed: true, active: false });
+  await employeeTask.getByRole('button', { name: 'Resume work' }).click();
+  await expect(employeeTask.getByRole('button', { name: 'Completed' })).toBeVisible();
+  expect(await readTask(overdueTaskId)).toMatchObject({ failed: false, active: true });
+  for (const [taskId, expectedStatus] of [[overdueTaskId, 409], [teammateTaskId, 403]]) {
+    const resume = await page.request.patch(`${api}/tasks/${taskId}/status`, {
+      headers: employeeHeaders, data: { status: 'active', expectedStatus: 'failed' }
+    });
+    expect(resume.status()).toBe(expectedStatus);
+  }
   await employeeTask.getByRole('button', { name: 'Completed' }).click();
   await expect(workFocus.getByRole('button', { name: 'Overdue 0' })).toBeVisible();
+
+  const setTaskArchive = archived => page.request.patch(`${api}/tasks/${overdueTaskId}/archive`, {
+    headers, data: { archived }
+  });
+  expect((await setTaskArchive(true)).ok()).toBe(true);
+  await notificationsButton.click();
+  await overdueNotification.click();
+  await expect(notifications.getByRole('alert')).toHaveText('This task is no longer available.');
+  await notificationsButton.click();
+  expect((await setTaskArchive(false)).ok()).toBe(true);
 
   // Add a second overdue assignment to exercise the admin link with duplicate titles.
   const followUp = await page.request.post(`${api}/tasks`, {
@@ -395,4 +428,19 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.getByRole('button', { name: 'Show all tasks' }).click();
   await expect(page.getByText('A later handoff with the same title', { exact: true })).toBeVisible();
+
+  await notificationsButton.click();
+  await notifications.getByRole('button', { name: /marked "Review shift handoff" completed/ }).click();
+  await expect(page.getByText('Viewing a task from Notifications')).toBeVisible();
+  await expect(page.getByText('The overdue handoff', { exact: true })).toBeVisible();
+  await expect(page.getByText('Admin follow-up', { exact: true })).toHaveCount(0);
+
+  for (const status of ['active', 'failed']) {
+    const update = await page.request.patch(`${api}/tasks/${laterTaskId}/status`, { headers: employeeHeaders, data: { status } });
+    expect(update.ok()).toBe(true);
+  }
+  await page.getByRole('button', { name: 'Show all tasks' }).click();
+  const laterTask = page.getByRole('row').filter({ hasText: 'A later handoff with the same title' });
+  await laterTask.getByRole('button', { name: 'Resume work' }).click();
+  await expect(laterTask.getByText('In progress')).toBeVisible();
 });

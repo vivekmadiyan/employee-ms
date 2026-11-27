@@ -45,7 +45,7 @@ const AdminDashboard = ({ changeUser, data }) => {
   const headingRef = useRef(null);
   const taskFormRef = useRef(null);
   const inviteRef = useRef(null);
-  const { tab, taskId } = view;
+  const { tab, taskId, taskSource, taskFocus } = view;
   const page = pages.find(item => item.id === tab);
   const employees = userData || [];
   const totals = employees.reduce((counts, employee) => ({
@@ -58,9 +58,11 @@ const AdminDashboard = ({ changeUser, data }) => {
     { label: 'Active teammates', value: totals.active, note: `${employees.length} registered`, icon: FaUsers },
     { label: 'Open tasks', value: totals.open, note: 'New or in progress', icon: FaListCheck },
     { label: 'Completed', value: totals.completed, note: 'Tasks delivered', icon: FaClipboardCheck },
-    { label: 'Needs follow-up', value: totals.failed, note: 'Tasks marked failed', icon: FaChartLine }
+    { label: 'Needs attention', value: totals.failed, note: 'Tasks awaiting follow-up', icon: FaChartLine }
   ];
-  const openTaskHub = task => setView({ tab: 'tasks', taskId: task?.id, jump: 'heading' });
+  const openTaskHub = (task, source = 'Work Focus') => setView(current => ({
+    tab: 'tasks', taskId: task?.id, taskSource: source, taskFocus: (current.taskFocus || 0) + 1, jump: 'heading'
+  }));
   const openPage = id => {
     if (id === 'ai') setHasOpenedAi(true);
     setView({ tab: id });
@@ -78,7 +80,9 @@ const AdminDashboard = ({ changeUser, data }) => {
   return (
     <div className="workspace-release">
       <div className="workspace-topbar">
-        <div className="workspace-topbar-inner"><Header changeUser={changeUser} data={data} /></div>
+        <div className="workspace-topbar-inner">
+          <Header changeUser={changeUser} data={data} onOpenTask={task => openTaskHub(task, 'Notifications')} />
+        </div>
       </div>
       <div className={`workspace-frame${tab === 'ai' ? ' workspace-frame--ai' : ''}`}>
         <nav className="workspace-rail" aria-label="Workspace navigation">
@@ -112,7 +116,7 @@ const AdminDashboard = ({ changeUser, data }) => {
           </section>
 
           <div id="admin-ai-view" className="workspace-ai-view" hidden={tab !== 'ai'}>
-            {hasOpenedAi && <AIAssistant onOpenTask={openTaskHub} />}
+            {hasOpenedAi && <AIAssistant onOpenTask={task => openTaskHub(task, 'AI chat')} />}
           </div>
           {tab !== 'ai' && (userData === null ? (
             <section className="dashboard-card p-8 text-center">
@@ -156,7 +160,7 @@ const AdminDashboard = ({ changeUser, data }) => {
 
               {tab === 'tasks' && (
                 <>
-                  <TaskManagement key={taskId || 'all'} initialTaskId={taskId} />
+                  <TaskManagement key={taskFocus || 0} initialTaskId={taskId} taskSource={taskSource} />
                   <div className="workspace-jump" tabIndex={-1} ref={taskFormRef}><CreateTask /></div>
                 </>
               )}

@@ -78,7 +78,7 @@ export const getLeaveRequestsApi = () => api('/leave-requests');
 export const getLeavePoliciesApi = () => api('/leave-policies');
 export const updateLeavePoliciesApi = policies => api('/leave-policies', { method: 'PUT', body: JSON.stringify({ policies }) });
 export const getLeaveBalanceApi = year => api(`/leave-balance?${new URLSearchParams({ year })}`);
-export const getLeaveCalendarApi = (from, to) => api(`/leave-calendar?${new URLSearchParams({ from, to })}`);
+export const getLeaveCalendarApi = (from, to, signal) => api(`/leave-calendar?${new URLSearchParams({ from, to })}`, { signal });
 export const createLeaveRequestApi = payload => api('/leave-requests', { method: 'POST', body: JSON.stringify(payload) });
 export const reviewLeaveRequestApi = (id, payload) => api(`/leave-requests/${id}/review`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const cancelLeaveRequestApi = id => api(`/leave-requests/${id}`, { method: 'DELETE', body: '{}' });
@@ -157,5 +157,8 @@ export const markAllNotificationsReadApi = () => api('/notifications/read-all', 
 export const getTaskCommentsApi = id => api(`/tasks/${id}/comments`);
 export const createTaskCommentApi = (id, content) => api(`/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
 export const askAiApi = payload => api('/ai/ask', { method: 'POST', body: JSON.stringify(payload) });
+export const listAiConversationsApi = () => api('/ai/conversations');
+export const getAiConversationApi = id => api(`/ai/conversations/${encodeURIComponent(id)}`);
+export const deleteAiConversationApi = id => api(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const getAiToolsApi = () => api('/ai/tools');
 export const generateAiReportApi = payload => api('/ai/report', { method: 'POST', body: JSON.stringify(payload) });

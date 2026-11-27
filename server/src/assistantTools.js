@@ -2,11 +2,11 @@ import { z } from 'zod';
 
 export const statusUpdateSchema = z.object({
   status: z.enum(['active', 'completed', 'failed']),
-  expectedStatus: z.enum(['new', 'active']).optional()
+  expectedStatus: z.enum(['new', 'active', 'failed']).optional()
 });
 
 export const canChangeTaskStatus = (from, to) =>
-  (from === 'new' && to === 'active') || (from === 'active' && ['completed', 'failed'].includes(to));
+  (['new', 'failed'].includes(from) && to === 'active') || (from === 'active' && ['completed', 'failed'].includes(to));
 
 const statusLabels = { new: 'New', active: 'In progress', completed: 'Completed', failed: 'Needs attention' };
 const statusProposal = statusUpdateSchema.pick({ status: true }).extend({
@@ -17,14 +17,14 @@ const tools = [
   {
     id: 'set_task_status',
     label: 'Update task status',
-    description: 'Start a new task or mark an in-progress task as completed or needing attention.',
+    description: 'Start a new task, resume a task that needs attention, or mark an in-progress task as completed or needing attention.',
     example: 'Mark the inventory review as completed.',
     roles: ['admin', 'employee'],
     parameters: {
       type: 'object',
       properties: {
         taskId: { type: 'integer', description: 'ID of the matching visible task. Ask which one if multiple tasks match.' },
-        status: { type: 'string', enum: ['active', 'completed', 'failed'], description: 'New tasks can only move to active. Only active tasks can move to completed or failed.' }
+        status: { type: 'string', enum: ['active', 'completed', 'failed'], description: 'New tasks and tasks needing attention can move to active. Only active tasks can move to completed or failed.' }
       },
       required: ['taskId', 'status'],
       additionalProperties: false

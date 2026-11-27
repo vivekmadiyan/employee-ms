@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
-import { FaBoxArchive, FaMagnifyingGlass, FaRotateLeft, FaFilter, FaPenToSquare } from 'react-icons/fa6';
+import { FaBoxArchive, FaMagnifyingGlass, FaRotateLeft, FaFilter, FaPenToSquare, FaPlay } from 'react-icons/fa6';
 import { archiveTaskApi, bulkUpdateTasksApi, getTasksApi, updateTaskApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import TaskComments from './TaskComments';
@@ -29,8 +29,8 @@ const toForm = task => ({
   priority: task.priority || 'medium'
 });
 
-export default function TaskManagement({ initialTaskId }) {
-  const { userData, refresh } = useContext(AuthContext);
+export default function TaskManagement({ initialTaskId, taskSource }) {
+  const { userData, refresh, updateTaskStatus } = useContext(AuthContext);
   const [tasks, setTasks] = useState([]);
   const [filters, setFilters] = useState(() => ({
     taskId: initialTaskId || '', q: '', status: '', priority: '', assignee: '', dueAfter: '', dueBefore: ''
@@ -130,6 +130,21 @@ export default function TaskManagement({ initialTaskId }) {
     }
   };
 
+  const resumeTask = async task => {
+    setBusyId(task.id);
+    setError('');
+    setNotice('');
+    try {
+      await updateTaskStatus(task.id, 'active', 'failed');
+      await loadTasks();
+      setNotice('Task moved to In progress.');
+    } catch (requestError) {
+      setError(requestError.message || 'Could not resume this task.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const updateFilter = event => {
     const { name, value } = event.target;
     setFilters(current => ({ ...current, taskId: '', [name]: value }));
@@ -197,7 +212,7 @@ export default function TaskManagement({ initialTaskId }) {
 
       {filters.taskId && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
-          <p className="text-sm font-semibold text-slate-700">Viewing a task from Work Focus</p>
+          <p className="text-sm font-semibold text-slate-700">{taskSource ? `Viewing a task from ${taskSource}` : 'Viewing a single task'}</p>
           <button type="button" className="workspace-action workspace-action--secondary"
             onClick={() => setFilters(current => ({ ...current, taskId: '' }))}>
             Show all tasks
@@ -420,6 +435,12 @@ export default function TaskManagement({ initialTaskId }) {
                             >
                               <FaPenToSquare className="text-[10px]" />
                               <span>Edit</span>
+                            </button>
+                          )}
+                          {!task.archived && status === 'failed' && (
+                            <button type="button" onClick={() => resumeTask(task)} disabled={busyId === task.id}
+                              className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-bold text-indigo-600 hover:text-indigo-800 disabled:opacity-50">
+                              <FaPlay className="text-[10px]" aria-hidden="true" /> Resume work
                             </button>
                           )}
                           <button 

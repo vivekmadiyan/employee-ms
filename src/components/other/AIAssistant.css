@@ -232,7 +232,7 @@ html.dark .ai-error { color: #ffb6a6; background: #49302a; }
   .ai-panel-header { flex-wrap: wrap; gap: .55rem .68rem; padding: .65rem .85rem; }
   .ai-title { flex-basis: calc(100% - 4rem); }
   .ai-symbol { width: 2.25rem; }
-  .ai-header-actions { margin-left: 2.93rem; }
+  .ai-header-actions { width: 100%; }
   .ai-header-actions .ai-quiet { min-height: 34px; padding: .3rem .55rem; }
   .ai-modes { padding-block: .3rem; }
   .ai-welcome-hero { padding: .8rem; }

@@ -1,0 +1,47 @@
+.ai-history {
+  inset: 0;
+  width: min(32rem, calc(100% - 1.25rem));
+  max-height: min(38rem, calc(100dvh - 1.25rem));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ai-line);
+  border-radius: 1rem;
+  background: var(--ai-paper);
+  color: var(--desk-ink);
+  box-shadow: 0 24px 80px #102e244f;
+}
+.ai-history[open] { display: flex; flex-direction: column; }
+.ai-history::backdrop { background: #08140fb3; }
+.ai-history-header {
+  display: flex; align-items: center; gap: .65rem; padding: .8rem;
+  border-bottom: 1px solid var(--ai-line); background: var(--ai-rail);
+}
+.ai-history-header h3 { flex: 1; font-size: 1.08rem; font-weight: 850; }
+.ai-history-mark {
+  display: grid; place-items: center; width: 2.25rem; height: 2.25rem;
+  border-radius: .6rem; background: var(--ai-tint); color: var(--desk-accent);
+}
+.ai-history-icon { flex: none; min-width: 40px; padding: .4rem; }
+.ai-history-content { padding: .75rem; overflow-y: auto; overscroll-behavior: contain; }
+.ai-history-retention { margin: .08rem .1rem .6rem; color: var(--desk-muted); font-size: .75rem; }
+.ai-history-content > .ai-note { padding: .4rem; }
+.ai-history-content > .ai-error { margin-bottom: .55rem; }
+.ai-history-list { display: grid; gap: .4rem; padding: 0; margin: 0; list-style: none; }
+.ai-history-list li { border: 1px solid var(--ai-line); border-radius: .7rem; }
+.ai-history-list li[data-current="true"] { background: var(--ai-tint); }
+.ai-history-row { display: flex; align-items: center; gap: .3rem; padding: .3rem; }
+.ai-history-open {
+  display: flex; justify-content: space-between; align-items: center; gap: .45rem;
+  flex: 1; min-width: 0; min-height: 48px; padding: .4rem .5rem; border-radius: .45rem; text-align: left;
+}
+.ai-history-open:hover { background: var(--ai-rail); }
+.ai-history-open svg { flex: none; color: var(--desk-accent); font-size: .8rem; }
+.ai-history-open span { min-width: 0; }
+.ai-history-open strong, .ai-history-open time { display: block; }
+.ai-history-open strong { overflow-wrap: anywhere; font-size: .84rem; font-weight: 800; }
+.ai-history-open time { margin-top: .2rem; color: var(--desk-muted); font-size: .72rem; }
+.ai-history-confirm { padding: .6rem .7rem; border-top: 1px solid var(--ai-line); font-size: .8rem; }
+.ai-history-confirm > div { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .4rem; }
+.ai-history-delete { color: #a02933; }
+html.dark .ai-history-delete { color: #ffc1c5; }
