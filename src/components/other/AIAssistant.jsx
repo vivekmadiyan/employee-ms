@@ -1,11 +1,20 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
-import { FaArrowUp, FaArrowUpRightFromSquare, FaCircleCheck, FaPlus, FaWandMagicSparkles, FaWrench } from 'react-icons/fa6';
+import {
+  FaArrowRight, FaArrowUp, FaArrowUpRightFromSquare, FaChartSimple, FaCircleCheck, FaClock,
+  FaCommentDots, FaListCheck, FaPenToSquare, FaPlus, FaWandMagicSparkles, FaWrench
+} from 'react-icons/fa6';
 import { askAiApi, createTaskApi, getAiToolsApi, updateTaskStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { localDateKey } from '../../utils/workFocus';
 import './AIAssistant.css';
 
 const providerNames = { gemini: 'Gemini', groq: 'Groq' };
+const toolIcons = { set_task_status: FaListCheck, create_task: FaPenToSquare };
+const starters = [
+  { title: 'Find overdue work', text: 'See which deadlines have slipped.', question: 'Which tasks are overdue?', icon: FaClock },
+  { title: 'Plan the week', text: 'Pick what deserves attention first.', question: 'Help me prioritize this week.', icon: FaListCheck },
+  { title: 'Draft a handoff', text: 'Turn open work into a short update.', question: 'Draft a handoff using the open tasks.', icon: FaPenToSquare }
+];
 const actionHandlers = {
   set_task_status: action => updateTaskStatusApi(action.taskId, action.status, action.expectedStatus),
   create_task: action => createTaskApi(action)
@@ -66,6 +75,7 @@ export default function AIAssistant({ onOpenTask }) {
   const log = useRef(null);
   const input = useRef(null);
   const sequence = useRef(0);
+  const initializedTools = useRef(false);
   const requestLock = useRef(false);
   const activeAction = useRef(null);
   const settledActions = useRef(new Set());
@@ -74,14 +84,18 @@ export default function AIAssistant({ onOpenTask }) {
     'What needs attention in the next 7 days?',
     currentUser?.role === 'admin' ? 'Summarize the team’s open work' : 'Summarize my open work'
   ];
-  const starters = [summaries[0], 'Help me prioritize this week.', 'Draft a handoff using the open tasks.'];
   const busy = Boolean(pending) || saving;
 
   useEffect(() => {
     let cancelled = false;
     getAiToolsApi().then(result => {
       if (cancelled) return;
-      setTools(Array.isArray(result.tools) ? result.tools : []);
+      const available = Array.isArray(result.tools) ? result.tools : [];
+      setTools(available);
+      if (!initializedTools.current) {
+        initializedTools.current = true;
+        if (available.some(tool => tool.id === 'set_task_status')) setEnabledTools(['set_task_status']);
+      }
       setToolState('ready');
     }).catch(() => {
       if (!cancelled) setToolState('error');
@@ -153,7 +167,7 @@ export default function AIAssistant({ onOpenTask }) {
 
   async function sendQuestion(nextQuestion) {
     const text = nextQuestion.trim();
-    if (requestLock.current || activeAction.current !== null || text.length < 3) return;
+    if (requestLock.current || activeAction.current !== null || !text) return;
     requestLock.current = true;
     setPending(text);
     setError('');
@@ -188,12 +202,12 @@ export default function AIAssistant({ onOpenTask }) {
   }
 
   return (
-    <section className="dashboard-card ai-panel" aria-labelledby="ai-assistant-heading">
+    <section className="ai-panel" aria-labelledby="ai-assistant-heading">
       <header className="ai-panel-header">
         <span className="ai-symbol"><FaWandMagicSparkles aria-hidden="true" /></span>
         <div className="ai-title">
-          <h2 id="ai-assistant-heading" className="dashboard-card-heading">AI workspace assistant</h2>
-          <p>Ask about tasks or prepare a change for review.</p>
+          <h2 id="ai-assistant-heading">AI workspace assistant</h2>
+          <p>Plan work, draft updates, and prepare task changes.</p>
         </div>
         <div className="ai-header-actions">
           <button type="button" className="ai-quiet ai-mobile-tools" aria-expanded={toolsOpen} aria-controls="ai-tools"
@@ -206,8 +220,12 @@ export default function AIAssistant({ onOpenTask }) {
       <div className="ai-layout">
         <div className="ai-chat">
           <div className="ai-modes" role="group" aria-label="Assistant mode">
-            <button type="button" disabled={busy} aria-pressed={mode === 'chat'} onClick={() => switchMode('chat')}>AI chat</button>
-            <button type="button" disabled={busy} aria-pressed={mode === 'summary'} onClick={() => switchMode('summary')}>Task summaries</button>
+            <button type="button" disabled={busy} aria-pressed={mode === 'chat'} onClick={() => switchMode('chat')}>
+              <FaCommentDots aria-hidden="true" /> AI chat
+            </button>
+            <button type="button" disabled={busy} aria-pressed={mode === 'summary'} onClick={() => switchMode('summary')}>
+              <FaChartSimple aria-hidden="true" /> Task summaries
+            </button>
           </div>
 
           {mode === 'chat' ? (
@@ -216,14 +234,21 @@ export default function AIAssistant({ onOpenTask }) {
                 aria-label="Assistant conversation" tabIndex={0}>
                 {!turns.length && !pending && (
                   <div className="ai-welcome">
-                    <FaWandMagicSparkles aria-hidden="true" />
-                    <h3>What would you like to do?</h3>
-                    <div className="ai-options">
-                      {starters.map(starter => (
-                        <button key={starter} type="button" onClick={() => {
-                          setQuestion(starter);
-                          input.current?.focus();
-                        }}>{starter}</button>
+                    <div className="ai-welcome-hero">
+                      <span className="ai-welcome-mark"><FaWandMagicSparkles aria-hidden="true" /></span>
+                      <h3>Start with what matters.</h3>
+                      <p>Ask a question or pick a starting point.</p>
+                    </div>
+                    <div className="ai-starters">
+                      {starters.map(({ title, text, question: prompt, icon: Icon }) => (
+                        <button key={title} type="button" onClick={() => {
+                          setQuestion(prompt);
+                          sendQuestion(prompt);
+                        }}>
+                          <span className="ai-starter-icon"><Icon aria-hidden="true" /></span>
+                          <span className="ai-starter-copy"><strong>{title}</strong><span>{text}</span></span>
+                          <FaArrowRight className="ai-starter-arrow" aria-hidden="true" />
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -254,15 +279,23 @@ export default function AIAssistant({ onOpenTask }) {
                 {pending && (
                   <article className="ai-turn">
                     <p className="ai-user"><span className="sr-only">You: </span>{pending}</p>
-                    <p className="ai-note" role="status">Waiting for the AI provider…</p>
+                    <p className="ai-thinking" role="status"><i /><i /><i /><span>Thinking…</span></p>
                   </article>
                 )}
               </div>
               <div className="ai-composer">
-                {error && <p role="alert" className="ai-error">{error}</p>}
+                {error && (
+                  <div className="ai-error ai-request-error">
+                    <p role="alert">{error}</p>
+                    {!busy && question.trim() && <button type="button" className="ai-quiet" onClick={() => sendQuestion(question)}>Retry</button>}
+                  </div>
+                )}
                 <form className="ai-form" onSubmit={event => { event.preventDefault(); sendQuestion(question); }}>
                   <textarea ref={input} rows={2} aria-label="Ask about tasks" aria-describedby="ai-context-note"
-                    value={question} maxLength={500} readOnly={busy} onChange={event => setQuestion(event.target.value)}
+                    value={question} maxLength={500} readOnly={busy} onChange={event => {
+                      setQuestion(event.target.value);
+                      setError('');
+                    }}
                     onKeyDown={event => {
                       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                         event.preventDefault();
@@ -270,15 +303,18 @@ export default function AIAssistant({ onOpenTask }) {
                       }
                     }}
                     placeholder={turns.length ? 'Ask a follow-up…' : 'Message your workspace assistant…'} />
-                  <button type="submit" disabled={busy || question.trim().length < 3} className="workspace-action">
+                  <button type="submit" disabled={busy || !question.trim()} className="workspace-action ai-send">
                     <FaArrowUp aria-hidden="true" /> {pending ? 'Thinking…' : 'Ask AI'}
                   </button>
                 </form>
-                <p id="ai-context-note" className="ai-note">
-                  The provider receives your question, recent replies, and visible task details.
-                  {enabledTools.includes('create_task') && ' Task creation also shares eligible assignee names.'}
-                  {' You review each proposed action before it saves.'}
-                </p>
+                <div className="ai-composer-meta">
+                  <p id="ai-context-note" className="ai-note">
+                    Your provider receives the chat and visible task details.
+                    {enabledTools.includes('create_task') && ' Creating tasks also shares eligible assignee names.'}
+                    {' Changes require your approval.'}
+                  </p>
+                  <span className="ai-keyboard-hint"><kbd>Enter</kbd> to send</span>
+                </div>
               </div>
             </>
           ) : (
@@ -303,8 +339,11 @@ export default function AIAssistant({ onOpenTask }) {
           )}
         </div>
         <aside className="ai-tools" data-open={toolsOpen} id="ai-tools" aria-labelledby="ai-tools-heading">
-          <h3 id="ai-tools-heading"><FaWrench aria-hidden="true" /> Tools</h3>
-          <p className="ai-note">Select tools to let the chat propose actions.</p>
+          <div className="ai-tools-header">
+            <h3 id="ai-tools-heading"><FaWrench aria-hidden="true" /> Tools</h3>
+            {toolState === 'ready' && <span className="ai-tool-total">{enabledTools.length} enabled</span>}
+          </div>
+          <p className="ai-note">Choose what the assistant can prepare.</p>
           {toolState === 'loading' && <p className="ai-note" role="status">Loading tools…</p>}
           {toolState === 'error' && (
             <div>
@@ -317,18 +356,26 @@ export default function AIAssistant({ onOpenTask }) {
           )}
           {toolState === 'ready' && !tools.length && <p className="ai-note">Your account has no AI tools available.</p>}
           <ul className="ai-tool-list">
-            {tools.map(tool => (
-              <li key={tool.id}>
-                <label>
-                  <input type="checkbox" checked={enabledTools.includes(tool.id)} disabled={busy}
-                    onChange={event => setToolEnabled(tool.id, event.target.checked)} />
-                  <span>{tool.label}</span>
-                </label>
-                <p className="ai-note">{tool.description}</p>
-                <button type="button" className="ai-tool-example" aria-label={`Try ${tool.label}`}
-                  disabled={busy} onClick={() => applyExample(tool)}>Try example</button>
-              </li>
-            ))}
+            {tools.map(tool => {
+              const Icon = toolIcons[tool.id] || FaWrench;
+              const enabled = enabledTools.includes(tool.id);
+              return (
+                <li key={tool.id} data-enabled={enabled}>
+                  <label>
+                    <span className="ai-tool-icon"><Icon aria-hidden="true" /></span>
+                    <span>{tool.label}</span>
+                    <span className="ai-toggle">
+                      <input type="checkbox" checked={enabled} disabled={busy}
+                        onChange={event => setToolEnabled(tool.id, event.target.checked)} />
+                      <span aria-hidden="true" />
+                    </span>
+                  </label>
+                  <p className="ai-note">{tool.description}</p>
+                  <button type="button" className="ai-tool-example" aria-label={`Try ${tool.label}`}
+                    disabled={busy} onClick={() => applyExample(tool)}>Try example <FaArrowRight aria-hidden="true" /></button>
+                </li>
+              );
+            })}
           </ul>
         </aside>
       </div>

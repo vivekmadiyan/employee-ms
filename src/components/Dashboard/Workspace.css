@@ -178,6 +178,9 @@ html.dark .workspace-release {
 .workspace-personal { max-width: 1280px; }
 .workspace-personal--ai { max-width: var(--desk-width); }
 .workspace-ai-view { min-width: 0; }
+.workspace-frame--ai, .workspace-personal--ai { padding-block: clamp(.8rem, 2vw, 1.4rem) 1rem; }
+.workspace-frame--ai .workspace-ai-view { --ai-viewport-offset: calc(68px + clamp(.8rem, 2vw, 1.4rem) + 1rem); }
+.workspace-personal--ai .workspace-ai-view { --ai-viewport-offset: calc(132px + clamp(.8rem, 2vw, 1.4rem) + 1rem); }
 .workspace-personal-nav { display: flex; flex-wrap: wrap; gap: .35rem; }
 .workspace-personal-count { border: 1px solid var(--desk-line); padding: .05rem .4rem; border-radius: 999px; font-size: .7rem; }
 .workspace-jump, .assigned-task-target, .workspace-pagehead h1 { scroll-margin-top: 88px; }

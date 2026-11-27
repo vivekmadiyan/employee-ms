@@ -1056,6 +1056,30 @@ beforeEach(() => {
 });
 
 describe('authenticated API workflows', () => {
+  it('forwards a short greeting to the model and rejects blank chat messages', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({
+      candidates: [{ content: { parts: [{ text: 'Hi! I can help with your tasks.' }] } }]
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ask = question => request(app).post('/api/ai/ask')
+      .set('Authorization', `Bearer ${login.body.token}`).send({ mode: 'chat', question });
+
+    try {
+      await ask('  ').expect(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const reply = await ask(' hi ').expect(200);
+      expect(reply.body).toMatchObject({ source: 'gemini', answer: 'Hi! I can help with your tasks.' });
+      const providerBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(JSON.parse(providerBody.contents.at(-1).parts[0].text).question).toBe('hi');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('previews a scoped status change, keeps the task unchanged without approval, and rejects stale confirmations', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'employee@example.test', password: 'correct-horse-battery-123'

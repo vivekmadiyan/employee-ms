@@ -71,7 +71,7 @@ const EmployeeDashboard = (props) => {
       </div>
 
       <main className={`workspace-main workspace-personal${activeTab === 'ai' ? ' workspace-personal--ai' : ''}`}>
-        <div className="workspace-pagehead">
+        <div className={activeTab === 'ai' ? 'sr-only' : 'workspace-pagehead'}>
           <div>
             <h1>{activeTab === 'ai' ? 'AI workspace' : 'My Workspace'}</h1>
             <p>{activeTab === 'ai'

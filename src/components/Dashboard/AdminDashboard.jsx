@@ -80,7 +80,7 @@ const AdminDashboard = ({ changeUser, data }) => {
       <div className="workspace-topbar">
         <div className="workspace-topbar-inner"><Header changeUser={changeUser} data={data} /></div>
       </div>
-      <div className="workspace-frame">
+      <div className={`workspace-frame${tab === 'ai' ? ' workspace-frame--ai' : ''}`}>
         <nav className="workspace-rail" aria-label="Workspace navigation">
           {navigation.map(([group, items]) => (
             <div className="workspace-navgroup" key={group}>
@@ -98,7 +98,7 @@ const AdminDashboard = ({ changeUser, data }) => {
         </nav>
 
         <main className="workspace-main">
-          <section className="workspace-pagehead" aria-labelledby="workspace-page-title">
+          <section className={tab === 'ai' ? 'sr-only' : 'workspace-pagehead'} aria-labelledby="workspace-page-title">
             <div>
               <h1 id="workspace-page-title" ref={headingRef} tabIndex={-1}>{page.title || page.label}</h1>
               <p>{page.description}</p>

@@ -106,8 +106,19 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await assistant.getByRole('button', { name: 'Summarize my open work' }).click();
   await expect(assistant.getByRole('status')).toContainText('2 open tasks.');
   await assistant.getByRole('button', { name: 'AI chat' }).click();
-  await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Which tasks are overdue?');
-  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  const aiInput = assistant.getByRole('textbox', { name: 'Ask about tasks' });
+  const sendAi = assistant.getByRole('button', { name: 'Ask AI' });
+  await aiInput.fill('   ');
+  await expect(sendAi).toBeDisabled();
+  await aiInput.fill('hi');
+  await expect(sendAi).toBeEnabled();
+  const [greeting] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/ai/ask'),
+    sendAi.click()
+  ]);
+  expect(greeting.request().postDataJSON()).toMatchObject({ question: 'hi', mode: 'chat' });
+  expect(greeting.status()).toBe(503);
   await expect(assistant.getByRole('alert')).toContainText(/AI provider .*unavailable/);
   await expect(assistant.getByText('Workspace summary')).toHaveCount(0);
 
@@ -199,8 +210,13 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
   const adminNavigation = page.getByRole('navigation', { name: 'Workspace navigation' });
   await expect(adminNavigation.getByRole('button').first()).toHaveAccessibleName('AI');
+  await page.setViewportSize({ width: 1440, height: 900 });
   await adminNavigation.getByRole('button', { name: 'AI', exact: true }).click();
   await expect(assistant).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(aiInput).toBeInViewport({ ratio: 1 });
+  await expect(sendAi).toBeInViewport({ ratio: 1 });
+  await page.setViewportSize({ width: 390, height: 844 });
   const adminTools = await page.request.get(`${api}/ai/tools`, { headers });
   expect(adminTools.status()).toBe(200);
   const { tools: availableAdminTools } = await adminTools.json();
