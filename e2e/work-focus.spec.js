@@ -52,6 +52,15 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
     token: localStorage.getItem('ems_token')
   }));
   const employeeHeaders = { Authorization: `Bearer ${employee.token}` };
+  const otherEmployee = await page.request.post(`${api}/employees`, {
+    headers,
+    data: {
+      firstName: 'Reports Teammate', email: `report-member-${suffix}@example.test`,
+      password, department: 'Operations'
+    }
+  });
+  expect(otherEmployee.status()).toBe(201);
+  const { id: otherEmployeeId } = await otherEmployee.json();
   const readTask = async taskId => {
     const response = await page.request.get(`${api}/tasks?taskId=${taskId}`, { headers: employeeHeaders });
     expect(response.status()).toBe(200);
@@ -62,6 +71,15 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   overdue.setUTCDate(overdue.getUTCDate() - 3);
   const fartherOut = new Date();
   fartherOut.setUTCDate(fartherOut.getUTCDate() + 25);
+  const teammateTask = await page.request.post(`${api}/tasks`, {
+    headers,
+    data: {
+      taskTitle: 'Check another teammate’s stock', taskDescription: 'Verify reports exclude other assignments.',
+      taskDate: fartherOut.toISOString().slice(0, 10),
+      category: 'Operations', assignedTo: otherEmployeeId, priority: 'medium'
+    }
+  });
+  expect(teammateTask.status()).toBe(201);
   let overdueTaskId;
   for (const [due, description] of [[overdue, 'The overdue handoff'], [fartherOut, 'A later handoff with the same title']]) {
     const task = await page.request.post(`${api}/tasks`, {
@@ -105,6 +123,37 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(assistant.getByRole('status')).toContainText('1 task needs attention.');
   await assistant.getByRole('button', { name: 'Summarize my open work' }).click();
   await expect(assistant.getByRole('status')).toContainText('2 open tasks.');
+  await assistant.getByRole('button', { name: 'AI reports' }).click();
+  await expect(assistant.getByLabel('Report type')).toHaveCount(0);
+  const reportFrom = assistant.getByLabel('From', { exact: true });
+  const reportTo = assistant.getByLabel('To', { exact: true });
+  await expect(reportFrom).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+  await expect(reportTo).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+  expect(Date.parse(await reportTo.inputValue()) - Date.parse(await reportFrom.inputValue())).toBe(29 * 86_400_000);
+  // Include the database's current date even when the test browser and database timezones differ.
+  const through = new Date();
+  through.setUTCDate(through.getUTCDate() + 1);
+  await reportTo.fill(through.toISOString().slice(0, 10));
+  const isReport = response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/ai/report';
+  const [personalReportResponse] = await Promise.all([
+    page.waitForResponse(isReport),
+    assistant.getByRole('button', { name: 'Generate report' }).click()
+  ]);
+  expect(personalReportResponse.status()).toBe(200);
+  expect(personalReportResponse.request().postDataJSON()).toMatchObject({
+    kind: 'tasks', from: await reportFrom.inputValue(), to: await reportTo.inputValue()
+  });
+  const personalReport = await personalReportResponse.json();
+  expect(personalReport).toMatchObject({ kind: 'tasks', analysis: null });
+  expect(personalReport.metrics).toContainEqual({ label: 'Total tasks', value: 2 });
+  await expect(assistant.getByRole('heading', { name: personalReport.title, exact: true })).toBeVisible();
+  await expect(assistant.getByText(/AI analysis is currently unavailable/i)).toBeVisible();
+  const forbiddenReport = await page.request.post(`${api}/ai/report`, {
+    headers: employeeHeaders, data: { kind: 'workforce' }
+  });
+  expect(forbiddenReport.status()).toBe(403);
+
   await assistant.getByRole('button', { name: 'AI chat' }).click();
   const aiInput = assistant.getByRole('textbox', { name: 'Ask about tasks' });
   const sendAi = assistant.getByRole('button', { name: 'Ask AI' });
@@ -155,7 +204,8 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Which tasks are overdue?');
   await assistant.getByRole('button', { name: 'Ask AI' }).click();
   await expect(assistant.getByRole('log')).toContainText('Review the overdue shift handoff first.');
-  await expect(assistant.getByRole('log')).toContainText('Gemini');
+  await expect(assistant.getByRole('log')).toContainText('EmployeeMS AI');
+  await expect(assistant.getByRole('log')).not.toContainText('Gemini');
   await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Draft a handoff for it.');
   await assistant.getByRole('button', { name: 'Ask AI' }).click();
   await expect(assistant.getByRole('log')).toContainText('Tell the next shift to review the handoff.');
@@ -217,6 +267,39 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(aiInput).toBeInViewport({ ratio: 1 });
   await expect(sendAi).toBeInViewport({ ratio: 1 });
   await page.setViewportSize({ width: 390, height: 844 });
+  await assistant.getByRole('button', { name: 'AI reports' }).click();
+  await assistant.getByLabel('Report type').selectOption({ label: 'Workforce report' });
+  const [workforceReportResponse] = await Promise.all([
+    page.waitForResponse(isReport),
+    assistant.getByRole('button', { name: 'Generate report' }).click()
+  ]);
+  expect(workforceReportResponse.status()).toBe(200);
+  expect(workforceReportResponse.request().postDataJSON()).toEqual({ kind: 'workforce' });
+  const workforceReport = await workforceReportResponse.json();
+  expect(workforceReport).toMatchObject({ kind: 'workforce', analysis: null });
+  expect(workforceReport.metrics).toContainEqual({ label: 'Total employees', value: 2 });
+  await expect(assistant.getByRole('heading', { name: workforceReport.title, exact: true })).toBeVisible();
+  const analysis = 'Both recorded teammates have active accounts.';
+  await page.route('**/api/ai/report', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({ json: { ...workforceReport, analysis } });
+  });
+  await assistant.getByRole('button', { name: 'Generate report' }).click();
+  await expect(assistant.getByRole('heading', { name: 'EmployeeMS AI analysis' })).toBeVisible();
+  await expect(assistant.getByText(analysis)).toBeVisible();
+  const [reportDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    assistant.getByRole('button', { name: 'Download report' }).click()
+  ]);
+  expect(reportDownload.suggestedFilename()).toMatch(/\.txt$/);
+  const reportStream = await reportDownload.createReadStream();
+  let reportText = '';
+  for await (const chunk of reportStream) reportText += chunk.toString();
+  expect(reportText).toContain(analysis);
+  expect(reportText).toMatch(/Total employees[^\n]*2/);
+  await page.unroute('**/api/ai/report');
+  await assistant.getByRole('button', { name: 'AI chat' }).click();
+
   const adminTools = await page.request.get(`${api}/ai/tools`, { headers });
   expect(adminTools.status()).toBe(200);
   const { tools: availableAdminTools } = await adminTools.json();

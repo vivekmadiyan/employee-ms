@@ -158,3 +158,4 @@ export const getTaskCommentsApi = id => api(`/tasks/${id}/comments`);
 export const createTaskCommentApi = (id, content) => api(`/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
 export const askAiApi = payload => api('/ai/ask', { method: 'POST', body: JSON.stringify(payload) });
 export const getAiToolsApi = () => api('/ai/tools');
+export const generateAiReportApi = payload => api('/ai/report', { method: 'POST', body: JSON.stringify(payload) });

@@ -82,6 +82,11 @@ const userFields = user => ({
 });
 const taskFields = task => ({ ...task });
 const normalize = sql => sql.replace(/\s+/g, ' ').trim().toLowerCase();
+const visibleReportTasks = ([companyId, from, to, assigneeId]) => tasks.filter(task =>
+  task.companyId === Number(companyId) && !task.archivedAt &&
+  String(task.createdAt).slice(0, 10) >= from && String(task.createdAt).slice(0, 10) <= to &&
+  (assigneeId == null || task.assignedTo === Number(assigneeId))
+);
 
 function installQueryMock() {
   mocks.query.mockImplementation(async (sql, params = []) => {
@@ -415,13 +420,7 @@ function installQueryMock() {
       })));
     }
     if (text.startsWith('select count(*)::int as "totaltasks"')) {
-      const reportTasks = tasks.filter(task => {
-        const createdDate = String(task.createdAt).slice(0, 10);
-        return task.companyId === Number(params[0]) &&
-          !task.archivedAt &&
-          createdDate >= params[1] &&
-          createdDate <= params[2];
-      });
+      const reportTasks = visibleReportTasks(params);
       return result([{
         totalTasks: reportTasks.length,
         newTasks: reportTasks.filter(task => task.status === 'new').length,
@@ -435,45 +434,25 @@ function installQueryMock() {
       }]);
     }
     if (text.startsWith('select t.status,count(*)::int as count from tasks t')) {
-      const reportTasks = tasks.filter(task =>
-        task.companyId === Number(params[0]) &&
-        !task.archivedAt &&
-        String(task.createdAt).slice(0, 10) >= params[1] &&
-        String(task.createdAt).slice(0, 10) <= params[2]
-      );
+      const reportTasks = visibleReportTasks(params);
       const groups = new Map();
       reportTasks.forEach(task => groups.set(task.status, (groups.get(task.status) || 0) + 1));
       return result([...groups].map(([status, count]) => ({ status, count })));
     }
     if (text.startsWith('select t.priority,count(*)::int as count from tasks t')) {
-      const reportTasks = tasks.filter(task =>
-        task.companyId === Number(params[0]) &&
-        !task.archivedAt &&
-        String(task.createdAt).slice(0, 10) >= params[1] &&
-        String(task.createdAt).slice(0, 10) <= params[2]
-      );
+      const reportTasks = visibleReportTasks(params);
       const groups = new Map();
       reportTasks.forEach(task => groups.set(task.priority, (groups.get(task.priority) || 0) + 1));
       return result([...groups].map(([priority, count]) => ({ priority, count })));
     }
     if (text.startsWith('select t.category,count(*)::int as count from tasks t')) {
-      const reportTasks = tasks.filter(task =>
-        task.companyId === Number(params[0]) &&
-        !task.archivedAt &&
-        String(task.createdAt).slice(0, 10) >= params[1] &&
-        String(task.createdAt).slice(0, 10) <= params[2]
-      );
+      const reportTasks = visibleReportTasks(params);
       const groups = new Map();
       reportTasks.forEach(task => groups.set(task.category, (groups.get(task.category) || 0) + 1));
       return result([...groups].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count).slice(0, 10));
     }
     if (text.startsWith('select t.assigned_to as "assigneeid"')) {
-      const reportTasks = tasks.filter(task =>
-        task.companyId === Number(params[0]) &&
-        !task.archivedAt &&
-        String(task.createdAt).slice(0, 10) >= params[1] &&
-        String(task.createdAt).slice(0, 10) <= params[2]
-      );
+      const reportTasks = visibleReportTasks(params);
       const groups = new Map();
       reportTasks.forEach(task => {
         const group = groups.get(task.assignedTo) || { totalTasks: 0, completedTasks: 0, overdueTasks: 0 };
@@ -1056,6 +1035,49 @@ beforeEach(() => {
 });
 
 describe('authenticated API workflows', () => {
+  it('uses only scoped task figures for AI analysis and returns verified figures when the provider is unavailable', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    const template = {
+      companyId: 1, assignedTo: 2, taskTitle: 'Internal task title', taskDate: '2026-10-20',
+      category: 'Internal department label', createdAt: '2026-10-19T12:00:00Z', status: 'completed', priority: 'high'
+    };
+    tasks.push(
+      { ...template, id: 1 },
+      { ...template, id: 2, assignedTo: 3 },
+      { ...template, id: 3, companyId: 2 },
+      { ...template, id: 4, archivedAt: '2026-10-20T12:00:00Z' }
+    );
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        candidates: [{ content: { parts: [{ text: 'One task was completed.' }] } }]
+      }))
+      .mockResolvedValueOnce(new Response('Quota limit', { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const makeReport = payload => request(app).post('/api/ai/report')
+        .set('Authorization', `Bearer ${login.body.token}`).send(payload);
+      await makeReport({ kind: 'workforce' }).expect(403);
+      await makeReport({ kind: 'tasks', from: '2026-11-01', to: '2026-10-30' }).expect(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const range = { kind: 'tasks', from: '2026-10-01', to: '2026-10-31' };
+      const report = await makeReport(range).expect(200);
+      expect(report.body).toMatchObject({ kind: 'tasks', title: 'My task report', analysis: 'One task was completed.' });
+      expect(report.body.metrics).toContainEqual({ label: 'Total tasks', value: 1 });
+      expect(report.body.metrics).toContainEqual({ label: 'Completed', value: 1 });
+      const modelPrompt = fetchMock.mock.calls[0][1].body;
+      expect(modelPrompt).not.toContain('Internal task title');
+      expect(modelPrompt).not.toContain('Internal department label');
+      const unavailable = await makeReport(range).expect(200);
+      expect(unavailable.body.metrics).toEqual(report.body.metrics);
+      expect(unavailable.body.analysis).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('forwards a short greeting to the model and rejects blank chat messages', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'employee@example.test', password: 'correct-horse-battery-123'

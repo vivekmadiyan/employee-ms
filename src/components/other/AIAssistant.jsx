@@ -1,14 +1,15 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   FaArrowRight, FaArrowUp, FaArrowUpRightFromSquare, FaChartSimple, FaCircleCheck, FaClock,
-  FaCommentDots, FaListCheck, FaPenToSquare, FaPlus, FaWandMagicSparkles, FaWrench
+  FaCommentDots, FaFileLines, FaListCheck, FaPenToSquare, FaPlus, FaWandMagicSparkles, FaWrench
 } from 'react-icons/fa6';
 import { askAiApi, createTaskApi, getAiToolsApi, updateTaskStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { localDateKey } from '../../utils/workFocus';
+import AIReports from './AIReports';
 import './AIAssistant.css';
 
-const providerNames = { gemini: 'Gemini', groq: 'Groq' };
+const modelSources = new Set(['gemini', 'groq']);
 const toolIcons = { set_task_status: FaListCheck, create_task: FaPenToSquare };
 const starters = [
   { title: 'Find overdue work', text: 'See which deadlines have slipped.', question: 'Which tasks are overdue?', icon: FaClock },
@@ -185,7 +186,7 @@ export default function AIAssistant({ onOpenTask }) {
       });
       if (!result.answer) throw new Error('No answer was returned. Try again.');
       if (mode === 'chat') {
-        if (!Object.hasOwn(providerNames, result.source)) throw new Error('The AI provider is unavailable. You can still open Task summaries.');
+        if (!modelSources.has(result.source)) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
         const turn = { ...result, question: text, id: ++sequence.current, actionState: 'ready' };
         setTurns(current => [...current, turn].slice(-12));
         setQuestion('');
@@ -202,29 +203,35 @@ export default function AIAssistant({ onOpenTask }) {
   }
 
   return (
-    <section className="ai-panel" aria-labelledby="ai-assistant-heading">
+    <section className="ai-panel" aria-label="AI workspace assistant">
       <header className="ai-panel-header">
         <span className="ai-symbol"><FaWandMagicSparkles aria-hidden="true" /></span>
         <div className="ai-title">
-          <h2 id="ai-assistant-heading">AI workspace assistant</h2>
-          <p>Plan work, draft updates, and prepare task changes.</p>
+          <h2>EmployeeMS AI</h2>
+          <p>Plan work, prepare task changes, and generate reports.</p>
         </div>
         <div className="ai-header-actions">
-          <button type="button" className="ai-quiet ai-mobile-tools" aria-expanded={toolsOpen} aria-controls="ai-tools"
-            onClick={() => setToolsOpen(open => !open)}><FaWrench aria-hidden="true" /> Tools</button>
+          {mode !== 'reports' && (
+            <button type="button" className="ai-quiet ai-mobile-tools" aria-expanded={toolsOpen} aria-controls="ai-tools"
+              onClick={() => setToolsOpen(open => !open)}><FaWrench aria-hidden="true" /> Tools</button>
+          )}
           <button type="button" className="ai-quiet" disabled={busy} onClick={resetChat}>
             <FaPlus aria-hidden="true" /> New chat
           </button>
         </div>
       </header>
-      <div className="ai-layout">
-        <div className="ai-chat">
+      <div className={mode === 'reports' ? 'ai-layout ai-layout--reports' : 'ai-layout'}>
+        <div className={mode === 'reports' ? 'ai-chat ai-chat--reports' : 'ai-chat'}>
           <div className="ai-modes" role="group" aria-label="Assistant mode">
             <button type="button" disabled={busy} aria-pressed={mode === 'chat'} onClick={() => switchMode('chat')}>
               <FaCommentDots aria-hidden="true" /> AI chat
             </button>
             <button type="button" disabled={busy} aria-pressed={mode === 'summary'} onClick={() => switchMode('summary')}>
               <FaChartSimple aria-hidden="true" /> Task summaries
+            </button>
+            <button type="button" disabled={busy} aria-pressed={mode === 'reports'} aria-controls="ai-reports-panel"
+              onClick={() => switchMode('reports')}>
+              <FaFileLines aria-hidden="true" /> AI reports
             </button>
           </div>
 
@@ -257,7 +264,7 @@ export default function AIAssistant({ onOpenTask }) {
                   <article key={turn.id} className="ai-turn">
                     <p className="ai-user"><span className="sr-only">You: </span>{turn.question}</p>
                     <div className="ai-reply">
-                      <p className="ai-reply-by" title={turn.model}>{providerNames[turn.source]}</p>
+                      <p className="ai-reply-by">EmployeeMS AI</p>
                       <p className="ai-text">{turn.answer}</p>
                       {turn.references?.length > 0 && (
                         <ul className="ai-references" aria-label="Referenced tasks">
@@ -309,7 +316,7 @@ export default function AIAssistant({ onOpenTask }) {
                 </form>
                 <div className="ai-composer-meta">
                   <p id="ai-context-note" className="ai-note">
-                    Your provider receives the chat and visible task details.
+                    Chat and visible task details are sent to the AI service.
                     {enabledTools.includes('create_task') && ' Creating tasks also shares eligible assignee names.'}
                     {' Changes require your approval.'}
                   </p>
@@ -317,7 +324,7 @@ export default function AIAssistant({ onOpenTask }) {
                 </div>
               </div>
             </>
-          ) : (
+          ) : mode === 'summary' ? (
             <div className="ai-summary">
               <p className="ai-note">Get a count and up to five matching tasks from the workspace.</p>
               <div className="ai-options">
@@ -336,9 +343,11 @@ export default function AIAssistant({ onOpenTask }) {
               )}
               {error && <p role="alert" className="ai-error">{error}</p>}
             </div>
-          )}
+          ) : null}
+          <AIReports isAdmin={currentUser?.role === 'admin'} hidden={mode !== 'reports'} />
         </div>
-        <aside className="ai-tools" data-open={toolsOpen} id="ai-tools" aria-labelledby="ai-tools-heading">
+        <aside className={mode === 'reports' ? 'ai-tools ai-tools--hidden' : 'ai-tools'} data-open={toolsOpen}
+          id="ai-tools" aria-labelledby="ai-tools-heading">
           <div className="ai-tools-header">
             <h3 id="ai-tools-heading"><FaWrench aria-hidden="true" /> Tools</h3>
             {toolState === 'ready' && <span className="ai-tool-total">{enabledTools.length} enabled</span>}

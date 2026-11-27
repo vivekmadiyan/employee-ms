@@ -47,6 +47,8 @@ Use **AI chat** to test a task question and a follow-up. Model replies identify 
 
 The **AI** tab has a tool picker. Employees can enable **Update task status** for their assignments. Admins can also enable **Create a task** for active teammates. With that tool enabled, active teammate names and IDs are included in the model context so it can resolve assignments. Review the proposed changes, then select **Confirm action** to save through the normal task API. The usual permissions, notifications, and audit trail apply.
 
+**AI reports** uses the same database figures as the standard reports. Employees can report on their own tasks, and admins can report across the workspace and generate a workforce overview. The model receives aggregate counts and the report period. The app shows the verified figures and supports a text download even when the provider is unavailable.
+
 ## Production checks
 
 - The frontend bundle must use the public API URL, not `localhost`.
