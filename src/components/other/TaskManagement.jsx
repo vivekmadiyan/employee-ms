@@ -29,10 +29,12 @@ const toForm = task => ({
   priority: task.priority || 'medium'
 });
 
-export default function TaskManagement() {
+export default function TaskManagement({ initialTaskId }) {
   const { userData, refresh } = useContext(AuthContext);
   const [tasks, setTasks] = useState([]);
-  const [filters, setFilters] = useState({ q: '', status: '', priority: '', assignee: '', dueAfter: '', dueBefore: '' });
+  const [filters, setFilters] = useState(() => ({
+    taskId: initialTaskId || '', q: '', status: '', priority: '', assignee: '', dueAfter: '', dueBefore: ''
+  }));
   const [includeArchived, setIncludeArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -46,10 +48,12 @@ export default function TaskManagement() {
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await getTasksApi({
+      let result = await getTasksApi({
         ...filters,
         includeArchived: includeArchived ? 'true' : 'false'
       });
+      // The UI and API can deploy at different times. Keep the selected task exact either way.
+      if (filters.taskId) result = result.filter(task => task.id === filters.taskId);
       setTasks(result);
       setSelectedIds(current => new Set([...current].filter(id => result.some(task => task.id === id))));
       setError('');
@@ -128,7 +132,7 @@ export default function TaskManagement() {
 
   const updateFilter = event => {
     const { name, value } = event.target;
-    setFilters(current => ({ ...current, [name]: value }));
+    setFilters(current => ({ ...current, taskId: '', [name]: value }));
   };
 
   const runBulkAction = async (action, priority) => {
@@ -190,6 +194,16 @@ export default function TaskManagement() {
           </label>
         </div>
       </div>
+
+      {filters.taskId && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
+          <p className="text-sm font-semibold text-slate-700">Viewing a task from Work Focus</p>
+          <button type="button" className="workspace-action workspace-action--secondary"
+            onClick={() => setFilters(current => ({ ...current, taskId: '' }))}>
+            Show all tasks
+          </button>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-4 bg-slate-50/50">

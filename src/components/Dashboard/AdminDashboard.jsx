@@ -1,15 +1,7 @@
-import React, { useContext, useState } from 'react';
-import { 
-  FaCalendarDay, 
-  FaChartLine, 
-  FaChartPie, 
-  FaClipboardCheck,
-  FaListCheck, 
-  FaPlus, 
-  FaPlug,
-  FaShieldHalved, 
-  FaUserPlus, 
-  FaUsers 
+import React, { useContext, useEffect, useRef, useState } from 'react';
+import {
+  FaCalendarDay, FaChartLine, FaChartPie, FaClipboardCheck, FaListCheck, FaPlus,
+  FaPlug, FaShieldHalved, FaUserPlus, FaUsers
 } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
 import Header from '../other/Header';
@@ -26,270 +18,158 @@ import SlackIntegration from '../other/SlackIntegration';
 import OffboardingManagement from '../other/OffboardingManagement';
 import WorkforceReports from '../other/WorkforceReports';
 import AIAssistant from '../other/AIAssistant';
+import WorkFocus from '../other/WorkFocus';
+import './Workspace.css';
 
-const AdminDashboard = (props) => {
+const navigation = [
+  ['Operations', [
+    { id: 'overview', label: 'Overview', title: 'Workspace Overview', icon: FaChartPie, description: 'See what needs attention and keep your team on track.' },
+    { id: 'tasks', label: 'Task Hub', icon: FaListCheck, description: 'Assign, prioritize, and follow up on team tasks.' },
+    { id: 'leaves', label: 'Leave Requests', icon: FaCalendarDay, description: 'Review requests and plan around approved absences.' },
+    { id: 'reports', label: 'Reports', icon: FaChartLine, description: 'Review task delivery, workload, and headcount.' }
+  ]],
+  ['People & settings', [
+    { id: 'team', label: 'Team & Invites', icon: FaUsers, description: 'Manage teammates, invitations, and onboarding.' },
+    { id: 'offboarding', label: 'Offboarding', icon: FaClipboardCheck, description: 'Coordinate employee transitions and handovers.' },
+    { id: 'audit', label: 'Audit Trail', icon: FaShieldHalved, description: 'Review significant changes across your workspace.' },
+    { id: 'integrations', label: 'Integrations', icon: FaPlug, description: 'Manage connections to the tools your team uses.' }
+  ]]
+];
+const pages = navigation.flatMap(([, items]) => items);
+
+const AdminDashboard = ({ changeUser, data }) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
-  const [activeTab, setActiveTab] = useState('overview');
-
-  // Compute workspace metrics
-  const totalEmployees = userData?.length || 0;
-  const activeEmployees = userData?.filter(e => e.active)?.length || 0;
-  const inProgressTasks = userData?.reduce((acc, e) => acc + (e.taskCounts?.active || 0), 0) || 0;
-  const newTasks = userData?.reduce((acc, e) => acc + (e.taskCounts?.newTask || 0), 0) || 0;
-  const completedTasks = userData?.reduce((acc, e) => acc + (e.taskCounts?.completed || 0), 0) || 0;
-  const attentionTasks = userData?.reduce((acc, e) => acc + (e.taskCounts?.failed || 0), 0) || 0;
-
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: FaChartPie },
-    { id: 'tasks', label: 'Task Hub', icon: FaListCheck, count: inProgressTasks + newTasks },
-    { id: 'team', label: 'Team & Invites', icon: FaUsers, count: totalEmployees },
-    { id: 'offboarding', label: 'Offboarding', icon: FaClipboardCheck },
-    { id: 'leaves', label: 'Leave Requests', icon: FaCalendarDay },
-    { id: 'reports', label: 'Reports', icon: FaChartLine },
-    { id: 'audit', label: 'Audit Trail', icon: FaShieldHalved },
-    { id: 'integrations', label: 'Integrations', icon: FaPlug },
+  const [view, setView] = useState({ tab: 'overview' });
+  const headingRef = useRef(null);
+  const taskFormRef = useRef(null);
+  const inviteRef = useRef(null);
+  const { tab, taskId } = view;
+  const page = pages.find(item => item.id === tab);
+  const employees = userData || [];
+  const totals = employees.reduce((counts, employee) => ({
+    active: counts.active + Number(Boolean(employee.active)),
+    open: counts.open + (employee.taskCounts?.active || 0) + (employee.taskCounts?.newTask || 0),
+    completed: counts.completed + (employee.taskCounts?.completed || 0),
+    failed: counts.failed + (employee.taskCounts?.failed || 0)
+  }), { active: 0, open: 0, completed: 0, failed: 0 });
+  const stats = [
+    { label: 'Active teammates', value: totals.active, note: `${employees.length} registered`, icon: FaUsers },
+    { label: 'Open tasks', value: totals.open, note: 'New or in progress', icon: FaListCheck },
+    { label: 'Completed', value: totals.completed, note: 'Tasks delivered', icon: FaClipboardCheck },
+    { label: 'Needs follow-up', value: totals.failed, note: 'Tasks marked failed', icon: FaChartLine }
   ];
-  const activeTabDetails = {
-    overview: ['Workspace Overview', 'A clear view of your team, priorities, and day-to-day operations.'],
-    tasks: ['Task Hub', 'Create, assign, and keep work moving across your workspace.'],
-    team: ['Team & Invites', 'Manage your people, reporting lines, and onboarding.'],
-    offboarding: ['Offboarding', 'Coordinate employee transitions with a clear, auditable checklist.'],
-    leaves: ['Leave Requests', 'Review time off while keeping your team’s calendar in view.'],
-    reports: ['Reports', 'Understand delivery trends and team workload.'],
-    audit: ['Audit Trail', 'Review important changes made across your workspace.'],
-    integrations: ['Integrations', 'Connect the tools your team already uses.']
-  }[activeTab];
+
+  useEffect(() => {
+    if (!view.jump) return;
+    const targets = { heading: headingRef, create: taskFormRef, invite: inviteRef };
+    const target = targets[view.jump].current;
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: 'start' });
+  }, [view]);
 
   return (
-    <div className="dashboard-shell min-h-screen bg-[#f8fafc]">
-      <div className="dashboard-topbar">
-        <div className="dashboard-topbar-content">
-          <Header changeUser={props.changeUser} data={props.data} />
-        </div>
+    <div className="workspace-release">
+      <div className="workspace-topbar">
+        <div className="workspace-topbar-inner"><Header changeUser={changeUser} data={data} /></div>
       </div>
-
-      <main className="dashboard-content">
-        {/* Workspace Title & Quick Actions */}
-        <div className="dashboard-heading">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2>{activeTabDetails[0]}</h2>
-              <span className="hidden rounded-full border border-indigo-100 bg-indigo-50/70 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-indigo-700 sm:inline-flex">
-                Admin Suite
-              </span>
+      <div className="workspace-frame">
+        <nav className="workspace-rail" aria-label="Workspace navigation">
+          {navigation.map(([group, items]) => (
+            <div className="workspace-navgroup" key={group}>
+              <p>{group}</p>
+              {items.map(({ id, label, icon: Icon }) => (
+                <button key={id} type="button" aria-current={tab === id ? 'page' : undefined}
+                  onClick={() => setView({ tab: id })}>
+                  <Icon aria-hidden="true" />
+                  {label}
+                </button>
+              ))}
             </div>
-            <p>{activeTabDetails[1]}</p>
-          </div>
+          ))}
+        </nav>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setActiveTab('team')}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              <FaUserPlus className="text-slate-500 text-xs" />
-              <span>Invite Member</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('tasks')}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-600/25 transition hover:bg-indigo-700"
-            >
-              <FaPlus className="text-xs" />
-              <span>New Task</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Top Metric Cards */}
-        <section className="mb-8 grid grid-cols-2 gap-3.5 sm:grid-cols-4 lg:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Team</span>
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                <FaUsers className="text-xs" />
-              </span>
+        <main className="workspace-main">
+          <section className="workspace-pagehead" aria-labelledby="workspace-page-title">
+            <div>
+              <h1 id="workspace-page-title" ref={headingRef} tabIndex={-1}>{page.title || page.label}</h1>
+              <p>{page.description}</p>
             </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900">{activeEmployees}</p>
-            <p className="mt-1 text-[11px] text-slate-500">{totalEmployees} total registered</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">In Progress</span>
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
-                <FaListCheck className="text-xs" />
-              </span>
+            <div className="workspace-actions">
+              <button type="button" onClick={() => setView({ tab: 'team', jump: 'invite' })}
+                className="workspace-action workspace-action--secondary"><FaUserPlus aria-hidden="true" /> Invite Member</button>
+              <button type="button" onClick={() => setView({ tab: 'tasks', jump: 'create' })}
+                className="workspace-action"><FaPlus aria-hidden="true" /> New Task</button>
             </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900">{inProgressTasks}</p>
-            <p className="mt-1 text-[11px] text-slate-500">{newTasks} new awaiting start</p>
-          </div>
+          </section>
 
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Completed</span>
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
-                <FaChartLine className="text-xs" />
-              </span>
-            </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-emerald-600">{completedTasks}</p>
-            <p className="mt-1 text-[11px] text-slate-500">Total deliverables</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-sm transition-all hover:shadow-md">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Needs Attention</span>
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
-                <FaShieldHalved className="text-xs" />
-              </span>
-            </div>
-            <p className={`mt-2 text-2xl sm:text-3xl font-extrabold ${attentionTasks > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
-              {attentionTasks}
-            </p>
-            <p className="mt-1 text-[11px] text-slate-500">Blocked or failed</p>
-          </div>
-        </section>
-
-        <div className="grid items-start gap-5 lg:grid-cols-[224px_minmax(0,1fr)] lg:gap-7">
-          <nav aria-label="Workspace navigation" className="workspace-nav">
-            <p className="workspace-nav-label">Workspace</p>
-            {tabs.map(tab => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  aria-current={isActive ? 'page' : undefined}
-                  className="workspace-nav-item"
-                >
-                  <Icon className="shrink-0 text-xs opacity-80" aria-hidden="true" />
-                  <span>{tab.label}</span>
-                  {tab.count !== undefined && tab.count > 0 && (
-                    <span className="workspace-nav-count">{tab.count > 99 ? '99+' : tab.count}</span>
+          {userData === null ? (
+            <section className="dashboard-card p-8 text-center">
+              {dataError ? (
+                <>
+                  <p role="alert" className="mb-3 text-sm text-rose-700">{dataError}</p>
+                  <button type="button" className="workspace-action" onClick={() => refresh().catch(() => {})}>
+                    Retry loading workspace
+                  </button>
+                </>
+              ) : <p role="status">Loading your workspace…</p>}
+            </section>
+          ) : (
+            <div className="workspace-stack">
+              {tab === 'overview' && (
+                <>
+                  <dl className="workspace-stats" aria-label="Workspace totals">
+                    {stats.map(({ label, value, note, icon: Icon }) => (
+                      <div className="workspace-stat" key={label}>
+                        <dt>{label} <Icon aria-hidden="true" /></dt>
+                        <dd><strong>{value}</strong><span>{note}</span></dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <WorkFocus admin employees={employees}
+                    onOpenTasks={task => setView({ tab: 'tasks', taskId: task?.id, jump: 'heading' })} />
+                  {employees.length > 0 ? (
+                    <div className="workspace-support"><AllTask /><AIAssistant /></div>
+                  ) : (
+                    <section className="dashboard-card workspace-onboard">
+                      <span className="workspace-onboard-icon"><FaUserPlus aria-hidden="true" /></span>
+                      <div>
+                        <h2 className="dashboard-card-heading">Invite your first teammate</h2>
+                        <p>Invite someone to assign work and see deadlines here.</p>
+                      </div>
+                      <button type="button" className="workspace-action"
+                        onClick={() => setView({ tab: 'team', jump: 'invite' })}>Invite teammate</button>
+                    </section>
                   )}
-                </button>
-              );
-            })}
-          </nav>
+                </>
+              )}
 
-          <div className="min-w-0">
-        {/* Tab Content Panels */}
-        {userData === null ? (
-          <section className="dashboard-card p-10 text-center">
-            {dataError ? (
-              <>
-                <h2 className="text-lg font-bold text-slate-900">We couldn’t load your team</h2>
-                <p role="alert" className="mt-2 text-sm text-rose-600">{dataError}</p>
-                <button
-                  type="button"
-                  onClick={() => refresh().catch(error => console.error('Retrying team load failed:', error))}
-                  className="mt-4 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
-                >
-                  Retry Loading
-                </button>
-              </>
-            ) : (
-              <div className="py-6 flex flex-col items-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mb-3" />
-                <p role="status" className="text-sm font-medium text-slate-500">Loading your workspace…</p>
-              </div>
-            )}
-          </section>
-        ) : userData.length === 0 ? (
-          <section className="dashboard-card px-6 py-14 text-center sm:px-12">
-            <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-indigo-50 text-xl font-bold text-indigo-600">
-              <FaUserPlus />
-            </span>
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">Your workspace is ready for its first teammate</h2>
-            <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500">
-              Invite team members below to unlock task assignment, progress tracking, and company workflows.
-            </p>
-            <div className="mt-8 max-w-2xl mx-auto text-left">
-              <InviteEmployee />
+              {tab === 'tasks' && (
+                <>
+                  <TaskManagement key={taskId || 'all'} initialTaskId={taskId} />
+                  <div className="workspace-jump" tabIndex={-1} ref={taskFormRef}><CreateTask /></div>
+                </>
+              )}
+
+              {tab === 'team' && (
+                <>
+                  <div className="workspace-support">
+                    <div className="workspace-jump" tabIndex={-1} ref={inviteRef}><InviteEmployee /></div>
+                    <BulkInviteEmployees />
+                  </div>
+                  <TeamManagement />
+                </>
+              )}
+
+              {tab === 'offboarding' && <OffboardingManagement />}
+              {tab === 'leaves' && <LeaveManagement />}
+              {tab === 'reports' && <><WorkforceReports /><TaskReports /></>}
+              {tab === 'audit' && <AuditTrail />}
+              {tab === 'integrations' && <SlackIntegration />}
             </div>
-          </section>
-        ) : (
-          <div className="space-y-6">
-            {/* OVERVIEW TAB */}
-            {activeTab === 'overview' && (
-              <div className="space-y-6 animate-fade-in">
-                <AIAssistant />
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-                  <div className="lg:col-span-5">
-                    <CreateTask />
-                  </div>
-                  <div className="lg:col-span-7">
-                    <AllTask />
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <TaskReports />
-                </div>
-              </div>
-            )}
-
-            {/* TASKS TAB */}
-            {activeTab === 'tasks' && (
-              <div className="space-y-6 animate-fade-in">
-                <TaskManagement />
-                <div className="mt-6">
-                  <CreateTask />
-                </div>
-              </div>
-            )}
-
-            {/* TEAM & INVITES TAB */}
-            {activeTab === 'team' && (
-              <div className="space-y-6 animate-fade-in">
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                  <InviteEmployee />
-                  <BulkInviteEmployees />
-                </div>
-                <TeamManagement />
-              </div>
-            )}
-
-            {activeTab === 'offboarding' && (
-              <div className="space-y-6 animate-fade-in">
-                <OffboardingManagement />
-              </div>
-            )}
-
-            {/* LEAVES TAB */}
-            {activeTab === 'leaves' && (
-              <div className="space-y-6 animate-fade-in">
-                <LeaveManagement />
-              </div>
-            )}
-
-            {/* REPORTS TAB */}
-            {activeTab === 'reports' && (
-              <div className="space-y-6 animate-fade-in">
-                <WorkforceReports />
-                <TaskReports />
-              </div>
-            )}
-
-            {/* AUDIT TRAIL TAB */}
-            {activeTab === 'integrations' && (
-              <div className="space-y-6 animate-fade-in">
-                <SlackIntegration />
-              </div>
-            )}
-
-            {activeTab === 'audit' && (
-              <div className="space-y-6 animate-fade-in">
-                <AuditTrail />
-              </div>
-            )}
-          </div>
-        )}
-          </div>
-        </div>
-      </main>
+          )}
+        </main>
+      </div>
     </div>
   );
 };

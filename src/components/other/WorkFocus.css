@@ -1,0 +1,151 @@
+.work-focus {
+  --focus-bg: #fff;
+  --focus-text: #192720;
+  --focus-muted: #52645b;
+  --focus-line: #dce5df;
+  --focus-soft: #f0f5f1;
+  --focus-accent: #155b49;
+  --focus-selected: #e1f1e8;
+  --focus-urgent: #9c382a;
+  --focus-urgent-bg: #fbece7;
+  min-width: 0;
+  padding: clamp(1rem, 2.5vw, 1.75rem);
+  border: 1px solid var(--focus-line);
+  border-radius: 1.15rem;
+  background: var(--focus-bg);
+  color: var(--focus-text);
+  box-shadow: 0 14px 36px -30px #162b2280;
+}
+
+html.dark .work-focus {
+  --focus-bg: #192823;
+  --focus-text: #edf6ef;
+  --focus-muted: #adc1b5;
+  --focus-line: #384e43;
+  --focus-soft: #20342b;
+  --focus-accent: #a3ebca;
+  --focus-selected: #26463a;
+  --focus-urgent: #ffb6a6;
+  --focus-urgent-bg: #49302a;
+}
+
+.work-focus-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .8rem;
+  margin-bottom: 1.1rem;
+}
+
+.work-focus-mark {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border-radius: .8rem;
+  background: var(--focus-selected);
+  color: var(--focus-accent);
+  font-size: 1.1rem;
+}
+
+.work-focus h2 {
+  font-size: clamp(1.2rem, 2vw, 1.55rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.work-focus-head p, .work-focus-limit {
+  margin-top: .3rem;
+  color: var(--focus-muted);
+  font-size: .82rem;
+  line-height: 1.45;
+}
+
+.work-focus-all {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  padding: .4rem .7rem;
+  border: 1px solid var(--focus-line);
+  border-radius: .65rem;
+  color: var(--focus-accent);
+  font-weight: 750;
+  font-size: .8rem;
+}
+
+.work-focus-all:hover, .work-focus-task:hover { background: var(--focus-soft); }
+
+.work-focus-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .5rem;
+  padding: .35rem;
+  border-radius: .9rem;
+  background: var(--focus-soft);
+}
+
+.work-focus-groups button {
+  display: flex;
+  min-width: 0;
+  min-height: 49px;
+  align-items: center;
+  gap: .45rem;
+  padding: .45rem .65rem;
+  border: 1px solid transparent;
+  border-radius: .65rem;
+  color: var(--focus-muted);
+  font-size: .8rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.work-focus-groups button svg { flex-shrink: 0; }
+.work-focus-groups strong { margin-left: auto; color: var(--focus-text); font-variant-numeric: tabular-nums; }
+.work-focus-groups button:hover { border-color: var(--focus-line); }
+.work-focus-groups button[aria-pressed="true"] { background: var(--focus-selected); color: var(--focus-accent); }
+.work-focus-groups button[data-bucket="overdue"][aria-pressed="true"] { background: var(--focus-urgent-bg); color: var(--focus-urgent); }
+.work-focus button:focus-visible { outline: 2px solid var(--focus-accent); outline-offset: 2px; }
+
+.work-focus-list { margin-top: .65rem; }
+.work-focus-list li + li { border-top: 1px solid var(--focus-line); }
+
+.work-focus-task {
+  display: flex;
+  width: 100%;
+  min-height: 58px;
+  align-items: center;
+  gap: .75rem;
+  padding: .65rem .45rem;
+  border-radius: .45rem;
+  color: var(--focus-text);
+  text-align: left;
+}
+
+.work-focus-task-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.work-focus-task-copy strong { display: block; color: var(--focus-text); font-size: .9rem; font-weight: 750; }
+.work-focus-task-copy > span { display: block; color: var(--focus-muted); font-size: .76rem; }
+.work-focus-priority {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: .2rem .5rem;
+  background: var(--focus-soft);
+  color: var(--focus-muted);
+  font-size: .7rem;
+  font-weight: 750;
+}
+.work-focus-priority[data-priority="high"] { background: var(--focus-urgent-bg); color: var(--focus-urgent); }
+.work-focus-row-arrow { flex-shrink: 0; color: var(--focus-accent); font-size: .8rem; }
+.work-focus-empty { display: flex; align-items: center; gap: .55rem; margin-top: .6rem; padding: .9rem .35rem .3rem; color: var(--focus-muted); }
+.work-focus-empty svg { color: var(--focus-accent); }
+
+@media (max-width: 540px) {
+  .work-focus-head { grid-template-columns: auto minmax(0, 1fr); }
+  .work-focus-all { grid-column: 1 / -1; justify-self: stretch; }
+  .work-focus-groups { gap: .2rem; }
+  .work-focus-groups button { min-height: 54px; flex-direction: column-reverse; justify-content: center; gap: .1rem; padding: .25rem .15rem; font-size: .72rem; text-align: center; }
+  .work-focus-groups button svg { display: none; }
+  .work-focus-groups strong { margin: 0; font-size: 1rem; }
+  .work-focus-row-arrow { display: none; }
+}

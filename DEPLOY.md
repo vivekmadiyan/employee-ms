@@ -19,6 +19,7 @@ The app consists of a Vite frontend, an Express API, and PostgreSQL. Deploy each
 6. Keep `PGSSL=true` for a managed PostgreSQL provider.
 7. Deploy; the API creates the required tables and applies the additive task-archive column migration at startup.
 8. Confirm `https://your-api.onrender.com/api/health` reports `{"status":"ok","database":true}`.
+9. To verify the exact backend release, compare the `X-EmployeeMS-Revision` response header from `/api/health/live` with the commit deployed to Render.
 
 ## Transactional email
 

@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { FaCalendarDay, FaListCheck, FaUserGroup } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
 import { getDirectReportsApi } from '../../api';
@@ -7,17 +7,23 @@ import TaskListNumbers from '../other/TaskListNumbers';
 import TaskList from '../TaskList/TaskList';
 import LeaveManagement from '../other/LeaveManagement';
 import AIAssistant from '../other/AIAssistant';
+import WorkFocus from '../other/WorkFocus';
+import './Workspace.css';
 
 const EmployeeDashboard = (props) => {
   const { userData, loading, dataError, refresh, currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('tasks');
   const [directReports, setDirectReports] = useState([]);
   const [teamError, setTeamError] = useState('');
+  const [focusRequest, setFocusRequest] = useState(null);
+  const taskListRef = useRef(null);
 
   useEffect(() => {
+    let cancelled = false;
     getDirectReportsApi()
-      .then(setDirectReports)
-      .catch(error => setTeamError(error.message || 'Could not load your direct reports.'));
+      .then(reports => { if (!cancelled) setDirectReports(reports); })
+      .catch(error => { if (!cancelled) setTeamError(error.message || 'Could not load your direct reports.'); });
+    return () => { cancelled = true; };
   }, [currentUser?.id]);
 
   const employeeData =
@@ -38,32 +44,30 @@ const EmployeeDashboard = (props) => {
     day: 'numeric'
   });
 
+  const openTask = task => {
+    if (task) {
+      setFocusRequest({ taskId: task.id });
+    } else {
+      taskListRef.current?.focus({ preventScroll: true });
+      taskListRef.current?.scrollIntoView({ block: 'start' });
+    }
+  };
+
   return (
-    <div className="dashboard-shell min-h-screen bg-[#f8fafc]">
-      <div className="dashboard-topbar">
-        <div className="dashboard-topbar-content">
+    <div className="workspace-release">
+      <div className="workspace-topbar">
+        <div className="workspace-topbar-inner">
           <Header changeUser={props.changeUser} data={props.data} />
         </div>
       </div>
 
-      <main className="employee-content">
-        {/* Intro banner */}
-        <div className="dashboard-heading">
+      <main className="workspace-main workspace-personal">
+        <div className="workspace-pagehead">
           <div>
-            <div className="flex items-center gap-2">
-              <h2>My Workspace</h2>
-              <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-emerald-700 sm:inline-flex">
-                Teammate Portal
-              </span>
-            </div>
-            <p>Track your assigned priorities, collaborate with comments, and manage time off.</p>
+            <h1>My Workspace</h1>
+            <p>Manage your assignments, keep track of deadlines, and plan time off.</p>
           </div>
-          <div className="text-right">
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm">
-              <FaCalendarDay className="text-slate-400 text-xs" />
-              <span>{todayFormatted}</span>
-            </span>
-          </div>
+          <span className="workspace-date"><FaCalendarDay aria-hidden="true" /> {todayFormatted}</span>
         </div>
 
         {loading && !employeeData ? (
@@ -83,13 +87,8 @@ const EmployeeDashboard = (props) => {
             </button>
           </div>
         ) : (
-          <div className="space-y-6">
-            <AIAssistant />
-            {/* Metric counters */}
-            <TaskListNumbers data={employeeData} />
-
-            {/* View Switcher Tabs */}
-            <nav aria-label="My workspace sections" className="employee-tabs">
+          <div className="workspace-stack">
+            <nav aria-label="My workspace sections" className="workspace-personal-nav">
               {workspaceTabs.map(tab => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -99,22 +98,24 @@ const EmployeeDashboard = (props) => {
                     type="button"
                     aria-current={isActive ? 'page' : undefined}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`employee-tab${isActive ? ' is-active' : ''}`}
                   >
                     <Icon className="text-xs" aria-hidden="true" />
                     <span>{tab.label}</span>
-                    {tab.count > 0 && <span className="employee-tab-count">{tab.count > 99 ? '99+' : tab.count}</span>}
+                    {tab.count > 0 && <span className="workspace-personal-count">{tab.count > 99 ? '99+' : tab.count}</span>}
                   </button>
                 );
               })}
             </nav>
 
-            {/* Tab Views */}
-            <div className="space-y-4">
             {teamError && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{teamError}</p>}
             {activeTab === 'tasks' ? (
-              <div className="animate-fade-in">
-                <TaskList data={employeeData} />
+              <div className="workspace-stack">
+                <WorkFocus tasks={employeeData?.tasks} onOpenTasks={openTask} />
+                <TaskListNumbers data={employeeData} />
+                <div className="workspace-jump" tabIndex={-1} ref={taskListRef} aria-label="Assigned Tasks">
+                  <TaskList data={employeeData} focusRequest={focusRequest} />
+                </div>
+                <AIAssistant />
               </div>
             ) : activeTab === 'leaves' ? (
               <div className="animate-fade-in">
@@ -142,7 +143,6 @@ const EmployeeDashboard = (props) => {
                 </ul>
               </section>
             )}
-            </div>
           </div>
         )}
       </main>

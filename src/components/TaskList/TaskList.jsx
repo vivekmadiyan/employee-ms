@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FaCircleCheck, FaInbox } from 'react-icons/fa6';
 import AcceptTask from './AcceptTask';
 import NewTask from './NewTask';
@@ -6,8 +6,16 @@ import CompleteTask from './CompleteTask';
 import FailedTask from './FailedTask';
 import CalendarExportButton from '../other/CalendarExportButton';
 
-const TaskList = ({ data }) => {
-  const [filter, setFilter] = useState('all');
+const TaskList = ({ data, focusRequest }) => {
+  const [selection, setSelection] = useState({ filter: 'all', focusRequest });
+  const filter = selection.focusRequest === focusRequest ? selection.filter : 'all';
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const task = document.getElementById(`assigned-task-${focusRequest.taskId}`);
+    task?.focus({ preventScroll: true });
+    task?.scrollIntoView({ block: 'start' });
+  }, [focusRequest]);
 
   if (!data || !data.tasks || data.tasks.length === 0) {
     return (
@@ -55,7 +63,8 @@ const TaskList = ({ data }) => {
             <button
               key={pill.id}
               type="button"
-              onClick={() => setFilter(pill.id)}
+              onClick={() => setSelection({ filter: pill.id, focusRequest })}
+              aria-pressed={filter === pill.id}
               className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all ${
                 filter === pill.id
                   ? 'bg-indigo-600 text-white shadow-xs'
@@ -77,12 +86,14 @@ const TaskList = ({ data }) => {
       {/* Task Grid */}
       <div id="tasklist" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {filteredTasks.length ? (
-          filteredTasks.map((task) => {
-            if (task.completed) return <CompleteTask key={task.id} data={task} />;
-            if (task.failed) return <FailedTask key={task.id} data={task} />;
-            if (task.active) return <AcceptTask key={task.id} data={task} />;
-            if (task.newTask) return <NewTask key={task.id} data={task} />;
-            return null;
+          filteredTasks.map(task => {
+            const Card = task.completed ? CompleteTask : task.failed ? FailedTask : task.active ? AcceptTask : NewTask;
+            return (
+              <div key={task.id} id={`assigned-task-${task.id}`} className="assigned-task-target grid"
+                tabIndex={-1} role="group" aria-label={task.taskTitle}>
+                <Card data={task} />
+              </div>
+            );
           })
         ) : (
           <div className="col-span-full rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center text-slate-500">

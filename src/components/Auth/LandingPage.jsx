@@ -1,248 +1,137 @@
 import React from 'react';
 import {
   FaArrowRight,
-  FaBolt,
+  FaCalendarDay,
   FaCheck,
-  FaClockRotateLeft,
-  FaEnvelopeOpenText,
+  FaCircleExclamation,
   FaLayerGroup,
-  FaShieldHeart,
-  FaUmbrellaBeach,
-  FaUsers,
+  FaListCheck,
+  FaMoon,
+  FaSun,
+  FaUsers
 } from 'react-icons/fa6';
+import { useTheme } from '../../context/ThemeContext';
+import './entry.css';
 
-const features = [
-  { 
-    icon: <FaBolt />, 
-    title: 'Task Orchestration', 
-    text: 'Create, prioritize, assign, and advance deliverables through real-time operational pipelines.' 
+const capabilities = [
+  {
+    title: 'Keep work moving',
+    text: 'Assign work with a clear owner and due date. Watch progress, discuss changes, and see what needs attention.',
+    icon: FaListCheck
   },
-  { 
-    icon: <FaUsers />, 
-    title: 'Workforce Visibility', 
-    text: 'Eliminate blind spots with team workload balance, deliverable counts, and individual health metrics.' 
+  {
+    title: 'Bring people on board',
+    text: 'Invite teammates, keep reporting lines up to date, and give each new hire a checklist they can actually use.',
+    icon: FaUsers
   },
-  { 
-    icon: <FaShieldHeart />, 
-    title: 'Enterprise Multi-Tenancy', 
-    text: 'Isolated company workspaces, encrypted JWT authentication, and role-based permissions by default.' 
-  },
-  { 
-    icon: <FaUmbrellaBeach />, 
-    title: 'Integrated Time-Off', 
-    text: 'Employees request leave with automatic date collision checks while managers review with 1-click approvals.' 
-  },
-  { 
-    icon: <FaClockRotateLeft />, 
-    title: 'Immutable Audit Trail', 
-    text: 'Track credential changes, task reassignments, bulk imports, and security events in a live activity ledger.' 
-  },
-  { 
-    icon: <FaEnvelopeOpenText />, 
-    title: 'Automated Notifications', 
-    text: 'Keep teammates informed on assignment changes, due-date reminders, and discussions.' 
-  },
+  {
+    title: 'Plan around time off',
+    text: 'Request and approve leave, check balances, and see who is away before you commit to a deadline.',
+    icon: FaCalendarDay
+  }
 ];
 
-const workflow = [
-  { step: '01', title: 'Set Up', desc: 'Register company workspace in 30 seconds' },
-  { step: '02', title: 'Invite', desc: 'Direct invite or bulk CSV import with 7-day links' },
-  { step: '03', title: 'Assign', desc: 'Delegate tasks with due dates and priorities' },
-  { step: '04', title: 'Track', desc: 'Real-time updates, discussion threads & reporting' }
+const exampleTasks = [
+  { name: 'Send Friday handoff', owner: 'PM', status: 'Overdue', tone: 'urgent' },
+  { name: 'Review onboarding checklist', owner: 'AL', status: 'Due today', tone: 'today' },
+  { name: 'Prepare next week’s rota', owner: 'SB', status: 'Due soon', tone: 'soon' }
 ];
+
+const WorkspacePreview = () => (
+  <figure className="entry-preview" aria-label="Example workspace showing upcoming tasks">
+    <div className="entry-preview-top">
+      <span className="entry-preview-workspace"><FaLayerGroup aria-hidden="true" /> Studio North</span>
+      <span>Example workspace</span>
+    </div>
+    <div className="entry-preview-body">
+      <div className="entry-preview-title">
+        <span className="entry-preview-emblem"><FaListCheck aria-hidden="true" /></span>
+        <div>
+          <p>Workspace overview</p>
+          <strong>Work Focus</strong>
+        </div>
+      </div>
+      <ul className="entry-preview-tasks">
+        {exampleTasks.map(task => (
+          <li key={task.name}>
+            <span className={`entry-preview-owner entry-preview-owner--${task.tone}`} aria-hidden="true">{task.owner}</span>
+            <span className="entry-preview-task">{task.name}</span>
+            <span className={`entry-preview-status entry-preview-status--${task.tone}`}>{task.status}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="entry-preview-footer">
+        <FaCircleExclamation aria-hidden="true" />
+        <span>Start with the work that needs you today.</span>
+      </div>
+    </div>
+  </figure>
+);
 
 const LandingPage = ({ onLogin, onRegister }) => {
+  const { darkMode, toggleDark } = useTheme();
+
   return (
-    <main className="landing-page selection:bg-indigo-500 selection:text-white">
-      {/* Sticky Navigation */}
-      <nav className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
-        <div className="landing-nav">
-          <div className="brand" aria-label="EmployeeMS home">
-            <span className="brand-mark"><FaLayerGroup /></span>
-            <span>Employee<span className="brand-accent">MS</span></span>
+    <div className="entry-surface entry-landing">
+      <header className="entry-header">
+        <div className="entry-container entry-header-content">
+          <div className="entry-brand">
+            <span className="entry-brand-mark"><FaLayerGroup aria-hidden="true" /></span>
+            <span>EmployeeMS</span>
           </div>
-
-          <div className="nav-actions">
-            <button className="nav-login" onClick={onLogin}>
-              <span>Sign in</span>
-              <FaArrowRight className="text-xs" />
+          <nav className="entry-header-actions" aria-label="Account">
+            <button
+              type="button"
+              className="entry-theme"
+              aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={toggleDark}
+            >
+              {darkMode ? <FaSun aria-hidden="true" /> : <FaMoon aria-hidden="true" />}
             </button>
-            <button className="primary-btn" onClick={onRegister}>
-              Create company
-            </button>
-          </div>
+            <button type="button" className="entry-button entry-button--quiet" onClick={onLogin}>Sign in</button>
+          </nav>
         </div>
-      </nav>
+      </header>
 
-      {/* Hero Section */}
-      <section className="hero">
-        <div className="hero-copy animate-fade-in">
-          <div className="eyebrow">
-            <span className="pulse-dot" /> Built for high-velocity teams
-          </div>
-
-          <h1>
-            Run your team with <span>uncompromising clarity</span> and momentum.
-          </h1>
-
-          <p>
-            EmployeeMS is the modern workspace designed to assign deliverables, coordinate workloads, and track task progress with dependable accountability.
-          </p>
-
-          <div className="hero-actions">
-            <button className="primary-btn" onClick={onRegister}>
-              <span>Create workspace free</span>
-              <FaArrowRight className="text-xs" />
-            </button>
-            <button className="secondary-btn" onClick={onLogin}>
-              Sign in to workspace
-            </button>
-          </div>
-
-          <div className="trust-row">
-            <span><FaCheck /> Multi-tenant isolation</span>
-            <span><FaCheck /> Zero setup complexity</span>
-            <span><FaCheck /> Real-time status sync</span>
-          </div>
-        </div>
-
-        {/* Dashboard Preview Window Mockup */}
-        <div className="dashboard-preview animate-fade-in" aria-label="Dashboard preview">
-          <div className="preview-window">
-            <div className="preview-top">
-              <div className="window-dots"><i /><i /><i /></div>
-              <span className="text-[11px] font-bold text-slate-500">EmployeeMS · Acme Workspace</span>
-              <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">A</span>
+      <main className="entry-container">
+        <section className="entry-hero" aria-labelledby="entry-title">
+          <div className="entry-hero-copy">
+            <h1 id="entry-title">Make the workday <em>clearer.</em></h1>
+            <p className="entry-hero-description">
+              See what’s due, who owns it, and who’s away. Give your team one place to run the workday.
+            </p>
+            <div className="entry-hero-actions">
+              <button type="button" className="entry-button entry-button--primary" onClick={onRegister}>
+                Create workspace free <FaArrowRight aria-hidden="true" />
+              </button>
+              <button type="button" className="entry-button entry-button--outline" onClick={onLogin}>Sign in to workspace</button>
             </div>
-
-            <div className="preview-body">
-              <aside>
-                <div className="font-extrabold text-indigo-600 text-sm mb-2 flex items-center gap-1.5">
-                  <FaLayerGroup className="text-xs" />
-                  <span>EMS</span>
-                </div>
-                <div className="side-active">Dashboard</div>
-                <div>Task Pipeline</div>
-                <div>Team Roster</div>
-                <div>Leave Requests</div>
-                <div>Audit Logs</div>
-              </aside>
-
-              <div className="mini-content">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Team Health</span>
-                    <h3 className="text-sm font-bold text-slate-900">Operations Snapshot</h3>
-                  </div>
-                  <span className="rounded-lg bg-indigo-600 px-2 py-1 text-[10px] font-bold text-white shadow-xs">+ Task</span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-left">
-                    <span className="text-[9px] font-semibold text-slate-500 uppercase">New</span>
-                    <p className="text-base font-extrabold text-blue-600">14</p>
-                    <span className="text-[8px] font-bold text-emerald-600">+8% wk</span>
-                  </div>
-                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-left">
-                    <span className="text-[9px] font-semibold text-slate-500 uppercase">Active</span>
-                    <p className="text-base font-extrabold text-indigo-600">9</p>
-                    <span className="text-[8px] font-bold text-indigo-600">On Track</span>
-                  </div>
-                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-left">
-                    <span className="text-[9px] font-semibold text-slate-500 uppercase">Done</span>
-                    <p className="text-base font-extrabold text-emerald-600">42</p>
-                    <span className="text-[8px] font-bold text-emerald-600">+16% wk</span>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-xs">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-bold text-slate-700">Active Deliverables</span>
-                    <span className="text-[9px] font-semibold text-indigo-600">Live</span>
-                  </div>
-                  <div className="space-y-1.5 text-[10px]">
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 p-1.5">
-                      <span className="font-semibold text-slate-800">API Gateway Auth Refactor</span>
-                      <span className="rounded-md bg-indigo-100 px-1.5 py-0.5 font-bold text-indigo-700">In Progress</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 p-1.5">
-                      <span className="font-semibold text-slate-800">Q4 Operational Onboarding</span>
-                      <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700">Completed</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 p-1.5">
-                      <span className="font-semibold text-slate-800">Mobile UI Responsive Audit</span>
-                      <span className="rounded-md bg-sky-100 px-1.5 py-0.5 font-bold text-sky-700">New</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <p className="entry-note"><FaCheck aria-hidden="true" /> Invite teammates when you’re ready.</p>
           </div>
-        </div>
-      </section>
-
-      {/* Feature Grid Section */}
-      <section id="features" className="features-section">
-        <div className="section-heading">
-          <span className="eyebrow">Enterprise Capabilities</span>
-          <h2>Engineered for operational excellence.</h2>
-          <p>Everything your team needs to stay aligned, eliminate silos, and execute with precision.</p>
-        </div>
-
-        <div className="feature-grid">
-          {features.map((feature) => (
-            <article className="feature-card" key={feature.title}>
-              <div className="feature-icon">{feature.icon}</div>
-              <h3>{feature.title}</h3>
-              <p>{feature.text}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {/* Workflow Section */}
-      <section className="workflow-section">
-        <div>
-          <span className="eyebrow">Streamlined Lifecycle</span>
-          <h2>From assignment to completion in 4 simple steps.</h2>
-          <p>Admins define priorities, employees own delivery, and every status update stays visible in real time.</p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-2">
-          {workflow.map((item) => (
-            <div key={item.step} className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs transition hover:shadow-md">
-              <span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">{item.step}</span>
-              <h3 className="mt-2 text-sm font-bold text-slate-900">{item.title}</h3>
-              <p className="mt-1 text-xs text-slate-500 leading-relaxed">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="px-6">
-        <div className="cta">
-          <div>
-            <span className="eyebrow !bg-indigo-900/50 !text-indigo-300 !border-indigo-700">Get Started in Seconds</span>
-            <h2>Bring your company workspace to life.</h2>
-            <p>Create your organization, invite your teammates, and start delegating work with zero friction.</p>
+          <div className="entry-hero-art">
+            <WorkspacePreview />
           </div>
-          <button className="primary-btn !bg-white !text-slate-900 hover:!bg-slate-100 shrink-0 font-bold shadow-lg" onClick={onRegister}>
-            <span>Create Company Workspace</span>
-            <FaArrowRight className="text-xs" />
-          </button>
-        </div>
-      </section>
+        </section>
 
-      {/* Footer */}
-      <footer className="landing-footer">
-        <div className="brand">
-          <span className="brand-mark"><FaLayerGroup /></span>
-          <span>Employee<span className="brand-accent">MS</span></span>
-        </div>
-        <span className="text-xs text-slate-400">© 2026 EmployeeMS. Modern workforce operations platform.</span>
+        <section className="entry-capabilities" aria-labelledby="entry-capabilities-title">
+          <h2 id="entry-capabilities-title">From the first day to the next deadline</h2>
+          <div className="entry-capability-grid">
+            {capabilities.map(({ title, text, icon: Icon }) => (
+              <article key={title} className="entry-capability">
+                <span><Icon aria-hidden="true" /></span>
+                <h3>{title}</h3>
+                <p>{text}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      </main>
+
+      <footer className="entry-container entry-footer">
+        <span>EmployeeMS</span>
+        <a href="#entry-title">Back to top <span aria-hidden="true">↑</span></a>
       </footer>
-    </main>
+    </div>
   );
 };
 

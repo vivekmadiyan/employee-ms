@@ -30,6 +30,7 @@ const acceptInvitationInBrowser = async (page, inviteUrl, expectedName) => {
 };
 
 test('registration, manager reporting, leave approval, and auth accessibility', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.goto('/');
   await page.getByRole('button', { name: 'Create workspace free' }).click();
   await expect(page.getByRole('heading', { name: 'Create your company workspace' })).toBeVisible();

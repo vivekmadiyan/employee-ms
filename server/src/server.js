@@ -479,7 +479,11 @@ const schemas = {
   task: z.object({ taskTitle: z.string().trim().min(2).max(160), taskDescription: z.string().trim().min(2).max(4_000), taskDate: isoDate, category: z.string().trim().min(2).max(80), assignedTo: z.coerce.number().int().positive(), priority: z.enum(['low', 'medium', 'high']).default('medium') })
 };
 const body = (schema, value) => { const result = schema.safeParse(value); if (!result.success) { const error = new Error(result.error.issues[0].message); error.status = 400; throw error; } return result.data; };
-app.get('/api/health/live', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/health/live', (req, res) => {
+  const revision = process.env.RENDER_GIT_COMMIT;
+  if (/^[a-f\d]{40}$/i.test(revision || '')) res.set('X-EmployeeMS-Revision', revision);
+  res.json({ status: 'ok' });
+});
 app.get('/api/health', async (req, res) => { try { await query('SELECT 1'); res.json({ status: 'ok', database: true }); } catch { res.status(503).json({ status: 'error', database: false }); } });
 const aiLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'AI request limit reached. Try again later.' } });
 app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
@@ -1995,6 +1999,7 @@ app.get('/api/tasks', auth, async (req, res, next) => {
     }
     const queryValues = body(z.object({
       q: z.string().trim().max(120).optional(),
+      taskId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
       status: z.enum(['new', 'active', 'completed', 'failed']).optional(),
       priority: z.enum(['low', 'medium', 'high']).optional(),
       assignee: z.coerce.number().int().positive().optional(),
@@ -2007,7 +2012,7 @@ app.get('/api/tasks', auth, async (req, res, next) => {
       return res.status(403).json({ message: 'Only admins can view archived tasks' });
     }
     if (queryValues.includeArchived !== 'true') clauses.push('archived_at IS NULL');
-    for (const [field, column] of [['status', 'status'], ['priority', 'priority'], ['assignee', 'assigned_to'], ['category', 'category'], ['dueBefore', 'task_date'], ['dueAfter', 'task_date']]) {
+    for (const [field, column] of [['taskId', 'id'], ['status', 'status'], ['priority', 'priority'], ['assignee', 'assigned_to'], ['category', 'category'], ['dueBefore', 'task_date'], ['dueAfter', 'task_date']]) {
       const value = queryValues[field];
       if (value === undefined) continue;
       params.push(field === 'category' ? `%${value}%` : value);
