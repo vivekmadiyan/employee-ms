@@ -72,10 +72,10 @@ html.dark .ai-panel {
 }
 .ai-modes button {
   display: inline-flex; align-items: center; gap: .48rem; min-height: 39px;
-  border-radius: .65rem; padding: .35rem .75rem; color: var(--desk-muted); font-size: .8rem; font-weight: 750;
+  border: 1px solid transparent; border-radius: .65rem; padding: .35rem .75rem; color: var(--desk-muted); font-size: .8rem; font-weight: 750;
 }
-.ai-modes button[aria-pressed="true"] { background: var(--ai-tint); color: var(--desk-accent); }
-.ai-modes button:hover { color: var(--desk-accent); }
+.ai-modes button[aria-pressed="true"] { border-color: var(--desk-line); background: var(--ai-tint); color: var(--desk-accent); }
+.ai-modes button:hover { border-color: var(--desk-line); color: var(--desk-accent); background: var(--ai-rail); }
 
 .ai-log { min-height: 0; overflow-y: auto; padding: clamp(.6rem, 2vw, 1.4rem); overscroll-behavior: contain; }
 .ai-log-empty { display: flex; }
