@@ -189,7 +189,8 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await assistant.getByRole('button', { name: 'History', exact: true }).click();
   const history = page.getByRole('dialog', { name: 'Chat history' });
   await history.getByRole('button', { name: `Open ${reportQuestion}` }).click();
-  await expect(assistant.getByText(reportQuestion)).toBeVisible();
+  await expect(history).toBeHidden();
+  await expect(assistant.getByRole('log', { name: 'Assistant conversation' }).getByText(reportQuestion)).toBeVisible();
   await expect(assistant.getByRole('button', { name: 'Download report' })).toBeVisible();
   await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill('Same report for the last 7 days');
   await assistant.getByRole('button', { name: 'Ask AI' }).click();
