@@ -80,7 +80,7 @@ html.dark .ai-panel {
 .ai-log { min-height: 0; overflow-y: auto; padding: clamp(.6rem, 2vw, 1.4rem); overscroll-behavior: contain; }
 .ai-log-empty { display: flex; }
 .ai-log:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: -3px; }
-.ai-welcome { width: min(100%, 46rem); margin: auto; }
+.ai-welcome { width: min(100%, 46rem); margin: auto; container-type: inline-size; }
 .ai-welcome-hero {
   position: relative; isolation: isolate; overflow: hidden; padding: clamp(1rem, 3.2vw, 2.35rem);
   border: 1px solid var(--ai-line); border-radius: 1.05rem;
@@ -98,7 +98,10 @@ html.dark .ai-panel {
 }
 .ai-welcome h3 { max-width: 20ch; color: var(--desk-ink); font-size: clamp(1.65rem, 3.25vw, 2.72rem); font-weight: 850; letter-spacing: -.062em; line-height: 1.04; }
 .ai-welcome p { margin-top: .55rem; color: var(--desk-muted); font-size: .85rem; }
-.ai-starters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin-top: .65rem; }
+.ai-starters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: .65rem; }
+@container (min-width: 39rem) {
+  .ai-starters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
 .ai-starters button {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: .52rem;
   padding: .7rem; border: 1px solid var(--ai-line); border-radius: .85rem;

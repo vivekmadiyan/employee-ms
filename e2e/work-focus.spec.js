@@ -3,6 +3,17 @@ import { expect, test } from '@playwright/test';
 
 const api = 'http://127.0.0.1:5000/api';
 const password = 'E2E-only-password-123!';
+const isAiAsk = response => response.request().method() === 'POST'
+  && new URL(response.url()).pathname === '/api/ai/ask';
+
+async function readReportDownload(page, downloadButton) {
+  const [download] = await Promise.all([page.waitForEvent('download'), downloadButton.click()]);
+  expect(download.suggestedFilename()).toMatch(/\.txt$/);
+  const stream = await download.createReadStream();
+  let text = '';
+  for await (const chunk of stream) text += chunk.toString();
+  return text;
+}
 
 test.use({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
 
@@ -162,14 +173,37 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await aiInput.fill('hi');
   await expect(sendAi).toBeEnabled();
   const [greeting] = await Promise.all([
-    page.waitForResponse(response => response.request().method() === 'POST'
-      && new URL(response.url()).pathname === '/api/ai/ask'),
+    page.waitForResponse(isAiAsk),
     sendAi.click()
   ]);
   expect(greeting.request().postDataJSON()).toMatchObject({ question: 'hi', mode: 'chat' });
   expect(greeting.status()).toBe(503);
   await expect(assistant.getByRole('alert')).toContainText(/AI provider .*unavailable/);
   await expect(assistant.getByText('Workspace summary')).toHaveCount(0);
+
+  const conversation = assistant.getByRole('log', { name: 'Assistant conversation' });
+  const requestChatReport = async (question, expectedDays) => {
+    await aiInput.fill(question);
+    const [response] = await Promise.all([page.waitForResponse(isAiAsk), sendAi.click()]);
+    expect(response.status()).toBe(200);
+    const { report, source } = await response.json();
+    expect(source).toBe('workspace');
+    expect(report).toMatchObject({ kind: 'tasks', analysis: null });
+    expect(report.metrics).toContainEqual({ label: 'Total tasks', value: 2 });
+    expect(Date.parse(report.range.to) - Date.parse(report.range.from)).toBe((expectedDays - 1) * 86_400_000);
+    const turn = conversation.getByRole('article').filter({ hasText: question });
+    await expect(turn.getByRole('heading', { name: report.title, exact: true })).toBeVisible();
+    await expect(turn.getByText('Verified workspace figures', { exact: true })).toBeVisible();
+    return { report, turn, input: response.request().postDataJSON() };
+  };
+  const initial = await requestChatReport('Generate a task report for the last 30 days', 30);
+  const refinement = await requestChatReport('Same report for the last 7 days', 7);
+  expect(refinement.input.reportContext).toMatchObject({ kind: 'tasks', ...initial.report.range });
+  const chatReportText = await readReportDownload(page, refinement.turn.getByRole('button', { name: 'Download report' }));
+  expect(chatReportText).toContain(refinement.report.period);
+  expect(chatReportText).toMatch(/Total tasks[^\n]*2/);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await assistant.getByRole('button', { name: 'New chat' }).click();
 
   const employeeTools = await page.request.get(`${api}/ai/tools`, { headers: employeeHeaders });
   expect(employeeTools.status()).toBe(200);
@@ -287,14 +321,7 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await assistant.getByRole('button', { name: 'Generate report' }).click();
   await expect(assistant.getByRole('heading', { name: 'EmployeeMS AI analysis' })).toBeVisible();
   await expect(assistant.getByText(analysis)).toBeVisible();
-  const [reportDownload] = await Promise.all([
-    page.waitForEvent('download'),
-    assistant.getByRole('button', { name: 'Download report' }).click()
-  ]);
-  expect(reportDownload.suggestedFilename()).toMatch(/\.txt$/);
-  const reportStream = await reportDownload.createReadStream();
-  let reportText = '';
-  for await (const chunk of reportStream) reportText += chunk.toString();
+  const reportText = await readReportDownload(page, assistant.getByRole('button', { name: 'Download report' }));
   expect(reportText).toContain(analysis);
   expect(reportText).toMatch(/Total employees[^\n]*2/);
   await page.unroute('**/api/ai/report');

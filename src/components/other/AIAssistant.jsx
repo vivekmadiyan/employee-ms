@@ -6,12 +6,13 @@ import {
 import { askAiApi, createTaskApi, getAiToolsApi, updateTaskStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
 import { localDateKey } from '../../utils/workFocus';
-import AIReports from './AIReports';
+import AIReports, { ReportResult } from './AIReports';
 import './AIAssistant.css';
 
 const modelSources = new Set(['gemini', 'groq']);
 const toolIcons = { set_task_status: FaListCheck, create_task: FaPenToSquare };
 const starters = [
+  { title: 'Report on last week', text: 'Get verified figures and an AI summary.', question: 'Generate a task report for last week.', icon: FaFileLines },
   { title: 'Find overdue work', text: 'See which deadlines have slipped.', question: 'Which tasks are overdue?', icon: FaClock },
   { title: 'Plan the week', text: 'Pick what deserves attention first.', question: 'Help me prioritize this week.', icon: FaListCheck },
   { title: 'Draft a handoff', text: 'Turn open work into a short update.', question: 'Draft a handoff using the open tasks.', icon: FaPenToSquare }
@@ -105,7 +106,14 @@ export default function AIAssistant({ onOpenTask }) {
   }, [toolLoadAttempt]);
 
   useEffect(() => {
-    if (log.current) log.current.scrollTop = log.current.scrollHeight;
+    const conversation = log.current;
+    if (!conversation) return;
+    const latestTurn = conversation.lastElementChild;
+    if (latestTurn?.classList.contains('ai-turn--report')) {
+      conversation.scrollTop += latestTurn.getBoundingClientRect().top - conversation.getBoundingClientRect().top;
+    } else {
+      conversation.scrollTop = conversation.scrollHeight;
+    }
   }, [turns.length, pending, mode]);
 
   function switchMode(nextMode) {
@@ -178,15 +186,21 @@ export default function AIAssistant({ onOpenTask }) {
         answer: (turn.actionState === 'saved' ? `${turn.answer}\nThe user confirmed the action and it was saved.` : turn.answer).slice(0, 2500)
       }))
       : [];
+    const latestReport = mode === 'chat' ? turns.findLast(turn => turn.report)?.report : null;
+    const reportContext = latestReport?.kind === 'workforce'
+      ? { kind: 'workforce' }
+      : latestReport?.range && { kind: 'tasks', from: latestReport.range.from, to: latestReport.range.to };
 
     try {
       const result = await askAiApi({
         question: text, today: localDateKey(new Date()), mode, history,
-        ...(mode === 'chat' ? { tools: enabledTools } : {})
+        ...(mode === 'chat' ? { tools: enabledTools } : {}),
+        ...(reportContext && { reportContext })
       });
       if (!result.answer) throw new Error('No answer was returned. Try again.');
       if (mode === 'chat') {
-        if (!modelSources.has(result.source)) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
+        const reportReply = result.source === 'workspace' && (result.report || result.reportIntent === true);
+        if (!modelSources.has(result.source) && !reportReply) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
         const turn = { ...result, question: text, id: ++sequence.current, actionState: 'ready' };
         setTurns(current => [...current, turn].slice(-12));
         setQuestion('');
@@ -261,11 +275,12 @@ export default function AIAssistant({ onOpenTask }) {
                   </div>
                 )}
                 {turns.map(turn => (
-                  <article key={turn.id} className="ai-turn">
+                  <article key={turn.id} className={turn.report ? 'ai-turn ai-turn--report' : 'ai-turn'}>
                     <p className="ai-user"><span className="sr-only">You: </span>{turn.question}</p>
                     <div className="ai-reply">
                       <p className="ai-reply-by">EmployeeMS AI</p>
                       <p className="ai-text">{turn.answer}</p>
+                      {turn.report && <ReportResult report={turn.report} inChat />}
                       {turn.references?.length > 0 && (
                         <ul className="ai-references" aria-label="Referenced tasks">
                           {turn.references.map(task => (

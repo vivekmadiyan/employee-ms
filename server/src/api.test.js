@@ -1102,6 +1102,65 @@ describe('authenticated API workflows', () => {
     }
   });
 
+  it('uses verified scoped figures to answer a flexible report request and its follow-up', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test', password: 'correct-horse-battery-123'
+    }).expect(200);
+    const task = {
+      companyId: 1, assignedTo: 2, taskTitle: 'Check inventory', taskDate: '2026-11-24',
+      category: 'Private category', createdAt: '2026-11-04T12:00:00Z', status: 'completed', priority: 'high'
+    };
+    tasks.push({ ...task, id: 1 }, { ...task, id: 2, assignedTo: 3 });
+    const toolCall = args => Response.json({ candidates: [{ content: { parts: [{
+      functionCall: { name: 'generate_report', args }
+    }] } }] });
+    const analysis = text => Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
+    const range = { from: '2026-11-01', to: '2026-11-27' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(toolCall({ kind: 'tasks', ...range }))
+      .mockResolvedValueOnce(analysis('One assigned task was completed.'))
+      .mockResolvedValueOnce(toolCall({ kind: 'tasks' }))
+      .mockResolvedValueOnce(analysis('Both assigned tasks are completed.'))
+      .mockResolvedValueOnce(toolCall({ kind: 'tasks', from: '2026-11-31', to: '2026-12-01' }))
+      .mockResolvedValueOnce(toolCall({ kind: 'workforce' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const ask = payload => request(app).post('/api/ai/ask')
+      .set('Authorization', `Bearer ${login.body.token}`)
+      .send({ mode: 'chat', today: '2026-11-27', ...payload }).expect(200);
+
+    try {
+      const first = await ask({ question: 'Put together what I got done since November started' });
+      expect(first.body).toMatchObject({ source: 'workspace', report: { kind: 'tasks', range, analysis: 'One assigned task was completed.' } });
+      expect(first.body.report.metrics).toContainEqual({ label: 'Total tasks', value: 1 });
+      expect(first.body.action).toBeUndefined();
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).tools[0].functionDeclarations[0].name).toBe('generate_report');
+
+      tasks.push({ ...task, id: 3 });
+      const reportContext = { kind: 'tasks', ...range };
+      const followUp = await ask({ question: 'What does it say about completion?', reportContext,
+        history: [{ question: 'Put together what I got done since November started', answer: first.body.answer }] });
+      expect(followUp.body.report).toMatchObject({ range, analysis: 'Both assigned tasks are completed.' });
+      expect(followUp.body.report.metrics).toContainEqual({ label: 'Completed', value: 2 });
+      const toolPrompt = JSON.parse(fetchMock.mock.calls[2][1].body);
+      expect(JSON.parse(toolPrompt.contents.at(-1).parts[0].text).reportContext).toEqual(reportContext);
+      const analysisPrompt = fetchMock.mock.calls[3][1].body;
+      expect(analysisPrompt).toContain('What does it say about completion?');
+      expect(analysisPrompt).not.toContain('Private category');
+      expect(analysisPrompt).not.toContain('Check inventory');
+
+      const invalid = await ask({ question: 'Can you run that for November 31?', reportContext });
+      expect(invalid.body).toMatchObject({ source: 'workspace', reportIntent: true });
+      expect(invalid.body.report).toBeUndefined();
+      const denied = await ask({ question: 'Explain this headcount', reportContext: { kind: 'workforce' } });
+      expect(denied.body).toMatchObject({ source: 'workspace', reportIntent: true, answer: expect.stringContaining('admins') });
+      expect(denied.body.report).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+      expect(tasks.every(item => item.status === 'completed')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('previews a scoped status change, keeps the task unchanged without approval, and rejects stale confirmations', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'employee@example.test', password: 'correct-horse-battery-123'
@@ -1133,7 +1192,7 @@ describe('authenticated API workflows', () => {
       });
       expect(tasks[0].status).toBe('new');
       const args = JSON.parse(fetchMock.mock.calls[1][1].body);
-      expect(args.tools[0].functionDeclarations.map(tool => tool.name)).toEqual(['set_task_status']);
+      expect(args.tools[0].functionDeclarations.map(tool => tool.name)).toEqual(['set_task_status', 'generate_report']);
       expect(JSON.parse(args.contents.at(-1).parts[0].text).tasks.map(task => task.id)).toEqual([11]);
       const { taskId, ...change } = reply.body.action.input;
       const commit = () => request(app).patch(`/api/tasks/${taskId}/status`).set('Authorization', authorization).send(change);

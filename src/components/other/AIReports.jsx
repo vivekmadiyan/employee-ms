@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { FaArrowRight, FaChartColumn, FaDownload, FaWandMagicSparkles } from 'react-icons/fa6';
 import { generateAiReportApi } from '../../api';
 import { localDateKey } from '../../utils/workFocus';
@@ -37,6 +37,62 @@ function downloadReport(report) {
   link.download = `employeems-${report.kind}-report-${localDateKey(new Date())}.txt`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+export function ReportResult({ report, inChat = false }) {
+  const titleId = useId();
+  const analysisId = useId();
+  const Title = inChat ? 'h3' : 'h4';
+  const Heading = inChat ? 'h4' : 'h5';
+  const breakdowns = (
+    <div className="ai-report-sections">
+      {report.sections.map(({ title, rows }) => (
+        <section className="ai-report-breakdown" key={title}>
+          <Heading className="ai-report-breakdown-heading">{title}</Heading>
+          {rows.length ? (
+            <dl>
+              {rows.map(({ label, count }) => (
+                <div key={label}><dt>{label}</dt><dd>{numberFormat.format(count)}</dd></div>
+              ))}
+            </dl>
+          ) : <p>No records for this report.</p>}
+        </section>
+      ))}
+    </div>
+  );
+
+  return (
+    <section className={inChat ? 'ai-report-result ai-report-result--chat' : 'ai-report-result'} aria-labelledby={titleId}>
+      {!inChat && <p className="sr-only" role="status">Report ready.</p>}
+      <div className="ai-report-result-header">
+        <div>
+          <Title id={titleId} className="ai-report-title">{report.title}</Title>
+          <p>{report.period}</p>
+        </div>
+        <button type="button" className="ai-quiet" onClick={() => downloadReport(report)}>
+          <FaDownload aria-hidden="true" /> Download report
+        </button>
+      </div>
+      <section className="ai-report-insight" aria-labelledby={analysisId}>
+        <Heading id={analysisId} className="ai-report-insight-heading"><FaWandMagicSparkles aria-hidden="true" /> EmployeeMS AI analysis</Heading>
+        <p className={report.analysis ? 'ai-report-analysis-text' : 'ai-report-analysis-unavailable'}>
+          {report.analysis || unavailableAnalysis}
+        </p>
+      </section>
+      <Heading className="ai-report-data-title">Verified workspace figures</Heading>
+      <dl className="ai-report-metrics">
+        {report.metrics.map(({ label, value }) => (
+          <div key={label}><dt>{label}</dt><dd>{numberFormat.format(value)}</dd></div>
+        ))}
+      </dl>
+      {inChat ? (
+        <details className="ai-report-details">
+          <summary>Report breakdowns</summary>
+          {breakdowns}
+        </details>
+      ) : breakdowns}
+    </section>
+  );
 }
 
 export default function AIReports({ isAdmin, hidden }) {
@@ -127,46 +183,7 @@ export default function AIReports({ isAdmin, hidden }) {
       {loading && <p className="ai-report-notice" role="status">Loading workspace figures and AI analysis…</p>}
       {error && <p className="ai-error" role="alert">{error}</p>}
 
-      {report && (
-        <div className="ai-report-result">
-          <p className="sr-only" role="status">Report ready.</p>
-          <div className="ai-report-result-header">
-            <div>
-              <h4>{report.title}</h4>
-              <p>{report.period}</p>
-            </div>
-            <button type="button" className="ai-quiet" onClick={() => downloadReport(report)}>
-              <FaDownload aria-hidden="true" /> Download report
-            </button>
-          </div>
-          <section className="ai-report-insight" aria-labelledby="ai-report-analysis">
-            <h5 id="ai-report-analysis"><FaWandMagicSparkles aria-hidden="true" /> EmployeeMS AI analysis</h5>
-            <p className={report.analysis ? 'ai-report-analysis-text' : 'ai-report-analysis-unavailable'}>
-              {report.analysis || unavailableAnalysis}
-            </p>
-          </section>
-          <h5 className="ai-report-data-title">Verified workspace figures</h5>
-          <dl className="ai-report-metrics">
-            {report.metrics.map(({ label, value }) => (
-              <div key={label}><dt>{label}</dt><dd>{numberFormat.format(value)}</dd></div>
-            ))}
-          </dl>
-          <div className="ai-report-sections">
-            {report.sections.map(({ title, rows }) => (
-              <section className="ai-report-breakdown" key={title}>
-                <h5>{title}</h5>
-                {rows.length ? (
-                  <dl>
-                    {rows.map(({ label, count }) => (
-                      <div key={label}><dt>{label}</dt><dd>{numberFormat.format(count)}</dd></div>
-                    ))}
-                  </dl>
-                ) : <p>No records for this report.</p>}
-              </section>
-            ))}
-          </div>
-        </div>
-      )}
+      {report && <ReportResult report={report} />}
     </section>
   );
 }
