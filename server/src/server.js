@@ -492,7 +492,11 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
     const prompt = `You are the EmployeeMS workspace assistant. Answer in 2-5 short sentences with practical next steps. Use only the supplied task data. Never invent names, numbers, dates, or permissions. If the data does not answer the question, say so. User question: ${question}\nTask data: ${JSON.stringify(tasks)}`;
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(config.GEMINI_API_KEY)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
     const data = await response.json();
-    if (!response.ok) return res.status(response.status === 429 ? 429 : 502).json({ message: 'AI provider request failed. Try again later.' });
+    if (!response.ok) {
+      const providerMessage = typeof data.error?.message === 'string' ? data.error.message : 'The AI provider rejected the request.';
+      console.error('Gemini request failed:', { requestId: req.id, status: response.status, message: providerMessage });
+      return res.status(response.status === 429 ? 429 : 502).json({ message: `AI provider request failed: ${providerMessage}` });
+    }
     const answer = data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
     if (!answer) return res.status(502).json({ message: 'AI returned an empty response.' });
     res.json({ answer });
