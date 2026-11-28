@@ -139,6 +139,7 @@ export async function sendTaskAssignedEmail({
   companyName,
   task,
   assignedBy,
+  workspaceUrl,
   fetchImpl = fetch
 }) {
   return sendBrevoEmail({
@@ -161,7 +162,7 @@ export async function sendTaskAssignedEmail({
         `Priority: ${task.priority}`,
         `Due date: ${task.taskDate}`,
         '',
-        'Sign in to EmployeeMS to review and update this task.'
+        workspaceUrl ? `Open task: ${workspaceUrl}` : 'Sign in to EmployeeMS to review and update this task.'
       ].join('\n')
     }
   });
@@ -178,6 +179,7 @@ export async function sendTaskUpdateEmail({
   actorName,
   updateType,
   updateDetails,
+  workspaceUrl,
   fetchImpl = fetch
 }) {
   const updates = {
@@ -217,7 +219,7 @@ export async function sendTaskUpdateEmail({
         `Task: ${task.taskTitle}`,
         update.description,
         '',
-        'Sign in to EmployeeMS to review the update.'
+        workspaceUrl ? `Open task: ${workspaceUrl}` : 'Sign in to EmployeeMS to review the update.'
       ].join('\n')
     }
   });

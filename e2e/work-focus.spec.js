@@ -34,6 +34,73 @@ test('the public landing works at 390 pixels in both themes', async ({ page }) =
   await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
+test('opens an emailed task link and confirms one AI handoff with external AI off', async ({ page }) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now();
+  const email = `handoff-admin-${suffix}@example.test`;
+  const registration = await page.request.post(`${api}/onboarding/register-company`, {
+    data: { companyName: `Handoff ${suffix}`, firstName: 'Handoff Admin', email, password, industry: 'Technology', size: '1-10' }
+  });
+  expect(registration.status()).toBe(201);
+  const admin = await registration.json();
+  const headers = { Authorization: `Bearer ${admin.token}` };
+  const employeeEmail = `handoff-owner-${suffix}@example.test`;
+  const employee = await page.request.post(`${api}/employees`, {
+    headers, data: { firstName: 'Handoff Owner', email: employeeEmail, password, department: 'Operations' }
+  });
+  expect(employee.status()).toBe(201);
+  const owner = await employee.json();
+  const original = await page.request.post(`${api}/tasks`, {
+    headers, data: { taskTitle: 'Review weekend coverage', taskDescription: 'Confirm the weekend owner.', taskDate: '2099-01-01',
+      category: 'Operations', priority: 'high', assignedTo: owner.id }
+  });
+  expect(original.status()).toBe(201);
+  const source = await original.json();
+
+  await page.goto(`/?task=${source.id}`);
+  await page.getByLabel('Work Email').fill(email);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign In to Workspace' }).click();
+  const row = page.getByRole('row').filter({ hasText: source.taskTitle });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Draft handoff' }).click();
+  const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  await expect(assistant.getByRole('textbox', { name: 'Ask about tasks' })).toHaveValue('Draft a handoff for this task.');
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  const editor = assistant.getByRole('form', { name: 'Review follow-up task' });
+  await expect(assistant.getByText('Verified workspace data')).toBeVisible();
+  await expect(assistant.getByRole('button', { name: source.taskTitle, exact: true })).toBeVisible();
+  await expect(editor.getByRole('button', { name: 'Confirm and create follow-up' })).toBeDisabled();
+  const checkTasks = () => page.request.get(`${api}/tasks?q=Follow%20up`, { headers });
+  expect(await (await checkTasks()).json()).toEqual([]);
+  await editor.getByLabel('Assignee').selectOption(String(owner.id));
+  await editor.getByLabel('Due date').fill('2099-01-03');
+  const [created] = await Promise.all([
+    page.waitForResponse(response => response.url() === `${api}/tasks` && response.request().method() === 'POST'),
+    editor.getByRole('button', { name: 'Confirm and create follow-up' }).click()
+  ]);
+  expect(created.status()).toBe(201);
+  const followUp = await created.json();
+  const replay = await page.request.post(`${api}/tasks`, { headers, data: created.request().postDataJSON() });
+  expect(replay.status()).toBe(200);
+  expect((await replay.json()).id).toBe(followUp.id);
+  expect((await (await checkTasks()).json()).map(task => task.id)).toEqual([followUp.id]);
+  const ownerLogin = await page.request.post(`${api}/auth/login`, { data: { email: employeeEmail, password } });
+  expect(ownerLogin.ok()).toBeTruthy();
+  const ownerHeaders = { Authorization: `Bearer ${(await ownerLogin.json()).token}` };
+  const notifications = await page.request.get(`${api}/notifications`, { headers: ownerHeaders });
+  expect((await notifications.json()).notifications.filter(notification => notification.taskId === followUp.id && notification.type === 'assigned')).toHaveLength(1);
+  const employeeDraft = await page.request.post(`${api}/ai/ask`, {
+    headers: ownerHeaders, data: { question: 'Draft a handoff for this task.', mode: 'chat', contextTaskId: source.id }
+  });
+  expect(employeeDraft.ok()).toBeTruthy();
+  const employeeReply = await employeeDraft.json();
+  expect(employeeReply.references).toEqual([{ id: source.id, title: source.taskTitle }]);
+  expect(employeeReply.handoffDraft).toBeUndefined();
+  await assistant.getByRole('button', { name: 'Open follow-up task' }).click();
+  await expect(page.getByRole('row').filter({ hasText: followUp.taskTitle })).toBeVisible();
+});
+
 test('Work Focus and AI approvals keep task actions scoped on a phone', async ({ page }) => {
   test.setTimeout(60_000);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

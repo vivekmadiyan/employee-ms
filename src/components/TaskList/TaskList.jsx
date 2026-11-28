@@ -8,7 +8,7 @@ import CalendarExportButton from '../other/CalendarExportButton';
 import { workspaceDateKey } from '../../utils/workFocus';
 import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 
-const TaskList = ({ data, focusRequest, initialView }) => {
+const TaskList = ({ data, focusRequest, initialView, onDraftHandoff }) => {
   const { settings } = React.useContext(WorkspaceSettingsContext);
   const today = initialView?.today ?? workspaceDateKey(settings.timeZone);
   const dueToday = task => (task.newTask || task.active) && task.taskDate === today;
@@ -101,6 +101,10 @@ const TaskList = ({ data, focusRequest, initialView }) => {
               <div key={task.id} id={`assigned-task-${task.id}`} className="assigned-task-target grid"
                 tabIndex={-1} role="group" aria-label={task.taskTitle}>
                 <Card data={task} />
+                {onDraftHandoff && task.id === focusRequest?.taskId && (
+                  <button type="button" className="workspace-action workspace-action--secondary mt-2 justify-self-start"
+                    onClick={() => onDraftHandoff(task)}>Draft handoff</button>
+                )}
               </div>
             );
           })

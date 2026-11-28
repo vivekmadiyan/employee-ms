@@ -170,6 +170,7 @@ const emailOptions = {
   senderName: config.BREVO_SENDER_NAME,
   workspaceUrl: config.CLIENT_URL
 };
+const taskLink = id => `${config.CLIENT_URL.replace(/\/+$/, '')}/?task=${id}`;
 async function emailWorkspaceEvent(recipient, subject, message, req) {
   if (!emailConfigured || !recipient?.email) return;
   try {
@@ -205,6 +206,7 @@ const emailTaskAssignment = async (task, recipient, assignedBy, req) => {
       recipientName: recipient.firstName,
       companyName: req.company.name,
       assignedBy,
+      workspaceUrl: taskLink(task.id),
       task
     });
     return { emailSent: true, emailStatus: 'sent' };
@@ -239,7 +241,8 @@ const emailTaskUpdate = async (task, recipientIds, actorId, actorName, updateTyp
       task,
       actorName,
       updateType,
-      updateDetails
+      updateDetails,
+      workspaceUrl: taskLink(task.id)
     })));
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length) {
@@ -358,7 +361,7 @@ const notifySlackTaskAssigned = async (task, recipient, req) => {
   try {
     const encrypted = await getSlackWebhook(req.company.id);
     if (encrypted) await deliverSlackMessage(encrypted,
-      `Task assigned to ${recipient.firstName}: ${task.taskTitle} (due ${task.taskDate})`);
+      `Task assigned to ${recipient.firstName}: ${task.taskTitle} (due ${task.taskDate})\n${taskLink(task.id)}`);
   } catch (error) {
     console.error('Slack task notification failed:', {
       requestId: req.id,
@@ -601,13 +604,14 @@ app.delete('/api/ai/conversations/:id', auth, async (req, res, next) => {
 });
 app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
   try {
-    const { question, today: requestedToday, mode, history: clientHistory = [], tools = [], reportContext: clientReportContext, conversationId } = body(z.object({
+    const { question, today: requestedToday, mode, history: clientHistory = [], tools = [], reportContext: clientReportContext, conversationId, contextTaskId } = body(z.object({
       question: z.string().trim().min(1, 'Enter a message.').max(500),
       today: isoDate.optional(),
       mode: z.enum(['chat', 'summary']).optional(),
       tools: z.array(z.string().max(64)).max(6).optional(),
       reportContext: reportContextSchema.optional(),
       conversationId: conversationIdSchema.nullable().optional(),
+      contextTaskId: z.number().int().positive().max(2_147_483_647).optional(),
       history: z.array(z.object({
         question: z.string().trim().min(1).max(500),
         answer: z.string().trim().min(1).max(2500)
@@ -638,6 +642,30 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
     }
     const taskScope = req.user.role === 'admin' ? 'company_id=$1' : 'company_id=$1 AND assigned_to=$2';
     const taskParams = req.user.role === 'admin' ? [req.company.id] : [req.company.id, req.user.id];
+    let contextTask;
+    if (isChat && contextTaskId) {
+      const { rows } = await query(
+        `SELECT id,task_title AS title,task_description AS description,task_date AS due_date,status,category,priority
+         FROM tasks WHERE ${taskScope} AND archived_at IS NULL AND id=$${taskParams.length + 1}`,
+        [...taskParams, contextTaskId]
+      );
+      contextTask = rows[0];
+      if (!contextTask) return res.status(404).json({ message: 'This source task is no longer available.' });
+      if (/^draft a handoff for this task[.!?]?$/i.test(question)) {
+        const labels = { new: 'New', active: 'In progress', failed: 'Needs attention', completed: 'Completed' };
+        const answer = `Handoff for ${contextTask.title}\nStatus: ${labels[contextTask.status]} · Original due date: ${contextTask.due_date}\n\nNext step: review the source task and its discussion, confirm remaining work, and note any blockers before taking ownership.`;
+        const handoffDraft = req.user.role === 'admin' ? {
+          sourceTaskId: contextTask.id,
+          requestId: crypto.randomUUID(),
+          taskTitle: `Follow up: ${contextTask.title}`.slice(0, 160),
+          taskDescription: `Review the original task (#${contextTask.id}) and its discussion, confirm remaining work, and document any blockers.\n\nOriginal task details:\n${contextTask.description}`.slice(0, 4_000),
+          category: contextTask.category,
+          priority: contextTask.priority
+        } : null;
+        return await respond({ answer, handoff: true, source: 'workspace', references: [{ id: contextTask.id, title: contextTask.title }],
+          ...(handoffDraft && { handoffDraft }) });
+      }
+    }
     const snapshot = taskSnapshotFilter(question, `$${taskParams.length + 1}`);
     const readSummary = async () => {
       const { rows } = await query(
@@ -649,12 +677,12 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
       return { answer: formatTaskSnapshot(rows, snapshot.label), source: 'workspace',
         ...(isChat && { taskSummary: true, references: rows.map(({ id, title }) => ({ id, title })) }) };
     };
-    if (mode && snapshot) return await respond(await readSummary());
+    if (mode && snapshot && !contextTask) return await respond(await readSummary());
     let result;
     if (mode !== 'summary' && req.company.aiEnabled !== false && (config.GEMINI_API_KEY || config.GROQ_API_KEY)) {
       const selectedTools = isChat ? toolsForRole(req.user.role).filter(tool => tools.includes(tool.id)) : [];
       const tokens = searchWords(`${question} ${history.at(-1)?.question ?? ''}`);
-      const rows = /^(hi|hello|hey|thanks)[!. ]*$/i.test(question) ? [] : (await query(
+      const rows = contextTask ? [contextTask] : /^(hi|hello|hey|thanks)[!. ]*$/i.test(question) ? [] : (await query(
         `SELECT task_title AS title, task_date::text AS due_date, status, priority, id, COUNT(*) OVER()::int AS scope_total
          FROM tasks WHERE ${taskScope} AND archived_at IS NULL
          ORDER BY (SELECT COUNT(*) FROM unnest($${taskParams.length + 1}::text[]) AS term WHERE strpos(lower(task_title),term)>0) DESC,
@@ -667,7 +695,7 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
          ORDER BY (SELECT COUNT(*) FROM unnest($2::text[]) AS term WHERE strpos(lower(first_name),term)>0) DESC, first_name, id LIMIT 12`,
         [req.company.id, tokens]
       )).rows : [];
-      const messages = history.filter(turn => !turn.workspaceBrief).flatMap(turn => [
+      const messages = history.filter(turn => !turn.workspaceBrief && !turn.handoff).flatMap(turn => [
         { role: 'user', content: turn.question },
         { role: 'assistant', content: turn.answer }
       ]);
@@ -675,6 +703,7 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
         role: 'user',
         content: JSON.stringify({
           question, today, partial: (rows[0]?.scope_total ?? 0) > tasks.length, tasks,
+          ...(contextTask && { selectedTaskId: contextTask.id, selectedTaskDescription: contextTask.description }),
           ...(isChat && { workspaceRole: req.user.role, reportContext }),
           ...(assignees.length > 0 && { activeAssignees: assignees })
         })
@@ -707,7 +736,7 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
       console.warn('Workspace AI reply unavailable', { requestId: req.id, provider: result.provider, status: result.status });
     }
 
-    if (snapshot) return await respond(await readSummary());
+    if (snapshot && !contextTask) return await respond(await readSummary());
 
     if (mode === 'summary') return res.status(400).json({ message: 'Choose a task summary from the options provided.' });
     if (req.company.aiEnabled === false) return res.status(503).json({ message: 'External AI is disabled for this workspace. You can still use task summaries and reports.' });
@@ -2564,8 +2593,24 @@ app.get('/api/tasks', auth, async (req, res, next) => {
 });
 app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
   try {
-    const values = body(schemas.task, req.body);
-    const { employee, task } = await changeTaskOwnership(req.company.id, async client => {
+    const { handoff, ...values } = body(schemas.task.extend({
+      handoff: z.object({ sourceTaskId: z.number().int().positive().max(2_147_483_647), requestId: z.uuid() }).optional()
+    }), req.body);
+    const { employee, task, replay, missingSource } = await changeTaskOwnership(req.company.id, async client => {
+      if (handoff) {
+        const existing = (await client.query(
+          'SELECT task_id FROM task_handoff_requests WHERE company_id=$1 AND created_by=$2 AND request_id=$3',
+          [req.company.id, req.user.id, handoff.requestId]
+        )).rows[0];
+        if (existing) {
+          const saved = (await client.query(`SELECT ${taskFields} FROM tasks WHERE id=$1 AND company_id=$2`,
+            [existing.task_id, req.company.id])).rows[0];
+          return { task: saved, replay: true };
+        }
+        const source = await client.query('SELECT id FROM tasks WHERE id=$1 AND company_id=$2 AND archived_at IS NULL FOR UPDATE',
+          [handoff.sourceTaskId, req.company.id]);
+        if (!source.rowCount) return { missingSource: true };
+      }
       const employee = await readTaskAssignee(client, req.company.id, values.assignedTo);
       if (!employee) return {};
       const task = (await client.query(
@@ -2573,12 +2618,19 @@ app.post('/api/tasks', auth, adminOnly, async (req, res, next) => {
          VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${taskFields}`,
         [req.company.id, values.taskTitle, values.taskDescription, values.taskDate, values.category, values.assignedTo, req.user.id, values.priority]
       )).rows[0];
+      if (handoff) await client.query(
+        'INSERT INTO task_handoff_requests(company_id,created_by,request_id,task_id) VALUES($1,$2,$3,$4)',
+        [req.company.id, req.user.id, handoff.requestId, task.id]
+      );
       return { employee, task };
     });
+    if (replay && task) return res.json(serializeTasksFor(req)(task));
+    if (missingSource) return res.status(409).json({ message: 'The source task is no longer available. Reopen it to draft a new handoff.' });
     if (!employee) return res.status(400).json({ message: 'Choose an active employee in this workspace' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'task.created', 'task', task.id, {
       assigneeId: task.assignedTo,
-      priority: task.priority
+      priority: task.priority,
+      ...(handoff && { sourceTaskId: handoff.sourceTaskId })
     });
     try {
       await notifyUser(values.assignedTo, task.id, req.user.id, 'assigned', `New task assigned: ${task.taskTitle}`, `assigned:${task.id}:${values.assignedTo}`);

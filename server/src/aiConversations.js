@@ -27,7 +27,8 @@ export async function deleteAiConversation(user, id) {
 }
 
 export async function saveAiTurn(user, id, question, reply) {
-  const { action, ...transcript } = reply;
+  const { action, handoffDraft, ...transcript } = reply;
+  if (handoffDraft) transcript.answer += '\n\nOpen the source task to prepare a new follow-up.';
   if (action) transcript.answer = 'A task change was proposed. Ask for a new draft to review it again.';
   const turns = JSON.stringify([{ question, ...transcript }]);
   const owner = ownerParams(user);

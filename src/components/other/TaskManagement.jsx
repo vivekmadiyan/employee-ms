@@ -4,6 +4,7 @@ import { archiveTaskApi, bulkUpdateTasksApi, getTaskPageApi, updateTaskApi } fro
 import { AuthContext } from '../../context/AuthProvider';
 import TaskComments from './TaskComments';
 import CalendarExportButton from './CalendarExportButton';
+import { clearTaskLink } from '../../utils/taskLink';
 import './TaskManagement.css';
 
 const statusNames = { new: 'New', active: 'In progress', completed: 'Completed', failed: 'Needs attention' };
@@ -43,7 +44,7 @@ const toForm = task => ({
   priority: task.priority || 'medium'
 });
 
-export default function TaskManagement({ initialTaskId, initialFilters, taskSource }) {
+export default function TaskManagement({ initialTaskId, initialFilters, taskSource, onDraftHandoff }) {
   const { userData, refresh, updateTaskStatus, currentUser } = useContext(AuthContext);
   const storageKey = currentUser?.companyId && currentUser?.id ? `ems_task_view_${currentUser.companyId}_${currentUser.id}` : null;
   const [savedView, setSavedView] = useState(() => readSavedView(storageKey));
@@ -302,7 +303,7 @@ export default function TaskManagement({ initialTaskId, initialFilters, taskSour
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
           <p className="text-sm font-semibold text-slate-700">{taskSource ? `Viewing a task from ${taskSource}` : 'Viewing a single task'}</p>
           <button type="button" className="workspace-action workspace-action--secondary"
-            onClick={() => { resetPage(1); setFilters(current => ({ ...current, taskId: '' })); }}>
+            onClick={() => { clearTaskLink(); resetPage(1); setFilters(current => ({ ...current, taskId: '' })); }}>
             Show all tasks
           </button>
         </div>
@@ -548,7 +549,11 @@ export default function TaskManagement({ initialTaskId, initialFilters, taskSour
                         </span>
                       </td>
                       <td role="cell" className="task-hub-actions px-5 py-3.5 sm:px-6">
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          {!task.archived && onDraftHandoff && (
+                            <button type="button" onClick={() => onDraftHandoff(task)}
+                              className="min-h-9 font-semibold text-indigo-700">Draft handoff</button>
+                          )}
                           {(!task.archived || needsNewAssignee) && (
                             <button 
                               type="button" 

@@ -4,7 +4,7 @@ import { sendWorkspaceEmail } from './email.js';
 export async function sendDailyTaskReminders(emailOptions) {
   const { rows } = await query(`
     WITH candidates AS (
-      SELECT u.id, u.first_name, u.email, local_clock.today, workload.overdue, workload.due
+      SELECT u.id, u.first_name, u.email, local_clock.today, workload.overdue, workload.due, workload.task_id
       FROM users u JOIN companies c ON c.id=u.company_id
       CROSS JOIN LATERAL (
         SELECT (now() AT TIME ZONE c.time_zone)::date AS today,
@@ -12,7 +12,8 @@ export async function sendDailyTaskReminders(emailOptions) {
       ) local_clock
       CROSS JOIN LATERAL (
         SELECT COUNT(*) FILTER (WHERE t.task_date<to_char(local_clock.today, 'YYYY-MM-DD'))::int AS overdue,
-               COUNT(*) FILTER (WHERE t.task_date=to_char(local_clock.today, 'YYYY-MM-DD'))::int AS due
+               COUNT(*) FILTER (WHERE t.task_date=to_char(local_clock.today, 'YYYY-MM-DD'))::int AS due,
+               CASE WHEN COUNT(*)=1 THEN MIN(t.id) END AS task_id
         FROM tasks t WHERE t.company_id=u.company_id AND t.assigned_to=u.id
           AND t.archived_at IS NULL AND t.status IN ('new','active')
           AND t.task_date<=to_char(local_clock.today, 'YYYY-MM-DD')
@@ -25,7 +26,7 @@ export async function sendDailyTaskReminders(emailOptions) {
       FOR UPDATE OF u SKIP LOCKED
     )
     UPDATE users u SET task_reminder_day=candidates.today FROM candidates WHERE u.id=candidates.id
-    RETURNING candidates.id,candidates.email,candidates.first_name AS "firstName",candidates.overdue,candidates.due
+    RETURNING candidates.id,candidates.email,candidates.first_name AS "firstName",candidates.overdue,candidates.due,candidates.task_id
   `);
 
   // A daily claim survives restarts and prevents another worker from sending the same reminder.
@@ -34,6 +35,7 @@ export async function sendDailyTaskReminders(emailOptions) {
       try {
         await sendWorkspaceEmail({
           ...emailOptions,
+          ...(account.task_id && { workspaceUrl: `${emailOptions.workspaceUrl.replace(/\/+$/, '')}/?task=${account.task_id}` }),
           recipientEmail: account.email,
           recipientName: account.firstName,
           subject: 'Your daily EmployeeMS task reminder',

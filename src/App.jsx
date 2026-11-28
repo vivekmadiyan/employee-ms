@@ -9,11 +9,12 @@ import ResetPassword from './components/Auth/ResetPassword';
 import EmployeeDashboard from './components/Dashboard/EmployeeDashboard';
 import AdminDashboard from './components/Dashboard/AdminDashboard';
 import { AuthContext } from './context/AuthProvider';
+import { readTaskLink } from './utils/taskLink';
 import './App.css';
 
 const App = () => {
   const { currentUser, logout, loading } = useContext(AuthContext);
-  const [showLogin, setShowLogin] = useState(false);
+  const [showLogin, setShowLogin] = useState(() => Boolean(readTaskLink()));
   const [showRegister, setShowRegister] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
 
@@ -40,8 +41,8 @@ const App = () => {
   }
 
   return currentUser.role === 'admin'
-    ? <AdminDashboard changeUser={logout} data={currentUser} />
-    : <EmployeeDashboard changeUser={logout} data={currentUser} />;
+    ? <AdminDashboard changeUser={logout} data={currentUser} initialTaskId={readTaskLink()} />
+    : <EmployeeDashboard changeUser={logout} data={currentUser} initialTaskId={readTaskLink()} />;
 };
 
 export default App;

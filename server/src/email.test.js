@@ -123,7 +123,7 @@ describe('sendTaskAssignedEmail', () => {
   it('sends task details to the assigned employee through Brevo', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
 
-    await sendTaskAssignedEmail({ ...taskOptions, fetchImpl });
+    await sendTaskAssignedEmail({ ...taskOptions, workspaceUrl: 'https://app.example.com/?task=42', fetchImpl });
 
     const [url, options] = fetchImpl.mock.calls[0];
     expect(url).toBe('https://api.brevo.com/v3/smtp/email');
@@ -133,6 +133,7 @@ describe('sendTaskAssignedEmail', () => {
       textContent: expect.stringContaining('Due date: 2099-12-31')
     });
     expect(JSON.parse(options.body).textContent).toContain('Admin assigned you a task in Example Co.');
+    expect(JSON.parse(options.body).textContent).toContain('https://app.example.com/?task=42');
   });
 
   it('retries a transient Brevo error and succeeds when the provider recovers', async () => {

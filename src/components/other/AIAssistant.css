@@ -155,6 +155,15 @@ html.dark .ai-panel {
 .ai-action-details dd { color: var(--desk-ink); font-size: .82rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ai-action-controls, .ai-action-result { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .7rem; }
 .ai-action-controls { margin-top: .65rem; }
+.ai-handoff { display: grid; gap: .65rem; }
+.ai-handoff h3 { color: var(--desk-ink); font-weight: 800; }
+.ai-handoff label, .ai-handoff-fields { display: grid; gap: .4rem; min-width: 0; }
+.ai-handoff label { color: var(--desk-ink); font-size: .82rem; font-weight: 700; }
+.ai-handoff-fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); }
+.ai-handoff :is(input, select, textarea) { width: 100%; min-width: 0; color: var(--desk-ink); background: var(--ai-paper); border: 1px solid var(--ai-line); border-radius: .55rem; }
+.ai-context-task { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .7rem; margin-bottom: .45rem; color: var(--desk-muted); font-size: .78rem; overflow-wrap: anywhere; }
+.ai-context-task strong { color: var(--desk-ink); }
+.ai-context-task button { padding: .3rem; color: var(--desk-accent); text-decoration: underline; }
 .ai-action-result > span { display: inline-flex; align-items: center; gap: .3rem; color: var(--desk-accent); font-weight: 750; font-size: .8rem; }
 
 .ai-composer, .ai-summary { padding: .7rem clamp(.85rem, 2.1vw, 1.5rem); }
