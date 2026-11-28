@@ -1,11 +1,11 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
-  FaArrowRight, FaArrowUp, FaArrowUpRightFromSquare, FaChartSimple, FaCircleCheck, FaClock, FaClockRotateLeft,
+  FaArrowRight, FaArrowUp, FaArrowUpRightFromSquare, FaCalendarDay, FaChartSimple, FaCircleCheck, FaClock, FaClockRotateLeft,
   FaCommentDots, FaFileLines, FaListCheck, FaPenToSquare, FaPlus, FaWandMagicSparkles, FaWrench
 } from 'react-icons/fa6';
 import { askAiApi, createTaskApi, getAiToolsApi, updateTaskStatusApi } from '../../api';
 import { AuthContext } from '../../context/AuthProvider';
-import { workspaceDateKey } from '../../utils/workFocus';
+import { briefPrompt, workspaceDateKey } from '../../utils/workFocus';
 import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import AIChatHistory from './AIChatHistory';
 import AIReports, { ReportResult } from './AIReports';
@@ -14,9 +14,9 @@ import './AIAssistant.css';
 const modelSources = new Set(['gemini', 'groq']);
 const toolIcons = { set_task_status: FaListCheck, create_task: FaPenToSquare };
 const starters = [
+  { title: 'Today’s briefing', text: 'Deadlines and time off in one view.', question: briefPrompt, icon: FaCalendarDay },
   { title: 'Report on last week', text: 'Get verified figures and an AI summary.', question: 'Generate a task report for last week.', icon: FaFileLines },
   { title: 'Find overdue work', text: 'See which deadlines have slipped.', question: 'Which tasks are overdue?', icon: FaClock },
-  { title: 'Plan the week', text: 'Pick what deserves attention first.', question: 'Help me prioritize this week.', icon: FaListCheck },
   { title: 'Draft a handoff', text: 'Turn open work into a short update.', question: 'Draft a handoff using the open tasks.', icon: FaPenToSquare }
 ];
 const actionHandlers = {
@@ -62,7 +62,7 @@ function ActionPreview({ turn, busy, isToolEnabled, confirm, dismiss, onOpenTask
   );
 }
 
-export default function AIAssistant({ onOpenTask }) {
+export default function AIAssistant({ onOpenTask, draftRequest }) {
   const { currentUser, refresh } = useContext(AuthContext);
   const { settings } = useContext(WorkspaceSettingsContext);
   const [mode, setMode] = useState('chat');
@@ -92,6 +92,15 @@ export default function AIAssistant({ onOpenTask }) {
     currentUser?.role === 'admin' ? 'Summarize the team’s open work' : 'Summarize my open work'
   ];
   const busy = Boolean(pending) || saving;
+  const appliedDraft = useRef(null);
+
+  useEffect(() => {
+    if (!draftRequest || appliedDraft.current === draftRequest || busy) return;
+    appliedDraft.current = draftRequest;
+    setMode('chat');
+    setQuestion(draftRequest.text);
+    setError('');
+  }, [draftRequest, busy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -196,7 +205,7 @@ export default function AIAssistant({ onOpenTask }) {
     setPending(text);
     setError('');
     const history = mode === 'chat'
-      ? turns.slice(-4).map(turn => ({
+      ? turns.filter(turn => !turn.workspaceBrief).slice(-4).map(turn => ({
         question: turn.question,
         answer: (turn.actionState === 'saved' ? `${turn.answer}\nThe user confirmed the action and it was saved.` : turn.answer).slice(0, 2500)
       }))
@@ -214,7 +223,7 @@ export default function AIAssistant({ onOpenTask }) {
       });
       if (!result.answer) throw new Error('No answer was returned. Try again.');
       if (mode === 'chat') {
-        const workspaceReply = result.source === 'workspace' && (result.report || result.reportIntent === true || result.taskSummary === true);
+        const workspaceReply = result.source === 'workspace' && (result.report || result.reportIntent === true || result.taskSummary === true || result.workspaceBrief === true);
         if (!modelSources.has(result.source) && !workspaceReply) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
         const turn = { ...result, question: text, id: ++sequence.current, actionState: 'ready' };
         if (result.conversationId) setConversationId(result.conversationId);
@@ -237,13 +246,12 @@ export default function AIAssistant({ onOpenTask }) {
       <header className="ai-panel-header">
         <span className="ai-symbol"><FaWandMagicSparkles aria-hidden="true" /></span>
         <div className="ai-title">
-          <span className="ai-kicker"><span className="ai-status-dot" aria-hidden="true" /> Workspace intelligence</span>
           <h2>EmployeeMS AI</h2>
           <p>Plan work, prepare task changes, and generate reports.</p>
         </div>
         <div className="ai-header-actions">
           {mode !== 'reports' && (
-            <button type="button" className="ai-quiet ai-mobile-tools" aria-expanded={toolsOpen} aria-controls="ai-tools"
+            <button type="button" className="ai-quiet" aria-expanded={toolsOpen} aria-controls="ai-tools"
               onClick={() => setToolsOpen(open => !open)}><FaWrench aria-hidden="true" /> Tools</button>
           )}
           <button type="button" className="ai-quiet" aria-haspopup="dialog" disabled={busy} onClick={() => setHistoryOpen(true)}>
@@ -258,7 +266,7 @@ export default function AIAssistant({ onOpenTask }) {
         <AIChatHistory currentId={conversationId} onOpen={resumeChat}
           onDelete={id => { if (id === conversationId) resetChat(); }} onClose={() => setHistoryOpen(false)} />
       )}
-      <div className={mode === 'reports' ? 'ai-layout ai-layout--reports' : 'ai-layout'}>
+      <div className={mode === 'reports' || !toolsOpen ? 'ai-layout ai-layout--wide' : 'ai-layout'}>
         <div className={mode === 'reports' ? 'ai-chat ai-chat--reports' : 'ai-chat'}>
           <div className="ai-modes" role="group" aria-label="Assistant mode">
             <button type="button" disabled={busy} aria-pressed={mode === 'chat'} onClick={() => switchMode('chat')}>
@@ -281,9 +289,8 @@ export default function AIAssistant({ onOpenTask }) {
                   <div className="ai-welcome">
                     <div className="ai-welcome-hero">
                       <span className="ai-welcome-mark"><FaWandMagicSparkles aria-hidden="true" /></span>
-                      <p className="ai-welcome-eyebrow">Your work, in context</p>
-                      <h3>Start with what matters.</h3>
-                      <p>Ask a question or pick a starting point.</p>
+                      <h3>What’s on your agenda?</h3>
+                      <p>Check deadlines, create a report, or draft a task change.</p>
                     </div>
                     <div className="ai-starters">
                       {starters.map(({ title, text, question: prompt, icon: Icon }) => (
@@ -303,7 +310,7 @@ export default function AIAssistant({ onOpenTask }) {
                   <article key={turn.id} className={turn.report ? 'ai-turn ai-turn--report' : 'ai-turn'}>
                     <p className="ai-user"><span className="sr-only">You: </span>{turn.question}</p>
                     <div className="ai-reply">
-                      <p className="ai-reply-by">EmployeeMS AI</p>
+                      <p className="ai-reply-by">{turn.workspaceBrief ? 'Verified workspace data' : 'EmployeeMS AI'}</p>
                       <p className="ai-text">{turn.answer}</p>
                       {turn.report && <ReportResult report={turn.report} inChat />}
                       {turn.references?.length > 0 && (
@@ -386,7 +393,7 @@ export default function AIAssistant({ onOpenTask }) {
           ) : null}
           <AIReports isAdmin={currentUser?.role === 'admin'} hidden={mode !== 'reports'} />
         </div>
-        <aside className={mode === 'reports' ? 'ai-tools ai-tools--hidden' : 'ai-tools'} data-open={toolsOpen}
+        <aside className="ai-tools" hidden={mode === 'reports' || !toolsOpen}
           id="ai-tools" aria-labelledby="ai-tools-heading">
           <div className="ai-tools-header">
             <h3 id="ai-tools-heading"><FaWrench aria-hidden="true" /> Tools</h3>

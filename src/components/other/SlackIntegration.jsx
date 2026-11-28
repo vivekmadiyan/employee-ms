@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { FaLink, FaSlack } from 'react-icons/fa6';
-import { getSlackIntegrationApi, removeSlackIntegrationApi, saveSlackIntegrationApi } from '../../api';
+import { getSlackIntegrationApi, removeSlackIntegrationApi, saveSlackIntegrationApi, testSlackIntegrationApi } from '../../api';
 
 export default function SlackIntegration() {
   const [configured, setConfigured] = useState(false);
@@ -49,6 +49,20 @@ export default function SlackIntegration() {
     }
   };
 
+  const sendTest = async () => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await testSlackIntegrationApi();
+      setNotice('Slack confirmed delivery. Look for the EmployeeMS test message in the connected channel.');
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="dashboard-card rounded-2xl p-5 shadow-sm sm:p-6">
       <div className="flex items-start gap-3">
@@ -71,6 +85,9 @@ export default function SlackIntegration() {
       ) : configured ? (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-bold text-emerald-700">Connected</span>
+          <button type="button" disabled={busy} onClick={sendTest} className="workspace-action workspace-action--secondary">
+            Send test message
+          </button>
           <button type="button" disabled={busy} onClick={remove} className="text-xs font-semibold text-rose-600 hover:text-rose-800 disabled:opacity-60">
             {busy ? 'Please wait…' : 'Disconnect Slack'}
           </button>

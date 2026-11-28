@@ -15,6 +15,7 @@ import { deleteAiConversation, listAiConversations, purgeExpiredAiConversations,
 import { defaultTaskReportPeriod, findExplicitReportRequest, generateAiReport, reportTool } from './aiReports.js';
 import { readTaskReport, readWorkforceReport } from './reports.js';
 import { isTimeZone, workspaceDateKey } from './workspaceDate.js';
+import { formatWorkspaceBrief, readWorkspaceBrief, workspaceBriefPrompt } from './workspaceBrief.js';
 import { auth, adminOnly, revokeSession, sessionIsCurrent, signSession as sign } from './middleware/auth.js';
 import {
   sendInvitationEmail,
@@ -299,39 +300,36 @@ const emailLeaveApproval = async (leave, req) => {
     return 'failed';
   }
 };
+const integrationTestLimiter = rateLimit({ windowMs: 60_000, limit: 5, keyGenerator: req => String(req.company.id),
+  standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'Too many test messages. Try again in a minute.' } });
+
+const getSlackWebhook = async companyId => (await query(
+  'SELECT slack_webhook_encrypted AS encrypted FROM company_integrations WHERE company_id=$1', [companyId]
+)).rows[0]?.encrypted;
+
+async function deliverSlackMessage(encrypted, text) {
+  const response = await fetch(decryptSecret(encrypted), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(5_000)
+  });
+  if (!response.ok || (await response.text()) !== 'ok') {
+    throw new Error(`Slack webhook returned HTTP ${response.status}`);
+  }
+}
+
 const notifySlackTaskAssigned = async (task, recipient, req) => {
   try {
-    const integration = (await query(
-      'SELECT slack_webhook_encrypted AS encrypted FROM company_integrations WHERE company_id=$1',
-      [req.company.id]
-    )).rows[0];
-    if (!integration?.encrypted) return;
-
-    const webhookUrl = decryptSecret(integration.encrypted);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
-    try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: `Task assigned to ${recipient.firstName}: ${task.taskTitle} (due ${task.taskDate})`
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        }),
-        redirect: 'error',
-        signal: controller.signal
-      });
-      if (!response.ok || (await response.text()) !== 'ok') {
-        throw new Error(`Slack webhook returned HTTP ${response.status}`);
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
+    const encrypted = await getSlackWebhook(req.company.id);
+    if (encrypted) await deliverSlackMessage(encrypted,
+      `Task assigned to ${recipient.firstName}: ${task.taskTitle} (due ${task.taskDate})`);
   } catch (error) {
     console.error('Slack task notification failed:', {
       requestId: req.id,
       taskId: task.id,
-      message: error.message
+      reason: error.name
     });
   }
 };
@@ -597,6 +595,10 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
       return res.json({ ...reply, conversationId: id });
     };
     if (isChat) {
+      if (question.toLowerCase().replace(/[.!?]+$/, '') === workspaceBriefPrompt.toLowerCase().slice(0, -1)) {
+        const brief = await readWorkspaceBrief(req.user, today);
+        return await respond({ answer: formatWorkspaceBrief(brief, req.user.role, today), source: 'workspace', workspaceBrief: true });
+      }
       const explicitReport = findExplicitReportRequest(question, today, reportContext);
       if (explicitReport) return await respond(await answerReportRequest(req, explicitReport, today, reportContext, question));
     }
@@ -631,7 +633,7 @@ app.post('/api/ai/ask', auth, aiLimiter, async (req, res, next) => {
          ORDER BY (SELECT COUNT(*) FROM unnest($2::text[]) AS term WHERE strpos(lower(first_name),term)>0) DESC, first_name, id LIMIT 12`,
         [req.company.id, tokens]
       )).rows : [];
-      const messages = history.flatMap(turn => [
+      const messages = history.filter(turn => !turn.workspaceBrief).flatMap(turn => [
         { role: 'user', content: turn.question },
         { role: 'assistant', content: turn.answer }
       ]);
@@ -852,6 +854,10 @@ app.post('/api/auth/mfa/disable', auth, async (req, res, next) => {
     next(error);
   }
 });
+app.get('/api/workspace/brief', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await readWorkspaceBrief(req.user, workspaceDateKey(req.company.timeZone ?? 'UTC')));
+});
 app.get('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
   try {
     const result = await query(
@@ -870,6 +876,7 @@ app.post('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
     if (
       parsedUrl.protocol !== 'https:' ||
       parsedUrl.hostname !== 'hooks.slack.com' ||
+      parsedUrl.port ||
       parsedUrl.username ||
       parsedUrl.password ||
       parsedUrl.search ||
@@ -889,6 +896,18 @@ app.post('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+app.post('/api/integrations/slack/test', auth, adminOnly, integrationTestLimiter, async (req, res) => {
+  const encrypted = await getSlackWebhook(req.company.id);
+  if (!encrypted) return res.status(409).json({ message: 'Connect Slack before sending a test message.' });
+  try {
+    await deliverSlackMessage(encrypted, 'EmployeeMS test message. Your workspace can send notifications to this channel.');
+  } catch (error) {
+    console.error('Slack connection test failed:', { requestId: req.id, reason: error.name });
+    return res.status(502).json({ message: 'Slack could not confirm delivery. Check the webhook and its channel, then try again.' });
+  }
+  await recordAuditEvent(req.company.id, req.user.id, req, 'integration.slack_tested', 'integration', 'slack');
+  res.json({ delivered: true });
 });
 app.delete('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
   try {
@@ -2421,7 +2440,7 @@ app.get('/api/tasks', auth, async (req, res, next) => {
     const queryValues = body(z.object({
       q: z.string().trim().max(120).optional(),
       taskId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
-      status: z.enum(['new', 'active', 'completed', 'failed']).optional(),
+      status: z.enum(['new', 'active', 'completed', 'failed', 'open']).optional(),
       priority: z.enum(['low', 'medium', 'high']).optional(),
       assignee: z.coerce.number().int().positive().optional(),
       category: z.string().trim().max(80).optional(),
@@ -2438,6 +2457,10 @@ app.get('/api/tasks', auth, async (req, res, next) => {
     for (const [field, column] of [['taskId', 'id'], ['status', 'status'], ['priority', 'priority'], ['assignee', 'assigned_to'], ['category', 'category'], ['dueBefore', 'task_date'], ['dueAfter', 'task_date']]) {
       const value = queryValues[field];
       if (value === undefined) continue;
+      if (field === 'status' && value === 'open') {
+        clauses.push("status IN ('new','active')");
+        continue;
+      }
       params.push(field === 'category' ? `%${value}%` : value);
       const operator = field === 'dueBefore' ? '<=' : field === 'dueAfter' ? '>=' : '=';
       clauses.push(field === 'category' ? `${column} ILIKE $${params.length}` : `${column} ${operator} $${params.length}`);

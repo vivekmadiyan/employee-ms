@@ -111,6 +111,11 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   ]);
   expect(leaveResponse.status()).toBe(201);
   const leaveRequest = await leaveResponse.json();
+  const employeeBrief = await page.request.get(`${apiUrl}/workspace/brief`, {
+    headers: { Authorization: `Bearer ${employeeSession.token}` }
+  });
+  expect(employeeBrief.ok()).toBeTruthy();
+  expect(await employeeBrief.json()).toMatchObject({ myPendingLeave: 1, canReviewLeave: false, pendingApprovals: 0 });
 
   await logoutInBrowser(page);
   await page.goto('/');
@@ -132,6 +137,19 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     headers: { Authorization: `Bearer ${manager.token}` }
   });
   expect(managerWorkforceReport.status()).toBe(403);
+
+  const briefing = page.getByRole('region', { name: 'Today’s briefing' });
+  await expect(briefing.getByRole('button', { name: '1 Leave approvals' })).toBeVisible();
+  await briefing.getByRole('button', { name: 'Open brief in AI' }).click();
+  const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  await expect(assistant.getByRole('textbox', { name: 'Ask about tasks' })).toHaveValue('Give me my workspace brief.');
+  await assistant.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(assistant.getByRole('log')).toContainText('Leave requests awaiting review: 1');
+  await expect(assistant.getByRole('log')).not.toContainText('E2E manager approval');
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await briefing.getByRole('button', { name: '1 Leave approvals' }).click();
+  await expect(page.getByRole('button', { name: 'Pending approvals' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('heading', { name: 'Leave requests', exact: true })).toBeFocused();
 
   await page.getByRole('button', { name: /My team/ }).waitFor();
   await page.getByRole('button', { name: /My team/ }).click();
@@ -164,7 +182,7 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await expect(absenceDay.getByText('E2E Teammate')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'AI', exact: true }).click();
-  const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
+  await assistant.getByRole('button', { name: 'New chat' }).click();
   const reportQuestion = 'Generate a task report for the last 30 days';
   await assistant.getByRole('textbox', { name: 'Ask about tasks' }).fill(reportQuestion);
   await assistant.getByRole('button', { name: 'Ask AI' }).click();
@@ -199,7 +217,8 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
   await assistant.getByRole('button', { name: 'History', exact: true }).click();
   await history.getByRole('button', { name: `Delete ${reportQuestion}` }).click();
   await history.getByRole('button', { name: 'Delete chat', exact: true }).click();
-  await expect(history.getByText('Saved chats appear here after the first reply.')).toBeVisible();
+  await expect(history.getByRole('button', { name: `Open ${reportQuestion}` })).toHaveCount(0);
+  await expect(history.getByRole('button', { name: 'Open Give me my workspace brief.' })).toBeVisible();
   expect((await page.request.get(chatUrl, { headers: { Authorization: `Bearer ${manager.token}` } })).status()).toBe(404);
   await history.getByRole('button', { name: 'Close chat history' }).click();
 

@@ -43,13 +43,13 @@ const toForm = task => ({
   priority: task.priority || 'medium'
 });
 
-export default function TaskManagement({ initialTaskId, taskSource }) {
+export default function TaskManagement({ initialTaskId, initialFilters, taskSource }) {
   const { userData, refresh, updateTaskStatus, currentUser } = useContext(AuthContext);
   const storageKey = currentUser?.companyId && currentUser?.id ? `ems_task_view_${currentUser.companyId}_${currentUser.id}` : null;
   const [savedView, setSavedView] = useState(() => readSavedView(storageKey));
   const [tasks, setTasks] = useState([]);
   const [filters, setFilters] = useState(() => ({
-    taskId: initialTaskId || '', ...defaultFilters
+    taskId: initialTaskId || '', ...defaultFilters, ...initialFilters
   }));
   const [includeArchived, setIncludeArchived] = useState(false);
   const [page, setPage] = useState(1);
@@ -332,6 +332,7 @@ export default function TaskManagement({ initialTaskId, taskSource }) {
             className="w-full rounded-xl border border-slate-200 bg-white py-2 text-xs text-slate-900 shadow-xs focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
           >
             <option value="">All statuses</option>
+            <option value="open">Open (new or in progress)</option>
             {Object.entries(statusNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}
           </select>
         </label>

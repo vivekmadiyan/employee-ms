@@ -5,9 +5,14 @@ import NewTask from './NewTask';
 import CompleteTask from './CompleteTask';
 import FailedTask from './FailedTask';
 import CalendarExportButton from '../other/CalendarExportButton';
+import { workspaceDateKey } from '../../utils/workFocus';
+import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 
-const TaskList = ({ data, focusRequest }) => {
-  const [selection, setSelection] = useState({ filter: 'all', focusRequest });
+const TaskList = ({ data, focusRequest, initialView }) => {
+  const { settings } = React.useContext(WorkspaceSettingsContext);
+  const today = initialView?.today ?? workspaceDateKey(settings.timeZone);
+  const dueToday = task => (task.newTask || task.active) && task.taskDate === today;
+  const [selection, setSelection] = useState({ filter: initialView?.filter ?? 'all', focusRequest });
   const filter = selection.focusRequest === focusRequest ? selection.filter : 'all';
 
   useEffect(() => {
@@ -38,6 +43,8 @@ const TaskList = ({ data, focusRequest }) => {
     if (filter === 'active') return task.active;
     if (filter === 'completed') return task.completed;
     if (filter === 'failed') return task.failed;
+    if (filter === 'overdue') return task.overdue;
+    if (filter === 'today') return dueToday(task);
     return true;
   });
 
@@ -59,6 +66,8 @@ const TaskList = ({ data, focusRequest }) => {
             { id: 'new', label: 'New', count: tasks.filter(t => t.newTask).length },
             { id: 'completed', label: 'Completed', count: tasks.filter(t => t.completed).length },
             { id: 'failed', label: 'Needs Attention', count: tasks.filter(t => t.failed).length },
+            { id: 'overdue', label: 'Overdue', count: tasks.filter(t => t.overdue).length },
+            { id: 'today', label: 'Due today', count: tasks.filter(dueToday).length },
           ].map(pill => (
             <button
               key={pill.id}
