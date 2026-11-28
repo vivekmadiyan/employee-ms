@@ -60,6 +60,17 @@ async function sendBrevoEmail({ apiKey, senderEmail, senderName, recipientEmail,
   }
 }
 
+export function sendWorkspaceEmail({ recipientName, subject, message, workspaceUrl, fetchImpl = fetch, ...delivery }) {
+  return sendBrevoEmail({
+    ...delivery,
+    fetchImpl,
+    payload: {
+      subject,
+      textContent: `Hi ${recipientName},\n\n${message}\n\nOpen EmployeeMS: ${workspaceUrl}`
+    }
+  });
+}
+
 export async function sendInvitationEmail({
   apiKey,
   senderEmail,
@@ -181,6 +192,10 @@ export async function sendTaskUpdateEmail({
     due_date: {
       subject: `Task due date changed: ${task.taskTitle}`,
       description: `Due date changed to ${updateDetails}.`
+    },
+    details: {
+      subject: `Task details updated: ${task.taskTitle}`,
+      description: updateDetails
     }
   };
   const update = updates[updateType];
@@ -217,6 +232,8 @@ export async function sendLeaveRequestEmail({
   companyName,
   employeeName,
   leave,
+  workspaceUrl,
+  withdrawn = false,
   fetchImpl = fetch
 }) {
   return sendBrevoEmail({
@@ -228,16 +245,14 @@ export async function sendLeaveRequestEmail({
     fetchImpl,
     payload: {
       to: [{ name: recipientName, email: recipientEmail }],
-      subject: `Leave request from ${employeeName}`,
+      subject: withdrawn ? `Leave request withdrawn by ${employeeName}` : `Leave request from ${employeeName}`,
       textContent: [
         `Hi ${recipientName},`,
         '',
-        `${employeeName} submitted a leave request for ${companyName}.`,
-        `Type: ${leave.leaveType}`,
+        `${employeeName} ${withdrawn ? 'withdrew' : 'submitted'} a leave request in ${companyName}.`,
         `Dates: ${leave.startDate} through ${leave.endDate}`,
-        `Reason: ${leave.reason}`,
         '',
-        'Sign in to EmployeeMS to review this request.'
+        workspaceUrl ? `Review in EmployeeMS: ${workspaceUrl}` : 'Sign in to EmployeeMS to review this request.'
       ].join('\n')
     }
   });
@@ -252,9 +267,11 @@ export async function sendLeaveDecisionEmail({
   companyName,
   leave,
   reviewerName,
+  workspaceUrl,
   fetchImpl = fetch
 }) {
-  if (leave.status !== 'approved') throw new Error('Unsupported leave decision email status');
+  if (!['approved', 'rejected'].includes(leave.status)) throw new Error('Unsupported leave decision email status');
+  const decision = leave.status === 'approved' ? 'approved' : 'declined';
   return sendBrevoEmail({
     apiKey,
     senderEmail,
@@ -264,16 +281,14 @@ export async function sendLeaveDecisionEmail({
     fetchImpl,
     payload: {
       to: [{ name: recipientName, email: recipientEmail }],
-      subject: 'Your leave request was approved',
+      subject: `Your leave request was ${decision}`,
       textContent: [
         `Hi ${recipientName},`,
         '',
-        `${reviewerName} approved your leave request in ${companyName}.`,
-        `Type: ${leave.leaveType}`,
+        `${reviewerName} ${decision} your leave request in ${companyName}.`,
         `Dates: ${leave.startDate} through ${leave.endDate}`,
-        ...(leave.reviewNote ? [`Manager note: ${leave.reviewNote}`] : []),
         '',
-        'Sign in to EmployeeMS to review your leave request.'
+        workspaceUrl ? `Review in EmployeeMS: ${workspaceUrl}` : 'Sign in to EmployeeMS to review your leave request.'
       ].join('\n')
     }
   });

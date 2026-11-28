@@ -195,10 +195,11 @@ describe('sendTaskUpdateEmail', () => {
         subject: 'Leave request from Alex',
         textContent: expect.stringContaining('Dates: 2026-12-10 through 2026-12-12')
       });
-      expect(JSON.parse(options.body).textContent).toContain('Reason: Medical leave');
+      expect(JSON.parse(options.body).textContent).not.toContain('Medical leave');
+      expect(JSON.parse(options.body).textContent).not.toContain('sick');
     });
 
-    it('emails the employee after approval, including the manager note', async () => {
+    it('emails the employee after approval while keeping the manager note private', async () => {
       const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
 
       await sendLeaveDecisionEmail({
@@ -214,19 +215,19 @@ describe('sendTaskUpdateEmail', () => {
         subject: 'Your leave request was approved',
         textContent: expect.stringContaining('Manager approved your leave request in Example Co.')
       });
-      expect(JSON.parse(options.body).textContent).toContain('Manager note: Please coordinate coverage.');
+      expect(JSON.parse(options.body).textContent).not.toContain('Please coordinate coverage.');
     });
 
-    it('refuses to send an approval email for unsupported decisions', async () => {
-      const fetchImpl = vi.fn();
+    it('emails a decline using the correct wording', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
 
-      await expect(sendLeaveDecisionEmail({
+      await sendLeaveDecisionEmail({
         ...emailOptions,
         reviewerName: 'Manager',
         leave: { ...leave, status: 'rejected' },
         fetchImpl
-      })).rejects.toThrow('Unsupported leave decision email status');
-      expect(fetchImpl).not.toHaveBeenCalled();
+      });
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body).subject).toBe('Your leave request was declined');
     });
   });
 

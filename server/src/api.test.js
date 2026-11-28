@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   sendLeaveDecisionEmail: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
   sendTaskAssignedEmail: vi.fn(),
+  sendWorkspaceEmail: vi.fn(),
   sendTaskUpdateEmail: vi.fn()
 }));
 
@@ -28,6 +29,7 @@ vi.mock('./email.js', () => ({
   sendLeaveDecisionEmail: mocks.sendLeaveDecisionEmail,
   sendPasswordResetEmail: mocks.sendPasswordResetEmail,
   sendTaskAssignedEmail: mocks.sendTaskAssignedEmail,
+  sendWorkspaceEmail: mocks.sendWorkspaceEmail,
   sendTaskUpdateEmail: mocks.sendTaskUpdateEmail
 }));
 process.env.NODE_ENV = 'test';
@@ -399,7 +401,7 @@ function installQueryMock() {
       );
       if (!leave) return result([]);
       leave.status = 'cancelled';
-      return result([{ id: leave.id }]);
+      return result([{ id: leave.id, userId: leave.userId, startDate: leave.startDate, endDate: leave.endDate }]);
     }
     if (text.startsWith('select l.id,l.user_id as "userid"')) {
       const filtered = leaveRequests.filter(leave =>
@@ -632,10 +634,10 @@ function installQueryMock() {
       if (params[9]) employee.managerId = params[10] == null ? null : Number(params[10]);
       return result([userFields(employee)]);
     }
-    if (text.startsWith('select assigned_to as "assignedto",task_date as "taskdate" from tasks where id=$1')) {
+    if (text.startsWith('select id, company_id as "companyid", task_title as "tasktitle"') && text.includes('from tasks where id=$1 and company_id=$2') && text.endsWith('for update')) {
       const archived = text.includes('archived_at is not null');
       const task = tasks.find(item => item.id === Number(params[0]) && item.companyId === Number(params[1]) && Boolean(item.archivedAt) === archived);
-      return result(task ? [{ assignedTo: task.assignedTo, taskDate: task.taskDate }] : []);
+      return result(task ? [{ ...task }] : []);
     }
     if (text.startsWith('update tasks set task_title=$1')) {
       const archived = text.includes('archived_at is not null');
@@ -930,6 +932,8 @@ beforeEach(() => {
   mocks.sendTaskAssignedEmail.mockResolvedValue(undefined);
   mocks.sendTaskUpdateEmail.mockReset();
   mocks.sendTaskUpdateEmail.mockResolvedValue(undefined);
+  mocks.sendWorkspaceEmail.mockReset();
+  mocks.sendWorkspaceEmail.mockResolvedValue(undefined);
   mocks.clientQuery.mockReset();
   mocks.clientQuery.mockImplementation(async (sql, params = []) => {
   const text = normalize(sql);
@@ -1725,6 +1729,16 @@ describe('authenticated API workflows', () => {
       updateType: 'due_date',
       updateDetails: '2099-12-30'
     }));
+    const priorityUpdate = await request(app).patch(`/api/tasks/${created.body.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        taskTitle: 'Prepare launch checklist', taskDescription: 'Review all production-readiness items.',
+        taskDate: '2099-12-30', category: 'Operations', assignedTo: 2, priority: 'medium'
+      }).expect(200);
+    expect(priorityUpdate.body.emailStatus).toBe('sent');
+    expect(mocks.sendTaskUpdateEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'employee@example.test', updateType: 'details', updateDetails: 'Priority changed to medium.'
+    }));
 
     const activated = await request(app).patch(`/api/tasks/${created.body.id}/status`)
       .set('Authorization', `Bearer ${employeeToken}`)
@@ -2160,6 +2174,10 @@ describe('authenticated API workflows', () => {
     await request(app).delete(`/api/leave-requests/${requested.body.id}`)
       .set('Authorization', `Bearer ${employeeLogin.body.token}`)
       .expect(204);
+    await vi.waitFor(() => expect(mocks.sendLeaveRequestEmail).toHaveBeenCalledWith(expect.objectContaining({
+      withdrawn: true,
+      leave: expect.objectContaining({ id: requested.body.id })
+    })));
 
     const pending = await request(app).post('/api/leave-requests')
       .set('Authorization', `Bearer ${employeeLogin.body.token}`)
@@ -2380,6 +2398,24 @@ describe('authenticated API workflows', () => {
     expect(calendar.body[0]).not.toHaveProperty('reason');
     expect(calendar.body[0]).not.toHaveProperty('leaveType');
     expect(auditEvents.map(event => event.action)).toContain('leave.policies_updated');
+  });
+
+  it('sends a test only to the signed-in address and reports provider rejection', async () => {
+    const login = await request(app).post('/api/auth/login').send({
+      email: 'employee@example.test',
+      password: 'correct-horse-battery-123'
+    }).expect(200);
+    const authorization = `Bearer ${login.body.token}`;
+    await request(app).post('/api/account/email-test')
+      .set('Authorization', authorization)
+      .send({ recipientEmail: 'somebody-else@example.test' })
+      .expect(200, { accepted: true });
+    expect(mocks.sendWorkspaceEmail).toHaveBeenCalledWith(expect.objectContaining({
+      recipientEmail: 'employee@example.test',
+      subject: 'EmployeeMS test email'
+    }));
+    mocks.sendWorkspaceEmail.mockRejectedValueOnce(new Error('provider unavailable'));
+    await request(app).post('/api/account/email-test').set('Authorization', authorization).expect(502);
   });
 
   it('keeps leave workflows successful and reports status when email delivery fails', async () => {

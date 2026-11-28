@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FaGear, FaLock, FaShieldHalved, FaXmark } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
+import EmailPreferences from './EmailPreferences';
 import {
   confirmEmailChangeApi, disableMfaApi, enableMfaApi, getMfaStatusApi,
   requestEmailChangeApi, setupMfaApi, updateProfileApi
@@ -315,6 +316,7 @@ export default function AccountSettings({ onClose }) {
           </form>
         </details>
 
+        <EmailPreferences />
         <form onSubmit={submit} className="mt-5 space-y-4">
           <div>
             <label htmlFor="settings-name" className="block text-xs font-bold text-slate-700 mb-1">

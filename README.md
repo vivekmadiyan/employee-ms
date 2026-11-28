@@ -200,7 +200,7 @@ Passwords are hashed with bcrypt in PostgreSQL. JWTs are required for protected 
 
 Admins can review a company-scoped audit trail of account, employee, invitation, integration, and task changes. Audit records omit passwords, reset tokens, and invitation tokens; audit storage errors are logged without undoing completed workflows.
 
-Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Assigned managers can review requests from active direct reports; admins can review requests workspace-wide. New requests are emailed to active workspace admins and the assigned manager, and approvals are emailed to the employee with the review note. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
+Employees can submit leave requests for up to 90 calendar days, view and cancel their pending requests, and track decisions. Assigned managers can review requests from active direct reports; admins can review requests workspace-wide. New requests and withdrawals notify eligible reviewers, and approvals and declines notify the employee. Reasons and review notes are available in the app. Overlapping pending or approved dates are rejected, and workspace views update through the existing live activity stream.
 
 Admins can configure annual calendar-day allowances per leave type; a blank allowance is unlimited. Approved and pending requests count toward the employee's allowance for each calendar year, and request creation serializes per employee to prevent concurrent requests from exceeding a configured cap. The team calendar shows approved absences only and omits leave reasons and leave types. Accrual schedules, working-day calculations, public holidays, carryover, and jurisdiction-specific policies are not implemented.
 
@@ -227,6 +227,8 @@ This version is designed so multiple companies can use the same application whil
 
 
 ## Transactional email
+
+Use **Account Settings → Email notifications → Send test email** to check provider acceptance and confirm receipt in your inbox. Employees can opt in to a daily summary of due and overdue tasks. The API scans every 15 minutes while running during 09:00–20:00 workspace time and claims at most one reminder per employee per day. A sleeping host can delay or skip a reminder. Use always-on compute or a dedicated scheduler if delivery windows must be guaranteed.
 
 Company admins can invite employees instead of sharing temporary passwords. Invitations are scoped to the company and expire after 7 days. Brevo emails employees when a task is assigned or reassigned and emails the other active task participants when status, comments, or due dates change. Email delivery failures do not undo saved task or comment changes and are reported to the user. If email is not configured, invitations remain usable through the secure shareable invite link and task workflows remain available in the app.
 

@@ -24,8 +24,10 @@ import {
   sendLeaveRequestEmail,
   sendPasswordResetEmail,
   sendTaskAssignedEmail,
-  sendTaskUpdateEmail
+  sendTaskUpdateEmail,
+  sendWorkspaceEmail
 } from './email.js';
+import { sendDailyTaskReminders } from './emailReminders.js';
 import {
   createRecoveryCodes,
   decryptSecret,
@@ -161,6 +163,35 @@ const notifyUser = (userId, taskId, actorId, type, message, eventKey) => query(
   'INSERT INTO notifications(user_id,task_id,actor_id,type,message,event_key) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(event_key) DO NOTHING',
   [userId, taskId, actorId, type, message, eventKey]
 );
+const emailConfigured = Boolean(config.BREVO_API_KEY && config.BREVO_SENDER_EMAIL);
+const emailOptions = {
+  apiKey: config.BREVO_API_KEY,
+  senderEmail: config.BREVO_SENDER_EMAIL,
+  senderName: config.BREVO_SENDER_NAME,
+  workspaceUrl: config.CLIENT_URL
+};
+async function emailWorkspaceEvent(recipient, subject, message, req) {
+  if (!emailConfigured || !recipient?.email) return;
+  try {
+    await sendWorkspaceEmail({ ...emailOptions, recipientEmail: recipient.email, recipientName: recipient.firstName, subject, message });
+  } catch (error) {
+    console.error('Workspace email failed:', { requestId: req.id, code: error.code || 'provider_error' });
+  }
+}
+
+async function emailOffboardingOwner(ownerId, req) {
+  if (!emailConfigured || !ownerId || ownerId === req.user.id) return;
+  try {
+    const { rows: [owner] } = await query(
+      'SELECT email,first_name AS "firstName" FROM users WHERE id=$1 AND company_id=$2 AND active=true',
+      [ownerId, req.company.id]
+    );
+    await emailWorkspaceEvent(owner, 'A checklist item was assigned to you',
+      'You have a new lifecycle checklist assignment. Open your workspace to review the details.', req);
+  } catch (error) {
+    console.error('Checklist email lookup failed:', { requestId: req.id, code: error.code });
+  }
+}
 const emailTaskAssignment = async (task, recipient, assignedBy, req) => {
   if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) {
     return { emailSent: false, emailStatus: 'not_configured' };
@@ -231,7 +262,7 @@ const emailTaskUpdate = async (task, recipientIds, actorId, actorName, updateTyp
     return 'failed';
   }
 };
-const emailLeaveRequest = async (leave, employeeName, req) => {
+const emailLeaveRequest = async (leave, employeeName, req, withdrawn = false) => {
   if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) return 'not_configured';
   try {
     const reviewers = (await query(
@@ -249,7 +280,9 @@ const emailLeaveRequest = async (leave, employeeName, req) => {
       recipientName: reviewer.firstName,
       companyName: req.company.name,
       employeeName,
-      leave
+      leave,
+      workspaceUrl: config.CLIENT_URL,
+      withdrawn
     })));
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length) {
@@ -270,7 +303,7 @@ const emailLeaveRequest = async (leave, employeeName, req) => {
     return 'failed';
   }
 };
-const emailLeaveApproval = async (leave, req) => {
+const emailLeaveDecision = async (leave, req) => {
   if (!config.BREVO_API_KEY || !config.BREVO_SENDER_EMAIL) return 'not_configured';
   try {
     const employee = (await query(
@@ -287,11 +320,12 @@ const emailLeaveApproval = async (leave, req) => {
       recipientName: employee.firstName,
       companyName: req.company.name,
       leave,
-      reviewerName: req.user.firstName
+      reviewerName: req.user.firstName,
+      workspaceUrl: config.CLIENT_URL
     });
     return 'sent';
   } catch (error) {
-    console.error('Leave approval email failed:', {
+    console.error('Leave decision email failed:', {
       requestId: req.id,
       leaveRequestId: leave.id,
       code: error.code || 'provider_error',
@@ -823,6 +857,8 @@ app.post('/api/auth/mfa/enable', auth, async (req, res, next) => {
     );
     if (!updated) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_enabled', 'user', req.user.id);
+    void emailWorkspaceEvent(req.user, 'Authenticator protection enabled',
+      'An authenticator was enabled for your EmployeeMS account. Contact your workspace administrator if you did not make this change.', req);
     res.json({ enabled: true, recoveryCodes, token: sign(req.user, updated.authVersion) });
   } catch (error) {
     next(error);
@@ -849,6 +885,8 @@ app.post('/api/auth/mfa/disable', auth, async (req, res, next) => {
     );
     if (!updated) return res.status(409).json({ message: 'Account settings changed. Please try again.' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'account.mfa_disabled', 'user', req.user.id);
+    void emailWorkspaceEvent(req.user, 'Authenticator protection disabled',
+      'An authenticator was disabled for your EmployeeMS account. Contact your workspace administrator if you did not make this change.', req);
     res.json({ enabled: false, token: sign(req.user, updated.authVersion) });
   } catch (error) {
     next(error);
@@ -857,6 +895,30 @@ app.post('/api/auth/mfa/disable', auth, async (req, res, next) => {
 app.get('/api/workspace/brief', auth, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(await readWorkspaceBrief(req.user, workspaceDateKey(req.company.timeZone ?? 'UTC')));
+});
+app.get('/api/account/email-preferences', auth, async (req, res) => {
+  const { rows: [account] } = await query('SELECT task_reminder_email AS "taskReminders" FROM users WHERE id=$1', [req.user.id]);
+  res.json({ taskReminders: Boolean(account?.taskReminders), emailConfigured, eligible: req.user.role === 'employee' });
+});
+app.put('/api/account/email-preferences', auth, async (req, res) => {
+  if (req.user.role !== 'employee') return res.status(403).json({ message: 'Task reminders are available for employee accounts.' });
+  const { taskReminders } = body(z.object({ taskReminders: z.boolean() }).strict(), req.body);
+  await query('UPDATE users SET task_reminder_email=$1 WHERE id=$2 AND company_id=$3 AND active=true',
+    [taskReminders, req.user.id, req.company.id]);
+  res.json({ taskReminders, emailConfigured, eligible: true });
+});
+const testEmailLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 3, keyGenerator: req => String(req.user.id),
+  standardHeaders: 'draft-7', legacyHeaders: false, message: { message: 'Too many email tests. Try again later.' } });
+app.post('/api/account/email-test', auth, testEmailLimiter, async (req, res) => {
+  if (!emailConfigured) return res.status(503).json({ message: 'Email is not configured for this deployment.' });
+  try {
+    await sendWorkspaceEmail({ ...emailOptions, recipientEmail: req.user.email, recipientName: req.user.firstName,
+      subject: 'EmployeeMS test email', message: 'EmployeeMS sent this message to verify your notification address.' });
+  } catch (error) {
+    console.error('Email test failed:', { requestId: req.id, code: error.code || 'provider_error' });
+    return res.status(502).json({ message: 'The email provider could not accept the test message.' });
+  }
+  res.json({ accepted: true });
 });
 app.get('/api/integrations/slack', auth, adminOnly, async (req, res, next) => {
   try {
@@ -953,6 +1015,8 @@ app.patch('/api/auth/me', auth, async (req, res, next) => {
       emailChanged: false,
       passwordChanged: Boolean(passwordHash)
     });
+    if (passwordHash) void emailWorkspaceEvent(updated, 'Your EmployeeMS password changed',
+      'Your password was changed. Contact your workspace administrator if you did not make this change.', req);
     res.json({ user: safeUser(updated), ...(passwordHash && { token: sign(updated) }) });
   } catch (error) {
     if (error.code === '23505') return res.status(409).json({ message: 'This email is already in use' });
@@ -1087,7 +1151,7 @@ app.post('/api/auth/reset-password', resetLimiter, async (req, res, next) => {
     }
     const updated = await client.query(
       `UPDATE users SET password_hash=$1,auth_version=auth_version+1,updated_at=NOW()
-       WHERE id=$2 AND auth_version=$3 AND active=true RETURNING id`,
+       WHERE id=$2 AND auth_version=$3 AND active=true RETURNING id,email,first_name AS "firstName"`,
       [await bcrypt.hash(values.password, 12), reset.user_id, reset.auth_version]
     );
     if (!updated.rowCount) {
@@ -1097,6 +1161,8 @@ app.post('/api/auth/reset-password', resetLimiter, async (req, res, next) => {
     await client.query('UPDATE password_resets SET used_at=NOW() WHERE user_id=$1 AND used_at IS NULL', [reset.user_id]);
     await client.query('COMMIT');
     await recordAuditEvent(reset.company_id, reset.user_id, req, 'account.password_reset', 'user', reset.user_id);
+    void emailWorkspaceEvent(updated.rows[0], 'Your EmployeeMS password was reset',
+      'Your password reset was completed. Contact your workspace administrator if you did not make this change.', req);
     res.json({ message: 'Password updated. You can now sign in.' });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -1722,6 +1788,7 @@ app.patch('/api/offboardings/:id/items/:itemId/owner', auth, adminOnly, async (r
     previousOwnerId,
     ownerId: item.ownerId
   });
+  void emailOffboardingOwner(item.ownerId, req);
   res.json({ offboardingId, status: 'in_progress', revision, item });
 });
 
@@ -2210,7 +2277,7 @@ app.patch('/api/leave-requests/:id/review', auth, async (req, res, next) => {
     await recordAuditEvent(req.company.id, req.user.id, req, `leave.${values.status}`, 'leave_request', leave.id, {
       employeeId: leave.userId
     });
-    const emailStatus = values.status === 'approved' ? await emailLeaveApproval(leave, req) : 'not_applicable';
+    const emailStatus = await emailLeaveDecision(leave, req);
     res.json({ ...leave, emailStatus });
   } catch (error) {
     next(error);
@@ -2223,11 +2290,12 @@ app.delete('/api/leave-requests/:id', auth, async (req, res, next) => {
       `UPDATE leave_requests SET status='cancelled',updated_at=NOW()
        WHERE id=$1 AND company_id=$2 AND user_id=$3
          AND (status='pending' OR (status='approved' AND start_date>$4::date))
-       RETURNING id`,
+       RETURNING id,user_id AS "userId",start_date::text AS "startDate",end_date::text AS "endDate"`,
       [req.params.id, req.company.id, req.user.id, workspaceDateKey(req.company.timeZone ?? 'UTC')]
     )).rows[0];
     if (!leave) return res.status(404).json({ message: 'No pending or future approved leave request found' });
     await recordAuditEvent(req.company.id, req.user.id, req, 'leave.cancelled', 'leave_request', leave.id);
+    void emailLeaveRequest(leave, req.user.firstName, req, true);
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -2305,6 +2373,7 @@ app.post('/api/invitations/:token/accept', async (req, res, next) => {
     await client.query('UPDATE invitations SET accepted_at=NOW() WHERE id=$1', [invitation.id]);
     await client.query('COMMIT');
     await recordAuditEvent(company.id, user.id, req, 'invitation.accepted', 'invitation', invitation.id);
+    void emailWorkspaceEvent(user, 'Welcome to EmployeeMS', `You joined ${company.name}. Open your workspace to see your assignments and time off.`, req);
     res.status(201).json({
       token: sign(user),
       user: { ...safeUser(user), companyName: company.name },
@@ -2536,7 +2605,7 @@ app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
       const employee = await readTaskAssignee(client, req.company.id, values.assignedTo);
       if (!employee) return {};
       const previous = (await client.query(
-        `SELECT assigned_to AS "assignedTo",task_date AS "taskDate" FROM tasks WHERE id=$1 AND company_id=$2 AND ${archiveFilter} FOR UPDATE`,
+        `SELECT ${taskFields} FROM tasks WHERE id=$1 AND company_id=$2 AND ${archiveFilter} FOR UPDATE`,
         [req.params.id, req.company.id]
       )).rows[0];
       if (!previous) return { employee };
@@ -2568,14 +2637,26 @@ app.patch('/api/tasks/:id', auth, adminOnly, async (req, res, next) => {
       Object.assign(response, await emailTaskAssignment(task, employee, req.user.firstName, req));
       void notifySlackTaskAssigned(task, employee, req);
     }
-    if (previousTaskDate !== task.taskDate) {
+    const changes = [
+      ...(restoreArchived ? ['The task was restored.'] : []),
+      ...(previous.taskTitle !== task.taskTitle ? ['The title changed.'] : []),
+      ...(previous.taskDescription !== task.taskDescription ? ['The description changed.'] : []),
+      ...(previous.category !== task.category ? ['The category changed.'] : []),
+      ...(previous.priority !== task.priority ? [`Priority changed to ${task.priority}.`] : [])
+    ];
+    const dueDateChanged = previousTaskDate !== task.taskDate;
+    if (dueDateChanged || changes.length) {
+      if (dueDateChanged && changes.length) changes.push(`Due date changed to ${task.taskDate}.`);
+      // The new assignee already receives the current details in the assignment email.
+      const recipients = [task.createdBy, ...(previous.assignedTo === task.assignedTo ? [task.assignedTo] : [])]
+        .filter(id => previous.assignedTo === task.assignedTo || id !== task.assignedTo);
       const emailStatus = await emailTaskUpdate(
         task,
-        [task.assignedTo, task.createdBy],
+        recipients,
         req.user.id,
         req.user.firstName,
-        'due_date',
-        task.taskDate,
+        changes.length ? 'details' : 'due_date',
+        changes.length ? changes.join(' ') : task.taskDate,
         req
       );
       if (response.emailStatus) response.dueDateEmailStatus = emailStatus;
@@ -2801,12 +2882,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const server = app.listen(config.PORT, () => console.log(`EMS API running on port ${config.PORT} (${config.NODE_ENV})`));
       purgeChats();
       const cleanup = setInterval(purgeChats, 60 * 60 * 1000).unref();
+      let reminderRun;
+      const runReminders = () => {
+        if (reminderRun) return;
+        reminderRun = sendDailyTaskReminders(emailOptions)
+          .catch(error => console.error('Task reminder scan failed:', { code: error.code }))
+          .finally(() => { reminderRun = null; });
+      };
+      const reminders = emailConfigured && config.NODE_ENV === 'production'
+        ? setInterval(runReminders, 15 * 60 * 1000).unref() : null;
+      if (reminders) runReminders();
       let closing = false;
       const shutdown = signal => {
         if (closing) return;
         closing = true;
         console.log(`${signal} received. Draining HTTP connections.`);
         clearInterval(cleanup);
+        clearInterval(reminders);
         const deadline = setTimeout(() => server.closeAllConnections(), 5_000).unref();
         server.close(() => {
           clearTimeout(deadline);
