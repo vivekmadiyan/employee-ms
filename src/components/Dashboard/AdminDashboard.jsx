@@ -22,6 +22,7 @@ import AIAssistant from '../other/AIAssistant';
 import WorkFocus from '../other/WorkFocus';
 import WorkspaceBrief from './WorkspaceBrief';
 import { briefPrompt } from '../../utils/workFocus';
+import { clearTaskLink } from '../../utils/taskLink';
 import WorkspaceNav from './WorkspaceNav';
 import './Workspace.css';
 
@@ -42,9 +43,11 @@ const navigation = [
 ];
 const pages = navigation.flatMap(([, items]) => items);
 
-const AdminDashboard = ({ changeUser, data }) => {
+const AdminDashboard = ({ changeUser, data, initialTaskId }) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
-  const [view, setView] = useState({ tab: 'overview' });
+  const [view, setView] = useState(() => initialTaskId
+    ? { tab: 'tasks', taskId: initialTaskId, taskSource: 'a task link' }
+    : { tab: 'overview' });
   const [hasOpenedAi, setHasOpenedAi] = useState(false);
   const [aiDraft, setAiDraft] = useState(null);
   const headingRef = useRef(null);
@@ -63,13 +66,21 @@ const AdminDashboard = ({ changeUser, data }) => {
     { label: 'Open tasks', value: totals.open, note: 'New or in progress', icon: FaListCheck },
     { label: 'Completed', value: totals.completed, note: 'Tasks delivered', icon: FaClipboardCheck }
   ];
-  const openTaskHub = (task, source = 'Work Focus') => setView(current => ({
-    tab: 'tasks', taskId: task?.id, taskSource: source, taskFocus: (current.taskFocus || 0) + 1, jump: 'heading'
-  }));
+  const openTaskHub = (task, source = 'Work Focus') => {
+    clearTaskLink();
+    setView(current => ({
+      tab: 'tasks', taskId: task?.id, taskSource: source, taskFocus: (current.taskFocus || 0) + 1, jump: 'heading'
+    }));
+  };
   const openPage = id => {
+    clearTaskLink();
     if (id === 'ai') setHasOpenedAi(true);
     setView({ tab: id });
     window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+  const draftHandoff = task => {
+    setAiDraft({ text: 'Draft a handoff for this task.', taskId: task.id, title: task.taskTitle });
+    openPage('ai');
   };
   const openBriefTasks = (filter, today) => {
     const previousDay = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -166,7 +177,8 @@ const AdminDashboard = ({ changeUser, data }) => {
 
               {tab === 'tasks' && (
                 <>
-                  <TaskManagement key={taskFocus || 0} initialTaskId={taskId} initialFilters={view.taskFilters} taskSource={taskSource} />
+                  <TaskManagement key={taskFocus || 0} initialTaskId={taskId} initialFilters={view.taskFilters}
+                    taskSource={taskSource} onDraftHandoff={draftHandoff} />
                   <div className="workspace-jump" tabIndex={-1} ref={taskFormRef}><CreateTask /></div>
                 </>
               )}

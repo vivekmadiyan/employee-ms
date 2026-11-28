@@ -9,6 +9,7 @@ import { briefPrompt, workspaceDateKey } from '../../utils/workFocus';
 import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import AIChatHistory from './AIChatHistory';
 import AIReports, { ReportResult } from './AIReports';
+import HandoffEditor from './HandoffEditor';
 import './AIAssistant.css';
 
 const modelSources = new Set(['gemini', 'groq']);
@@ -63,10 +64,11 @@ function ActionPreview({ turn, busy, isToolEnabled, confirm, dismiss, onOpenTask
 }
 
 export default function AIAssistant({ onOpenTask, draftRequest }) {
-  const { currentUser, refresh } = useContext(AuthContext);
+  const { currentUser, refresh, userData } = useContext(AuthContext);
   const { settings } = useContext(WorkspaceSettingsContext);
   const [mode, setMode] = useState('chat');
   const [question, setQuestion] = useState('');
+  const [selectedTask, setSelectedTask] = useState(null);
   const [turns, setTurns] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -97,6 +99,12 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
   useEffect(() => {
     if (!draftRequest || appliedDraft.current === draftRequest || busy) return;
     appliedDraft.current = draftRequest;
+    if (draftRequest.taskId) {
+      setConversationId(null);
+      setTurns([]);
+      settledActions.current.clear();
+    }
+    setSelectedTask(draftRequest.taskId ? { id: draftRequest.taskId, title: draftRequest.title } : null);
     setMode('chat');
     setQuestion(draftRequest.text);
     setError('');
@@ -123,7 +131,7 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
     const conversation = log.current;
     if (!conversation) return;
     const latestTurn = conversation.lastElementChild;
-    if (latestTurn?.classList.contains('ai-turn--report')) {
+    if (latestTurn?.matches('.ai-turn--report, .ai-turn--handoff')) {
       conversation.scrollTop += latestTurn.getBoundingClientRect().top - conversation.getBoundingClientRect().top;
     } else {
       conversation.scrollTop = conversation.scrollHeight;
@@ -154,6 +162,7 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
     setConversationId(null);
     setTurns([]);
     setQuestion('');
+    setSelectedTask(null);
     settledActions.current.clear();
     window.requestAnimationFrame(() => input.current?.focus());
   }
@@ -163,6 +172,7 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
     setConversationId(conversation.id);
     setTurns(conversation.turns.map(turn => ({ ...turn, id: ++sequence.current, action: undefined })));
     setQuestion('');
+    setSelectedTask(null);
     settledActions.current.clear();
     window.requestAnimationFrame(() => input.current?.focus());
   }
@@ -192,6 +202,24 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
     }
   }
 
+  async function confirmHandoff(turn, payload) {
+    if (requestLock.current || activeAction.current !== null || settledActions.current.has(turn.id)) return;
+    activeAction.current = turn.id;
+    setSaving(true);
+    updateTurn(turn.id, { actionError: '' });
+    try {
+      const savedTask = await createTaskApi(payload);
+      settledActions.current.add(turn.id);
+      updateTurn(turn.id, { actionState: 'saved', savedTask });
+      refresh().catch(() => {});
+    } catch (error) {
+      updateTurn(turn.id, { actionError: error.message || 'Could not create the follow-up. Try again.' });
+    } finally {
+      activeAction.current = null;
+      setSaving(false);
+    }
+  }
+
   function dismissAction(turn) {
     if (requestLock.current || activeAction.current !== null || settledActions.current.has(turn.id)) return;
     settledActions.current.add(turn.id);
@@ -205,7 +233,7 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
     setPending(text);
     setError('');
     const history = mode === 'chat'
-      ? turns.filter(turn => !turn.workspaceBrief).slice(-4).map(turn => ({
+      ? turns.filter(turn => !turn.workspaceBrief && !turn.handoff).slice(-4).map(turn => ({
         question: turn.question,
         answer: (turn.actionState === 'saved' ? `${turn.answer}\nThe user confirmed the action and it was saved.` : turn.answer).slice(0, 2500)
       }))
@@ -218,12 +246,13 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
     try {
       const result = await askAiApi({
         question: text, today: workspaceDateKey(settings.timeZone), mode, history,
-        ...(mode === 'chat' ? { tools: enabledTools, conversationId } : {}),
+        ...(mode === 'chat' ? { tools: enabledTools, conversationId, contextTaskId: selectedTask?.id } : {}),
         ...(reportContext && { reportContext })
       });
       if (!result.answer) throw new Error('No answer was returned. Try again.');
       if (mode === 'chat') {
-        const workspaceReply = result.source === 'workspace' && (result.report || result.reportIntent === true || result.taskSummary === true || result.workspaceBrief === true);
+        const workspaceReply = result.source === 'workspace' && (result.report || result.reportIntent === true
+          || result.taskSummary === true || result.workspaceBrief === true || result.handoff === true);
         if (!modelSources.has(result.source) && !workspaceReply) throw new Error('EmployeeMS AI is unavailable. You can still open Task summaries.');
         const turn = { ...result, question: text, id: ++sequence.current, actionState: 'ready' };
         if (result.conversationId) setConversationId(result.conversationId);
@@ -307,10 +336,10 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
                   </div>
                 )}
                 {turns.map(turn => (
-                  <article key={turn.id} className={turn.report ? 'ai-turn ai-turn--report' : 'ai-turn'}>
+                  <article key={turn.id} className={turn.report ? 'ai-turn ai-turn--report' : turn.handoff ? 'ai-turn ai-turn--handoff' : 'ai-turn'}>
                     <p className="ai-user"><span className="sr-only">You: </span>{turn.question}</p>
                     <div className="ai-reply">
-                      <p className="ai-reply-by">{turn.workspaceBrief ? 'Verified workspace data' : 'EmployeeMS AI'}</p>
+                      <p className="ai-reply-by">{turn.workspaceBrief || turn.handoff ? 'Verified workspace data' : 'EmployeeMS AI'}</p>
                       <p className="ai-text">{turn.answer}</p>
                       {turn.report && <ReportResult report={turn.report} inChat />}
                       {turn.references?.length > 0 && (
@@ -327,6 +356,10 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
                       <ActionPreview turn={turn} busy={busy} isToolEnabled={enabledTools.includes(turn.action?.tool)}
                         confirm={() => confirmAction(turn)} dismiss={() => dismissAction(turn)}
                         onOpenTask={onOpenTask} />
+                      {turn.handoffDraft && <HandoffEditor draft={turn.handoffDraft}
+                        teammates={(userData ?? []).filter(person => person.active)} busy={busy} error={turn.actionError}
+                        savedTask={turn.savedTask} dismissed={turn.actionState === 'dismissed'} onOpenTask={onOpenTask}
+                        onConfirm={payload => confirmHandoff(turn, payload)} onDismiss={() => dismissAction(turn)} />}
                     </div>
                   </article>
                 ))}
@@ -338,6 +371,13 @@ export default function AIAssistant({ onOpenTask, draftRequest }) {
                 )}
               </div>
               <div className="ai-composer">
+                {selectedTask && <div className="ai-context-task">
+                  <span>Source task <strong>{selectedTask.title}</strong></span>
+                  <button type="button" disabled={busy} onClick={() => {
+                    setSelectedTask(null);
+                    if (question === 'Draft a handoff for this task.') setQuestion('');
+                  }}>Remove task</button>
+                </div>}
                 {error && (
                   <div className="ai-error ai-request-error">
                     <p role="alert">{error}</p>

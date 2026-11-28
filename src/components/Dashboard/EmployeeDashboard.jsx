@@ -12,19 +12,20 @@ import WorkFocus from '../other/WorkFocus';
 import OffboardingAssignments from '../other/OffboardingAssignments';
 import WorkspaceBrief from './WorkspaceBrief';
 import { briefPrompt } from '../../utils/workFocus';
+import { clearTaskLink } from '../../utils/taskLink';
 import WorkspaceNav from './WorkspaceNav';
 import './Workspace.css';
 
 const EmployeeDashboard = (props) => {
   const { userData, loading, dataError, refresh, currentUser } = useContext(AuthContext);
   const { settings } = useContext(WorkspaceSettingsContext);
-  const [activeTab, setActiveTab] = useState('home');
+  const [activeTab, setActiveTab] = useState(() => props.initialTaskId ? 'tasks' : 'home');
   const [hasOpenedAi, setHasOpenedAi] = useState(false);
   const [aiDraft, setAiDraft] = useState(null);
   const [showApprovals, setShowApprovals] = useState(false);
   const [directReports, setDirectReports] = useState([]);
   const [teamError, setTeamError] = useState('');
-  const [focusRequest, setFocusRequest] = useState(null);
+  const [focusRequest, setFocusRequest] = useState(() => props.initialTaskId ? { taskId: props.initialTaskId, fromLink: true } : null);
   const [taskView, setTaskView] = useState(null);
 
   useEffect(() => {
@@ -73,6 +74,7 @@ const EmployeeDashboard = (props) => {
 
   const openTask = task => {
     if (task) {
+      clearTaskLink();
       setTaskView(null);
       setFocusRequest({ taskId: task.id });
       setActiveTab('tasks');
@@ -82,6 +84,7 @@ const EmployeeDashboard = (props) => {
   };
 
   const openPage = id => {
+    clearTaskLink();
     if (id === 'ai') setHasOpenedAi(true);
     if (id === 'tasks') {
       setFocusRequest(null);
@@ -90,6 +93,10 @@ const EmployeeDashboard = (props) => {
     setShowApprovals(false);
     setActiveTab(id);
     window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+  const draftHandoff = task => {
+    setAiDraft({ text: 'Draft a handoff for this task.', taskId: task.id, title: task.taskTitle });
+    openPage('ai');
   };
 
   const openNotificationTask = async task => {
@@ -150,7 +157,11 @@ const EmployeeDashboard = (props) => {
               <div className="workspace-stack">
                 <TaskListNumbers data={employeeData} />
                 <div className="workspace-jump" tabIndex={-1} aria-label="Assigned Tasks">
-                  <TaskList key={taskView?.filter ?? 'all'} data={employeeData} focusRequest={focusRequest} initialView={taskView} />
+                  {focusRequest?.fromLink && employeeData && !employeeData.tasks?.some(task => task.id === focusRequest.taskId) && (
+                    <p role="status" className="dashboard-card p-4">This task is no longer available to your account.</p>
+                  )}
+                  <TaskList key={taskView?.filter ?? 'all'} data={employeeData} focusRequest={focusRequest}
+                    initialView={taskView} onDraftHandoff={draftHandoff} />
                 </div>
               </div>
             )}

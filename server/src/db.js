@@ -62,6 +62,13 @@ export async function initialiseDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, task_title TEXT NOT NULL, task_description TEXT NOT NULL, task_date TEXT NOT NULL, category TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')), status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'active', 'completed', 'failed')), assigned_to INTEGER NOT NULL REFERENCES users(id), created_by INTEGER NOT NULL REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS task_handoff_requests (
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      request_id UUID NOT NULL,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      PRIMARY KEY (company_id,created_by,request_id)
+    );
     CREATE TABLE IF NOT EXISTS invitations (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, email TEXT NOT NULL, first_name TEXT NOT NULL, department TEXT NOT NULL DEFAULT 'General', token_hash TEXT NOT NULL UNIQUE, expires_at TIMESTAMPTZ NOT NULL, accepted_at TIMESTAMPTZ, invited_by INTEGER NOT NULL REFERENCES users(id), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     ALTER TABLE invitations ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT '';
     ALTER TABLE invitations ADD COLUMN IF NOT EXISTS employment_type TEXT NOT NULL DEFAULT 'unspecified' CHECK (employment_type IN ('full_time','part_time','contractor','temporary','intern','unspecified'));
