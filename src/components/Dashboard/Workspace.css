@@ -161,7 +161,7 @@
 .workspace-action--secondary { background: var(--desk-surface); border-color: var(--desk-line); color: var(--desk-accent); }
 .workspace-date { display: inline-flex; align-items: center; gap: .45rem; color: var(--desk-muted); font-size: .82rem; font-weight: 700; }
 .workspace-stack { display: grid; gap: clamp(.95rem, 2vw, 1.4rem); }
-.workspace-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(.55rem, 1.4vw, .9rem); }
+.workspace-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(.55rem, 1.4vw, .9rem); }
 .workspace-stat { min-width: 0; border: 1px solid var(--desk-line); border-radius: 1rem; background: color-mix(in srgb, var(--desk-surface) 92%, var(--desk-wash)); padding: .95rem clamp(.7rem, 1.5vw, 1.15rem); box-shadow: 0 12px 30px -28px var(--desk-ink); }
 .workspace-stat dt { display: flex; align-items: center; justify-content: space-between; gap: .4rem; color: var(--desk-muted); font-size: .8rem; font-weight: 750; }
 .workspace-stat dt svg { flex: none; color: var(--desk-accent); }
@@ -279,6 +279,8 @@ html.dark .workspace-release :is(.dashboard-card, .stat-card, .task-card) {
 @media (max-width: 600px) {
   .workspace-avatar { display: none; }
   .workspace-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace-brief-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace-brief-metrics li:last-child:nth-child(odd), .workspace-stats > :last-child:nth-child(odd) { grid-column: 1 / -1; }
   .workspace-icon--logout { width: 44px; padding: 0; }
   .workspace-tools .notification-panel { position: fixed; inset: 61px .65rem auto; width: auto; }
   .workspace-workload li { grid-template-columns: 1fr; }

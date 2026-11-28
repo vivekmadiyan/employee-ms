@@ -56,14 +56,12 @@ const AdminDashboard = ({ changeUser, data }) => {
   const totals = employees.reduce((counts, employee) => ({
     active: counts.active + Number(Boolean(employee.active)),
     open: counts.open + (employee.taskCounts?.active || 0) + (employee.taskCounts?.newTask || 0),
-    completed: counts.completed + (employee.taskCounts?.completed || 0),
-    failed: counts.failed + (employee.taskCounts?.failed || 0)
-  }), { active: 0, open: 0, completed: 0, failed: 0 });
+    completed: counts.completed + (employee.taskCounts?.completed || 0)
+  }), { active: 0, open: 0, completed: 0 });
   const stats = [
     { label: 'Active teammates', value: totals.active, note: `${employees.length} registered`, icon: FaUsers },
     { label: 'Open tasks', value: totals.open, note: 'New or in progress', icon: FaListCheck },
-    { label: 'Completed', value: totals.completed, note: 'Tasks delivered', icon: FaClipboardCheck },
-    { label: 'Needs attention', value: totals.failed, note: 'Tasks awaiting follow-up', icon: FaChartLine }
+    { label: 'Completed', value: totals.completed, note: 'Tasks delivered', icon: FaClipboardCheck }
   ];
   const openTaskHub = (task, source = 'Work Focus') => setView(current => ({
     tab: 'tasks', taskId: task?.id, taskSource: source, taskFocus: (current.taskFocus || 0) + 1, jump: 'heading'
@@ -141,6 +139,7 @@ const AdminDashboard = ({ changeUser, data }) => {
                   <WorkspaceBrief isAdmin onWork={openBriefTasks} onTimeOff={() => openPage('leaves')}
                     onReview={() => setView({ tab: 'leaves', showApprovals: true })}
                     onAsk={() => { setAiDraft({ text: briefPrompt }); openPage('ai'); }} />
+                  <WorkFocus admin employees={employees} onOpenTasks={openTaskHub} />
                   <dl className="workspace-stats" aria-label="Workspace totals">
                     {stats.map(({ label, value, note, icon: Icon }) => (
                       <div className="workspace-stat" key={label}>
@@ -149,7 +148,6 @@ const AdminDashboard = ({ changeUser, data }) => {
                       </div>
                     ))}
                   </dl>
-                  <WorkFocus admin employees={employees} onOpenTasks={openTaskHub} />
                   {employees.length > 0 ? (
                     <AllTask />
                   ) : (
