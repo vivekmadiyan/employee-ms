@@ -113,6 +113,11 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   }
 
   await page.reload();
+  const briefing = page.getByRole('region', { name: 'Today’s briefing' });
+  await briefing.getByRole('button', { name: '1 Overdue tasks' }).click();
+  await expect(page.getByRole('button', { name: 'Overdue 1', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('A later handoff with the same title')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
   const workFocus = page.getByRole('region', { name: 'Work Focus' });
   await expect(workFocus.getByRole('button', { name: 'Overdue 1' })).toHaveAttribute('aria-pressed', 'true');
   await workFocus.getByRole('button', { name: /next 7 days/i }).click();
@@ -120,7 +125,7 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await workFocus.getByRole('button', { name: 'Overdue 1' }).click();
   await page.getByRole('button', { name: 'Switch to dark mode' }).click();
   await expect(page.locator('html')).toHaveClass(/dark/);
-  expect((await new AxeBuilder({ page }).include('.work-focus')
+  expect((await new AxeBuilder({ page }).include('.work-focus').include('.workspace-brief').include('.workspace-rail')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await workFocus.getByRole('button', { name: /Review shift handoff/ }).click();
@@ -135,7 +140,7 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(notifications).toHaveCount(0);
 
   const employeeNavigation = page.getByRole('navigation', { name: 'My workspace sections' });
-  await expect(employeeNavigation.getByRole('button').first()).toHaveAccessibleName('AI');
+  await expect(employeeNavigation.getByRole('button').first()).toHaveAccessibleName('Home');
   await employeeNavigation.getByRole('button', { name: 'AI', exact: true }).click();
   const assistant = page.getByRole('region', { name: 'AI workspace assistant' });
   await expect(workFocus).toHaveCount(0);
@@ -301,6 +306,8 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
     expect(resume.status()).toBe(expectedStatus);
   }
   await employeeTask.getByRole('button', { name: 'Completed' }).click();
+  await expect(employeeTask.getByRole('button', { name: 'Completed' })).toHaveCount(0);
+  await employeeNavigation.getByRole('button', { name: 'Home', exact: true }).click();
   await expect(workFocus.getByRole('button', { name: 'Overdue 0' })).toBeVisible();
 
   const setTaskArchive = archived => page.request.patch(`${api}/tasks/${overdueTaskId}/archive`, {
@@ -336,7 +343,12 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await page.getByRole('button', { name: 'Sign In to Workspace' }).click();
   await expect(page.getByRole('heading', { name: 'Workspace Overview' })).toBeVisible();
   const adminNavigation = page.getByRole('navigation', { name: 'Workspace navigation' });
-  await expect(adminNavigation.getByRole('button').first()).toHaveAccessibleName('AI');
+  await expect(adminNavigation.getByRole('button').first()).toHaveAccessibleName('Home');
+  const mobileMore = adminNavigation.getByText('More', { exact: true });
+  await mobileMore.click();
+  await expect(adminNavigation.getByRole('button', { name: 'Integrations' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(adminNavigation.getByRole('button', { name: 'Integrations' })).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 900 });
   await adminNavigation.getByRole('button', { name: 'AI', exact: true }).click();
   await expect(assistant).toBeVisible();
@@ -425,7 +437,7 @@ test('Work Focus and AI approvals keep task actions scoped on a phone', async ({
   await expect(assistant.getByText('Task created.', { exact: true })).toBeVisible();
   expect(await readCreatedTasks()).toMatchObject([{ ...creationInput, newTask: true }]);
   await page.unroute('**/api/ai/ask');
-  await adminNavigation.getByRole('button', { name: 'Overview', exact: true }).click();
+  await adminNavigation.getByRole('button', { name: 'Home', exact: true }).click();
   await expect(workFocus.getByText('Focus Teammate', { exact: false })).toBeVisible();
   const adminAudit = await new AxeBuilder({ page })
     .include('.workspace-pagehead').include('.workspace-stats').include('.work-focus').include('.workspace-workload')

@@ -1,5 +1,5 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
-import { FaCalendarDay, FaListCheck, FaUserGroup, FaWandMagicSparkles } from 'react-icons/fa6';
+import React, { useContext, useEffect, useState } from 'react';
+import { FaCalendarDay, FaHouse, FaListCheck, FaUserGroup, FaWandMagicSparkles } from 'react-icons/fa6';
 import { AuthContext } from '../../context/AuthProvider';
 import { WorkspaceSettingsContext } from '../../context/WorkspaceSettingsContext';
 import { getDirectReportsApi } from '../../api';
@@ -10,17 +10,22 @@ import LeaveManagement from '../other/LeaveManagement';
 import AIAssistant from '../other/AIAssistant';
 import WorkFocus from '../other/WorkFocus';
 import OffboardingAssignments from '../other/OffboardingAssignments';
+import WorkspaceBrief from './WorkspaceBrief';
+import { briefPrompt } from '../../utils/workFocus';
+import WorkspaceNav from './WorkspaceNav';
 import './Workspace.css';
 
 const EmployeeDashboard = (props) => {
   const { userData, loading, dataError, refresh, currentUser } = useContext(AuthContext);
   const { settings } = useContext(WorkspaceSettingsContext);
-  const [activeTab, setActiveTab] = useState('tasks');
+  const [activeTab, setActiveTab] = useState('home');
   const [hasOpenedAi, setHasOpenedAi] = useState(false);
+  const [aiDraft, setAiDraft] = useState(null);
+  const [showApprovals, setShowApprovals] = useState(false);
   const [directReports, setDirectReports] = useState([]);
   const [teamError, setTeamError] = useState('');
   const [focusRequest, setFocusRequest] = useState(null);
-  const taskListRef = useRef(null);
+  const [taskView, setTaskView] = useState(null);
 
   useEffect(() => {
     let request;
@@ -33,7 +38,7 @@ const EmployeeDashboard = (props) => {
         if (controller.signal.aborted) return;
         setDirectReports(reports);
         setTeamError('');
-        if (!reports.length) setActiveTab(current => current === 'team' ? 'tasks' : current);
+        if (!reports.length) setActiveTab(current => current === 'team' ? 'home' : current);
       } catch (error) {
         if (!controller.signal.aborted) setTeamError(error.message || 'Could not load your direct reports.');
       }
@@ -51,13 +56,13 @@ const EmployeeDashboard = (props) => {
       ? userData[0]
       : null;
   const workspaceTabs = [
+    { id: 'home', label: 'Home', icon: FaHouse },
+    { id: 'tasks', label: 'My tasks', shortLabel: 'Work', icon: FaListCheck },
     { id: 'ai', label: 'AI', icon: FaWandMagicSparkles },
-    { id: 'tasks', label: 'My tasks', icon: FaListCheck, count: employeeData?.tasks?.length },
-    { id: 'leaves', label: 'Time off', icon: FaCalendarDay },
-    ...(directReports.length > 0
-      ? [{ id: 'team', label: 'My team', icon: FaUserGroup, count: directReports.length }]
-      : [])
+    { id: 'leaves', label: 'Time off', icon: FaCalendarDay }
   ];
+  const secondaryTabs = directReports.length ? [{ id: 'team', label: 'My team', icon: FaUserGroup }] : [];
+  const pageTitles = { home: 'My Workspace', tasks: 'My tasks', ai: 'AI workspace', leaves: 'Time off', team: 'My team' };
 
   const todayFormatted = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -68,18 +73,23 @@ const EmployeeDashboard = (props) => {
 
   const openTask = task => {
     if (task) {
+      setTaskView(null);
       setFocusRequest({ taskId: task.id });
       setActiveTab('tasks');
     } else {
-      taskListRef.current?.focus({ preventScroll: true });
-      taskListRef.current?.scrollIntoView({ block: 'start' });
+      openPage('tasks');
     }
   };
 
   const openPage = id => {
     if (id === 'ai') setHasOpenedAi(true);
-    if (id === 'tasks') setFocusRequest(null);
+    if (id === 'tasks') {
+      setFocusRequest(null);
+      setTaskView(null);
+    }
+    setShowApprovals(false);
     setActiveTab(id);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const openNotificationTask = async task => {
@@ -95,13 +105,14 @@ const EmployeeDashboard = (props) => {
         </div>
       </div>
 
-      <main className={`workspace-main workspace-personal${activeTab === 'ai' ? ' workspace-personal--ai' : ''}`}>
+      <div className={`workspace-frame${activeTab === 'ai' ? ' workspace-frame--ai' : ''}`}>
+        <WorkspaceNav label="My workspace sections" active={activeTab} primary={workspaceTabs}
+          secondary={secondaryTabs} onOpen={openPage} aiView="employee-ai-view" />
+      <main className="workspace-main">
         <div className={activeTab === 'ai' ? 'sr-only' : 'workspace-pagehead'}>
           <div>
-            <h1>{activeTab === 'ai' ? 'AI workspace' : 'My Workspace'}</h1>
-            <p>{activeTab === 'ai'
-              ? 'Ask about your tasks, draft updates, or prepare a status change.'
-              : 'Manage your assignments, keep track of deadlines, and plan time off.'}</p>
+            <h1>{pageTitles[activeTab]}</h1>
+            {activeTab === 'home' && <p>Keep track of your work and plan time off.</p>}
           </div>
           <span className="workspace-date"><FaCalendarDay aria-hidden="true" /> {todayFormatted}</span>
         </div>
@@ -124,43 +135,28 @@ const EmployeeDashboard = (props) => {
           </div>
         ) : (
           <div className="workspace-stack">
-            <nav aria-label="My workspace sections" className="workspace-personal-nav">
-              {workspaceTabs.map(tab => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    aria-current={isActive ? 'page' : undefined}
-                    aria-controls={tab.id === 'ai' ? 'employee-ai-view' : undefined}
-                    onClick={() => openPage(tab.id)}
-                  >
-                    <Icon className="text-xs" aria-hidden="true" />
-                    <span>{tab.label}</span>
-                    {tab.count > 0 && <span className="workspace-personal-count">{tab.count > 99 ? '99+' : tab.count}</span>}
-                  </button>
-                );
-              })}
-            </nav>
-
             {teamError && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{teamError}</p>}
             <div id="employee-ai-view" className="workspace-ai-view" hidden={activeTab !== 'ai'}>
-              {hasOpenedAi && <AIAssistant onOpenTask={openTask} />}
+              {hasOpenedAi && <AIAssistant draftRequest={aiDraft} onOpenTask={openTask} />}
             </div>
+            {activeTab === 'home' && <>
+              <WorkspaceBrief onWork={(filter, today) => { openPage('tasks'); setTaskView({ filter, today }); }} onTimeOff={() => openPage('leaves')}
+                onReview={() => { openPage('leaves'); setShowApprovals(true); }}
+                onAsk={() => { setAiDraft({ text: briefPrompt }); openPage('ai'); }} />
+              <WorkFocus tasks={employeeData?.tasks} onOpenTasks={openTask} />
+              <OffboardingAssignments />
+            </>}
             {activeTab === 'tasks' && (
               <div className="workspace-stack">
-                <WorkFocus tasks={employeeData?.tasks} onOpenTasks={openTask} />
-                <OffboardingAssignments />
                 <TaskListNumbers data={employeeData} />
-                <div className="workspace-jump" tabIndex={-1} ref={taskListRef} aria-label="Assigned Tasks">
-                  <TaskList data={employeeData} focusRequest={focusRequest} />
+                <div className="workspace-jump" tabIndex={-1} aria-label="Assigned Tasks">
+                  <TaskList key={taskView?.filter ?? 'all'} data={employeeData} focusRequest={focusRequest} initialView={taskView} />
                 </div>
               </div>
             )}
             {activeTab === 'leaves' && (
               <div className="animate-fade-in">
-                <LeaveManagement isManager={directReports.length > 0} />
+                <LeaveManagement isManager={directReports.length > 0} showApprovals={showApprovals} />
               </div>
             )}
             {activeTab === 'team' && (
@@ -188,6 +184,7 @@ const EmployeeDashboard = (props) => {
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 };

@@ -20,19 +20,22 @@ import OffboardingManagement from '../other/OffboardingManagement';
 import WorkforceReports from '../other/WorkforceReports';
 import AIAssistant from '../other/AIAssistant';
 import WorkFocus from '../other/WorkFocus';
+import WorkspaceBrief from './WorkspaceBrief';
+import { briefPrompt } from '../../utils/workFocus';
+import WorkspaceNav from './WorkspaceNav';
 import './Workspace.css';
 
 const navigation = [
   ['Operations', [
+    { id: 'overview', label: 'Home', title: 'Workspace Overview', icon: FaChartPie, description: 'See what needs attention and keep your team on track.' },
+    { id: 'tasks', label: 'Task Hub', shortLabel: 'Work', icon: FaListCheck, description: 'Assign, prioritize, and follow up on team tasks.' },
     { id: 'ai', label: 'AI', title: 'AI workspace', icon: FaWandMagicSparkles, description: 'Ask about work, draft updates, or prepare a task change.' },
-    { id: 'overview', label: 'Overview', title: 'Workspace Overview', icon: FaChartPie, description: 'See what needs attention and keep your team on track.' },
-    { id: 'tasks', label: 'Task Hub', icon: FaListCheck, description: 'Assign, prioritize, and follow up on team tasks.' },
-    { id: 'leaves', label: 'Leave Requests', icon: FaCalendarDay, description: 'Review requests and plan around approved absences.' },
-    { id: 'reports', label: 'Reports', icon: FaChartLine, description: 'Review task delivery, workload, and headcount.' }
+    { id: 'leaves', label: 'Time off', title: 'Leave Requests', icon: FaCalendarDay, description: 'Review requests and plan around approved absences.' }
   ]],
   ['People & settings', [
-    { id: 'team', label: 'Team & Invites', icon: FaUsers, description: 'Manage teammates, invitations, and onboarding.' },
+    { id: 'team', label: 'Team & Invites', title: 'People', icon: FaUsers, description: 'Manage teammates, invitations, and onboarding.' },
     { id: 'offboarding', label: 'Offboarding', icon: FaClipboardCheck, description: 'Coordinate employee transitions and handovers.' },
+    { id: 'reports', label: 'Reports', title: 'Insights', icon: FaChartLine, description: 'Review task delivery, workload, and headcount.' },
     { id: 'audit', label: 'Audit Trail', icon: FaShieldHalved, description: 'Review significant changes across your workspace.' },
     { id: 'integrations', label: 'Integrations', icon: FaPlug, description: 'Manage connections to the tools your team uses.' }
   ]]
@@ -43,6 +46,7 @@ const AdminDashboard = ({ changeUser, data }) => {
   const { userData, dataError, refresh } = useContext(AuthContext);
   const [view, setView] = useState({ tab: 'overview' });
   const [hasOpenedAi, setHasOpenedAi] = useState(false);
+  const [aiDraft, setAiDraft] = useState(null);
   const headingRef = useRef(null);
   const taskFormRef = useRef(null);
   const inviteRef = useRef(null);
@@ -67,6 +71,16 @@ const AdminDashboard = ({ changeUser, data }) => {
   const openPage = id => {
     if (id === 'ai') setHasOpenedAi(true);
     setView({ tab: id });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+  const openBriefTasks = (filter, today) => {
+    const previousDay = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const filters = {
+      overdue: { status: 'open', dueBefore: previousDay },
+      today: { status: 'open', dueBefore: today, dueAfter: today },
+      failed: { status: 'failed' }
+    };
+    setView({ tab: 'tasks', taskFilters: filters[filter], jump: 'heading' });
   };
 
   useEffect(() => {
@@ -86,21 +100,8 @@ const AdminDashboard = ({ changeUser, data }) => {
         </div>
       </div>
       <div className={`workspace-frame${tab === 'ai' ? ' workspace-frame--ai' : ''}`}>
-        <nav className="workspace-rail" aria-label="Workspace navigation">
-          {navigation.map(([group, items]) => (
-            <div className="workspace-navgroup" key={group}>
-              <p>{group}</p>
-              {items.map(({ id, label, icon: Icon }) => (
-                <button key={id} type="button" aria-current={tab === id ? 'page' : undefined}
-                  aria-controls={id === 'ai' ? 'admin-ai-view' : undefined}
-                  onClick={() => openPage(id)}>
-                  <Icon aria-hidden="true" />
-                  {label}
-                </button>
-              ))}
-            </div>
-          ))}
-        </nav>
+        <WorkspaceNav label="Workspace navigation" active={tab} primary={navigation[0][1]}
+          secondary={navigation[1][1]} onOpen={openPage} aiView="admin-ai-view" />
 
         <main className="workspace-main">
           <section className={tab === 'ai' ? 'sr-only' : 'workspace-pagehead'} aria-labelledby="workspace-page-title">
@@ -108,16 +109,19 @@ const AdminDashboard = ({ changeUser, data }) => {
               <h1 id="workspace-page-title" ref={headingRef} tabIndex={-1}>{page.title || page.label}</h1>
               <p>{page.description}</p>
             </div>
-            {tab !== 'ai' && <div className="workspace-actions">
+            {['overview', 'tasks', 'team'].includes(tab) && <div className="workspace-actions">
+              {tab === 'team' ? (
               <button type="button" onClick={() => setView({ tab: 'team', jump: 'invite' })}
-                className="workspace-action workspace-action--secondary"><FaUserPlus aria-hidden="true" /> Invite Member</button>
+                className="workspace-action"><FaUserPlus aria-hidden="true" /> Invite Member</button>
+              ) : (
               <button type="button" onClick={() => setView({ tab: 'tasks', jump: 'create' })}
                 className="workspace-action"><FaPlus aria-hidden="true" /> New Task</button>
+              )}
             </div>}
           </section>
 
           <div id="admin-ai-view" className="workspace-ai-view" hidden={tab !== 'ai'}>
-            {hasOpenedAi && <AIAssistant onOpenTask={task => openTaskHub(task, 'AI chat')} />}
+            {hasOpenedAi && <AIAssistant draftRequest={aiDraft} onOpenTask={task => openTaskHub(task, 'AI chat')} />}
           </div>
           {tab !== 'ai' && (userData === null ? (
             <section className="dashboard-card p-8 text-center">
@@ -134,6 +138,9 @@ const AdminDashboard = ({ changeUser, data }) => {
             <div className="workspace-stack">
               {tab === 'overview' && (
                 <>
+                  <WorkspaceBrief isAdmin onWork={openBriefTasks} onTimeOff={() => openPage('leaves')}
+                    onReview={() => setView({ tab: 'leaves', showApprovals: true })}
+                    onAsk={() => { setAiDraft({ text: briefPrompt }); openPage('ai'); }} />
                   <dl className="workspace-stats" aria-label="Workspace totals">
                     {stats.map(({ label, value, note, icon: Icon }) => (
                       <div className="workspace-stat" key={label}>
@@ -161,7 +168,7 @@ const AdminDashboard = ({ changeUser, data }) => {
 
               {tab === 'tasks' && (
                 <>
-                  <TaskManagement key={taskFocus || 0} initialTaskId={taskId} taskSource={taskSource} />
+                  <TaskManagement key={taskFocus || 0} initialTaskId={taskId} initialFilters={view.taskFilters} taskSource={taskSource} />
                   <div className="workspace-jump" tabIndex={-1} ref={taskFormRef}><CreateTask /></div>
                 </>
               )}
@@ -177,7 +184,7 @@ const AdminDashboard = ({ changeUser, data }) => {
               )}
 
               {tab === 'offboarding' && <OffboardingManagement />}
-              {tab === 'leaves' && <LeaveManagement />}
+              {tab === 'leaves' && <LeaveManagement showApprovals={view.showApprovals} />}
               {tab === 'reports' && <><WorkforceReports /><TaskReports /></>}
               {tab === 'audit' && <AuditTrail />}
               {tab === 'integrations' && <><WorkspaceSettings /><SlackIntegration /></>}

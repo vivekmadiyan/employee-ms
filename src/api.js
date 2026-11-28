@@ -38,6 +38,7 @@ export const setupMfaApi = currentPassword => api('/auth/mfa/setup', { method: '
 export const enableMfaApi = code => api('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
 export const disableMfaApi = payload => api('/auth/mfa/disable', { method: 'POST', body: JSON.stringify(payload) });
 export const getSlackIntegrationApi = () => api('/integrations/slack');
+export const testSlackIntegrationApi = () => api('/integrations/slack/test', { method: 'POST' });
 export const saveSlackIntegrationApi = webhookUrl => api('/integrations/slack', { method: 'POST', body: JSON.stringify({ webhookUrl }) });
 export const removeSlackIntegrationApi = () => api('/integrations/slack', { method: 'DELETE', body: '{}' });
 export const requestPasswordResetApi = email => api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
@@ -178,4 +179,5 @@ export const deleteAiConversationApi = id => api(`/ai/conversations/${encodeURIC
 export const getAiToolsApi = () => api('/ai/tools');
 export const generateAiReportApi = payload => api('/ai/report', { method: 'POST', body: JSON.stringify(payload) });
 export const getWorkspaceSettingsApi = () => api('/workspace/settings');
+export const getWorkspaceBriefApi = signal => api('/workspace/brief', { signal });
 export const saveWorkspaceSettingsApi = payload => api('/workspace/settings', { method: 'PUT', body: JSON.stringify(payload) });

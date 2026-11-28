@@ -1570,6 +1570,19 @@ describe('authenticated API workflows', () => {
       expect(slackWebhookEncrypted).not.toBe(webhookUrl);
       expect(decryptSecret(slackWebhookEncrypted)).toBe(webhookUrl);
 
+      await request(app).post('/api/integrations/slack/test')
+        .set('Authorization', `Bearer ${employeeLogin.body.token}`)
+        .expect(403);
+      await request(app).post('/api/integrations/slack/test')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200, { delivered: true });
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).text).toMatch(/^EmployeeMS test message/);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
+      await request(app).post('/api/integrations/slack/test')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(502);
+      fetchMock.mockClear();
+
       await request(app).post('/api/tasks')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({

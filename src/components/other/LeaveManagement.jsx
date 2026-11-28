@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useId, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { FaCalendarDays, FaCheck, FaXmark } from 'react-icons/fa6';
 import {
   cancelLeaveRequestApi,
@@ -45,7 +45,7 @@ const emailStatusMessage = status => ({
   failed: 'Email could not be sent; the request is still available in the workspace.'
 }[status] || '');
 
-export default function LeaveManagement({ isManager = false }) {
+export default function LeaveManagement({ isManager = false, showApprovals = false }) {
   const { currentUser } = useContext(AuthContext);
   const { settings } = useContext(WorkspaceSettingsContext);
   const today = workspaceDateKey(settings.timeZone);
@@ -53,6 +53,11 @@ export default function LeaveManagement({ isManager = false }) {
   const isAdmin = currentUser?.role === 'admin';
   const canReview = isAdmin || isManager;
   const [requests, setRequests] = useState([]);
+  const [onlyPending, setOnlyPending] = useState(showApprovals);
+  const requestHeading = useRef(null);
+  const visibleRequests = canReview && onlyPending
+    ? requests.filter(leave => leave.status === 'pending' && leave.userId !== currentUser?.id)
+    : requests;
   const [policyDraft, setPolicyDraft] = useState(emptyPolicies);
   const [balance, setBalance] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(`${today.slice(0, 7)}-01T00:00:00`));
@@ -64,6 +69,10 @@ export default function LeaveManagement({ isManager = false }) {
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    if (showApprovals && canReview) requestHeading.current?.focus();
+  }, [showApprovals, canReview]);
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
@@ -421,14 +430,19 @@ export default function LeaveManagement({ isManager = false }) {
         </form>
       )}
 
+      <div className="workspace-requests-head">
+        <h3 tabIndex={-1} ref={requestHeading}>Leave requests</h3>
+        {canReview && <button type="button" className="workspace-action workspace-action--secondary"
+          aria-pressed={onlyPending} onClick={() => setOnlyPending(value => !value)}>Pending approvals</button>}
+      </div>
       {loading && !requests.length ? (
         <div role="status" className="p-10 text-center text-slate-400">
           <span className="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mb-2" />
           <p className="text-xs">Loading requests…</p>
         </div>
-      ) : requests.length ? (
+      ) : visibleRequests.length ? (
         <div className="divide-y divide-slate-100 bg-white">
-          {requests.map(leave => (
+          {visibleRequests.map(leave => (
             <article key={leave.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 hover:bg-slate-50/50 transition-colors">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -497,7 +511,7 @@ export default function LeaveManagement({ isManager = false }) {
         </div>
       ) : !error ? (
         <p className="p-10 text-center text-xs text-slate-400">
-          {canReview ? 'No direct-report leave requests are waiting or recorded.' : 'You have no submitted leave requests.'}
+          {canReview && onlyPending ? 'No requests are awaiting your approval.' : 'No leave requests to show.'}
         </p>
       ) : null}
     </section>

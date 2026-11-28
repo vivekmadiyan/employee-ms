@@ -15,6 +15,9 @@ const actionLabels = {
   'invitation.resent': 'Resent employee invitation',
   'invitation.revoked': 'Revoked employee invitation',
   'invitation.accepted': 'Invitation accepted',
+  'integration.slack_configured': 'Connected Slack',
+  'integration.slack_tested': 'Verified Slack delivery',
+  'integration.slack_removed': 'Disconnected Slack',
   'task.created': 'Created task',
   'task.updated': 'Updated task',
   'task.archived': 'Archived task',
@@ -36,6 +39,7 @@ const ACTION_CATEGORIES = [
   { label: 'Account', value: 'account.' },
   { label: 'Employee', value: 'employee.' },
   { label: 'Invitation', value: 'invitation.' },
+  { label: 'Integration', value: 'integration.' },
   { label: 'Task', value: 'task.' },
   { label: 'Leave', value: 'leave.' },
 ];
