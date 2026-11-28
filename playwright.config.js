@@ -43,7 +43,8 @@ export default defineConfig({
         CLIENT_URL: clientUrl,
         ALLOWED_ORIGINS: clientUrl,
         GEMINI_API_KEY: '',
-        GROQ_API_KEY: ''
+        GROQ_API_KEY: '',
+        BREVO_API_KEY: ''
       }
     },
     {

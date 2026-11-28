@@ -29,6 +29,8 @@ export async function initialiseDatabase() {
     ALTER TABLE companies ALTER COLUMN ai_enabled SET DEFAULT FALSE;
     CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, first_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('admin', 'employee')), department TEXT NOT NULL DEFAULT 'General', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS task_reminder_email BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS task_reminder_day DATE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_type TEXT NOT NULL DEFAULT 'unspecified' CHECK (employment_type IN ('full_time','part_time','contractor','temporary','intern','unspecified'));
     ALTER TABLE users ADD COLUMN IF NOT EXISTS hire_date DATE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS team TEXT NOT NULL DEFAULT 'General';

@@ -96,6 +96,16 @@ test('registration, manager reporting, leave approval, and auth accessibility', 
     managerId: managerSession.user.id
   });
   const employeeSession = await acceptInvitationInBrowser(page, employeeInvite.inviteUrl, 'E2E Teammate');
+  const emailPreferencesUrl = `${apiUrl}/account/email-preferences`;
+  const preferenceHeaders = { Authorization: `Bearer ${employeeSession.token}` };
+  const beforePreference = await page.request.get(emailPreferencesUrl, { headers: preferenceHeaders });
+  expect(await beforePreference.json()).toMatchObject({ eligible: true, taskReminders: false });
+  const savedPreference = await page.request.put(emailPreferencesUrl, {
+    headers: preferenceHeaders, data: { taskReminders: true }
+  });
+  expect(savedPreference.ok()).toBeTruthy();
+  expect(await (await page.request.get(emailPreferencesUrl, { headers: preferenceHeaders })).json())
+    .toMatchObject({ taskReminders: true });
 
   const start = new Date();
   start.setDate(start.getDate() + 5);

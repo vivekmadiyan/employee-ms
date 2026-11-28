@@ -34,6 +34,9 @@ export const updateProfileApi = payload => api('/auth/me', { method: 'PATCH', bo
 export const requestEmailChangeApi = payload => api('/auth/email/request', { method: 'POST', body: JSON.stringify(payload) });
 export const confirmEmailChangeApi = code => api('/auth/email/confirm', { method: 'POST', body: JSON.stringify({ code }) });
 export const getMfaStatusApi = () => api('/auth/mfa');
+export const getEmailPreferencesApi = signal => api('/account/email-preferences', { signal });
+export const saveEmailPreferencesApi = taskReminders => api('/account/email-preferences', { method: 'PUT', body: JSON.stringify({ taskReminders }) });
+export const sendTestEmailApi = () => api('/account/email-test', { method: 'POST' });
 export const setupMfaApi = currentPassword => api('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ currentPassword }) });
 export const enableMfaApi = code => api('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
 export const disableMfaApi = payload => api('/auth/mfa/disable', { method: 'POST', body: JSON.stringify(payload) });
